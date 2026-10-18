@@ -27,6 +27,8 @@ pub(in super::super) struct State {
     /// The member being dragged to a new place, by index.
     drag: Option<usize>,
     search: String,
+    /// Filters the list of collections, by name or by a title in one.
+    find: String,
     confirm_delete: bool,
 }
 
@@ -118,22 +120,35 @@ impl State {
                 ui.vertical(|ui| {
                     ui.set_width(inner);
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    self.list_panel(ui, cx, &list, &mut open, &mut new);
+                    let top = ui.cursor().top();
+                    self.list_panel(ui, cx, &list, &mut open, &mut new, top + 460.0);
                     ui.add_space(20.0);
                     self.editor(ui, cx);
                 });
                 return;
             }
+            // both sides fill the window: the list stays put while the editor scrolls
+            let top = ui.cursor().top();
+            let h = (ui.clip_rect().bottom() - top - 48.0).max(360.0);
             ui.vertical(|ui| {
                 ui.set_width(list_w);
                 ui.spacing_mut().item_spacing.x = 8.0;
-                self.list_panel(ui, cx, &list, &mut open, &mut new);
+                self.list_panel(ui, cx, &list, &mut open, &mut new, top + h);
             });
             ui.add_space(gap);
             ui.vertical(|ui| {
-                ui.set_width(inner - list_w - gap);
+                let w = inner - list_w - gap;
+                ui.set_width(w);
                 ui.spacing_mut().item_spacing.x = 8.0;
-                self.editor(ui, cx);
+                ScrollArea::vertical()
+                    .id_salt(("admin-collection-editor", self.selected.clone()))
+                    .max_height(h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(w - 14.0); // room for the scroll bar
+                        self.editor(ui, cx);
+                        ui.add_space(24.0);
+                    });
             });
         });
         if let Some(c) = open {
@@ -143,7 +158,21 @@ impl State {
         }
     }
 
-    /// Every collection, with how many titles each has.
+    /// Whether `c` is called something with `q` in it, or has a title that is.
+    fn matches(c: &Collection, q: &str, cx: &Cx) -> bool {
+        q.is_empty()
+            || c.name.to_lowercase().contains(q)
+            || c.items.iter().any(|ci| {
+                let title = ci
+                    .title
+                    .clone()
+                    .or_else(|| cx.find(&ci.key()).map(|i| i.title.clone()));
+                title.is_some_and(|t| t.to_lowercase().contains(q))
+            })
+    }
+
+    /// Every collection, with how many titles each has; the list scrolls on
+    /// its own down to `bottom`.
     fn list_panel(
         &mut self,
         ui: &mut Ui,
@@ -151,6 +180,7 @@ impl State {
         list: &[Collection],
         open: &mut Option<Collection>,
         new: &mut bool,
+        bottom: f32,
     ) {
         panel(ui, |ui| {
             caps(ui, "Collections", TEAL());
@@ -158,17 +188,6 @@ impl State {
             if let Some(e) = &self.list.error {
                 ui.label(RichText::new(e).color(ERROR()));
             }
-            if list.is_empty() && self.list.data.is_some() {
-                ui.label(RichText::new("None yet.").color(MUTED()));
-            }
-            for c in list {
-                let n = c.members().len();
-                let sel = self.selected.as_deref() == Some(c.id.as_str());
-                if nav_row(ui, &c.name, n, sel) {
-                    *open = Some(c.clone());
-                }
-            }
-            ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
                 if small_button(ui, "New collection").clicked() {
                     *new = true;
@@ -202,6 +221,31 @@ impl State {
                     });
                 }
             });
+            ui.add_space(10.0);
+            text_field(ui, &mut self.find, "Search collections", false);
+            ui.add_space(8.0);
+            let q = self.find.trim().to_lowercase();
+            let shown: Vec<&Collection> =
+                list.iter().filter(|c| Self::matches(c, &q, cx)).collect();
+            let height = (bottom - ui.cursor().top() - 16.0).max(200.0);
+            ScrollArea::vertical()
+                .id_salt("admin-collection-list")
+                .max_height(height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if list.is_empty() && self.list.data.is_some() {
+                        ui.label(RichText::new("None yet.").color(MUTED()));
+                    } else if shown.is_empty() && !list.is_empty() {
+                        ui.label(RichText::new("No collections match.").color(MUTED()));
+                    }
+                    for c in shown {
+                        let n = c.members().len();
+                        let sel = self.selected.as_deref() == Some(c.id.as_str());
+                        if nav_row(ui, &c.name, n, sel) {
+                            *open = Some(c.clone());
+                        }
+                    }
+                });
         });
     }
 
@@ -220,7 +264,7 @@ impl State {
                     .color(MUTED()),
                 );
                 ui.add_space(10.0);
-                ui.label(RichText::new("Pick one on the right, or make a new one.").color(MUTED()));
+                ui.label(RichText::new("Pick one from the list, or make a new one.").color(MUTED()));
             });
             return;
         };
