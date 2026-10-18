@@ -6,6 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -40,7 +41,17 @@ data class FileInfo(
     @SerialName("video_codec") val videoCodec: String? = null,
     @SerialName("audio_codec") val audioCodec: String? = null,
     @SerialName("audio_channels") val audioChannels: Int? = null,
+    /** Bits per second. */
+    val bitrate: Long? = null,
+    /** Bytes. */
+    val size: Long? = null,
+    val name: String? = null,
+    val path: String? = null,
 )
+
+/** A critic's quote. */
+@Serializable
+data class Review(val quote: String = "", val source: String? = null, val score: String? = null)
 
 /** A subtitle file for a movie or episode; picked from the player's subtitle button. */
 @Serializable
@@ -69,6 +80,7 @@ data class Episode(
     val stream: String = "",
     val aired: String? = null,
     val score: Float? = null,
+    val file: FileInfo? = null,
     val subtitles: List<Subtitle> = emptyList(),
 )
 
@@ -86,6 +98,8 @@ data class Item(
     val overview: String = "",
     val poster: String? = null,
     val backdrop: String? = null,
+    /** Landscape artwork for wide cards such as Continue watching. */
+    val thumb: String? = null,
     val logo: String? = null,
     val genres: List<String> = emptyList(),
     val rating: String? = null,
@@ -98,15 +112,53 @@ data class Item(
     val director: String? = null,
     val creators: List<String> = emptyList(),
     val cast: List<CastMember> = emptyList(),
+    /** "YYYY-MM-DD", or a database timestamp starting with it. */
+    val released: String? = null,
     @SerialName("end_year") val endYear: Int? = null,
     val network: String? = null,
+    /** Series: "Ended", "Returning Series", … */
+    val status: String? = null,
+    /** US dollars. */
+    val budget: Long? = null,
+    /** Box office, US dollars. */
+    val revenue: Long? = null,
     val score: Float? = null,
     @SerialName("score_source") val scoreSource: String? = null,
     val file: FileInfo? = null,
+    val reviews: List<Review> = emptyList(),
+    /** `"Batman"` or `{"name": "Batman", …}`; see [collection]. */
+    @SerialName("collection") val collectionRaw: JsonElement? = null,
+    /** Its place in the collection, 0 first. */
+    @SerialName("collection_index") val collectionIndex: Int? = null,
     @kotlinx.serialization.Transient val kind: Kind = Kind.Movie,
 ) {
     val episodes get() = seasons.flatMap { it.episodes }
+
+    /** The film series it belongs to, which keeps its titles together A to Z. */
+    val collection: String?
+        get() = when (val c = collectionRaw) {
+            is JsonPrimitive -> c.contentOrNull?.takeIf { c.isString }
+            is JsonObject -> (c["name"] as? JsonPrimitive)?.contentOrNull
+            else -> null
+        }?.trim()?.ifEmpty { null }
+
+    /** The movie's director, else the series' first creator. */
+    val maker get() = director ?: creators.firstOrNull()
+
+    /** Everyone who directed or created it ("A, B" directors are split). */
+    val makers get() = (director?.split(',').orEmpty() + creators).map { it.trim() }.filter { it.isNotEmpty() }
 }
+
+/**
+ * Where an item goes A to Z: under its collection's name, in the collection's
+ * order (else oldest first), otherwise under its title (api::title_key).
+ */
+private val titleOrder: Comparator<Item> = compareBy<Item>(
+    { (it.collection ?: it.title).lowercase() },
+    { if (it.collection != null) it.collectionIndex ?: Int.MAX_VALUE else 0 },
+    { if (it.collection != null) it.year ?: Int.MAX_VALUE else 0 },
+    { if (it.collection != null) it.title.lowercase() else "" },
+)
 
 @Serializable
 data class Library(val movies: List<Item> = emptyList(), val series: List<Item> = emptyList()) {
@@ -116,6 +168,14 @@ data class Library(val movies: List<Item> = emptyList(), val series: List<Item> 
 
     /** The series an episode belongs to. */
     fun seriesOf(episodeId: String) = series.find { s -> s.episodes.any { it.id == episodeId } }
+
+    /** An episode with its season and series. */
+    fun findEpisode(episodeId: String): Triple<Item, Season, Episode>? {
+        for (s in series) for (season in s.seasons) {
+            season.episodes.find { it.id == episodeId }?.let { return Triple(s, season, it) }
+        }
+        return null
+    }
 
     /** Genres ordered by how many titles have them. */
     fun genres(): List<String> = all.flatMap { it.genres }.groupingBy { it }.eachCount()
@@ -133,24 +193,25 @@ data class Library(val movies: List<Item> = emptyList(), val series: List<Item> 
             val tag = if (kind == Kind.Movie) "movie" else "series"
             return it.copy(
                 id = "$tag:$raw", kind = kind, stream = stream, subtitles = subs(it.subtitles),
-                poster = fix(it.poster), backdrop = fix(it.backdrop), logo = fix(it.logo),
+                poster = fix(it.poster), backdrop = fix(it.backdrop), thumb = fix(it.thumb), logo = fix(it.logo),
+                released = it.released?.take(10),
                 cast = it.cast.map { c -> c.copy(photo = fix(c.photo)) },
                 seasons = it.seasons.sortedBy { s -> s.number }.map { s ->
                     s.copy(episodes = s.episodes.sortedBy { e -> e.number }.map { e ->
                         val es = join(base, e.stream)
                         e.copy(
                             id = "episode:" + e.id.ifEmpty { es }, stream = es, still = fix(e.still),
+                            aired = e.aired?.take(10),
                             subtitles = subs(e.subtitles),
                         )
                     })
                 },
             )
         }
-        val byTitle = compareBy<Item> { it.title.lowercase() }
         return Library(
-            movies = movies.map { item(it, Kind.Movie) }.filter { it.stream != null }.sortedWith(byTitle),
+            movies = movies.map { item(it, Kind.Movie) }.filter { it.stream != null }.sortedWith(titleOrder),
             series = series.map { item(it, Kind.Series) }
-                .filter { s -> s.seasons.any { it.episodes.isNotEmpty() } }.sortedWith(byTitle),
+                .filter { s -> s.seasons.any { it.episodes.isNotEmpty() } }.sortedWith(titleOrder),
         )
     }
 }
@@ -178,6 +239,23 @@ data class ServerInfo(val name: String? = null, val auth: Boolean = false)
 
 @Serializable
 data class Session(val token: String, val name: String? = null, val admin: Boolean = false)
+
+/** A device signed in as the current user (`GET /api/sessions`). */
+@Serializable
+data class DeviceSession(
+    /** Not the token: an id the server gives the session. */
+    val id: JsonElement? = null,
+    /** What the app said it is at sign-in: "Valo TV on SHIELD Android TV". */
+    val device: String? = null,
+    val ip: String? = null,
+    /** Unix seconds. */
+    val created: Long? = null,
+    @SerialName("last_used") val lastUsed: Long? = null,
+    /** The session this request came from: this device. */
+    val current: Boolean = false,
+) {
+    val key get() = (id as? JsonPrimitive)?.contentOrNull ?: id?.toString().orEmpty()
+}
 
 // ----------------------------------------------------------------- client
 
@@ -292,6 +370,23 @@ class Client(val base: String, val info: ServerInfo, @Volatile var token: String
                 else -> runCatching { json.decodeFromString<Watched>(r.body!!.string()) }.getOrNull()
             }
         }
+    }
+
+    /** Where the signed-in user is signed in; null when the server doesn't list sessions. */
+    fun sessions(): List<DeviceSession>? = call(request("/api/sessions").build(), "Can't load your devices") { r ->
+        when {
+            r.code in listOf(404, 405, 501) -> null
+            !r.isSuccessful -> r.fail("Can't load your devices")
+            else -> runCatching { json.decodeFromString<List<DeviceSession>>(r.body!!.string()) }.getOrNull()
+        }
+    }
+
+    /** Sign one of the user's devices out (`DELETE /api/sessions/<id>`). */
+    fun endSession(id: String) {
+        val url = "$base/api/sessions/" + java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")
+        val req = Request.Builder().url(url).header("Accept", "application/json")
+            .apply { token?.let { header("Authorization", "Bearer $it") } }.delete().build()
+        call(req, "Can't sign that device out") { r -> if (!r.isSuccessful) r.fail("Can't sign that device out") }
     }
 
     companion object {
