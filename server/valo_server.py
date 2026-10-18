@@ -290,6 +290,9 @@ class Library:
         self.collections = collections
         self.skipped = []  # video files the scan couldn't place
         self.cache, self.stamp, self.lock = None, 0, threading.Lock()
+        # the library as of the last sync: what the syncs compare against,
+        # since the cache rescans on its own every minute
+        self.synced = None
 
     def url(self, kind, path):
         return f"/{kind}/" + quote(str(path.relative_to(self.root)))
@@ -298,6 +301,8 @@ class Library:
         with self.lock:
             if fresh or self.cache is None or time.time() - self.stamp > 60:
                 self.cache, self.stamp = self.scan(), time.time()
+                if self.synced is None:
+                    self.synced = self.cache
             return self.cache
 
     def category(self, names):
@@ -457,7 +462,7 @@ class Library:
     def sync(self, what, apply=False):
         """Compare the folders with the cached library; apply for movies/series."""
         with self.lock:
-            old = self.cache or self.scan()
+            old = self.synced or self.cache or self.scan()
             fresh = self.scan()
             kinds = ["movies", "series"] if what == "folders" else [what]
             added, removed = [], []
@@ -468,11 +473,11 @@ class Library:
             if what == "folders" and not apply:
                 return {"added": added, "removed": removed, "applied": False}
             if what == "folders":
-                self.cache, self.stamp = fresh, time.time()
-                return {"added": added, "removed": removed, "applied": True}
-            new = dict(old)
-            new[what] = fresh[what]
-            self.cache, self.stamp = new, time.time()
+                self.cache = self.synced = fresh
+            else:
+                self.cache = dict(self.cache or fresh, **{what: fresh[what]})
+                self.synced = dict(old, **{what: fresh[what]})
+            self.stamp = time.time()
             return {"added": added, "removed": removed, "applied": True}
 
 
