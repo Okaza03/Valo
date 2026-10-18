@@ -1,7 +1,7 @@
 //! Admin › Collections: hand-made groups of titles ("Batman"). In A to Z
 //! the library puts a collection's titles together under its name, oldest
 //! first, so "Batman" and "The Batman" end up side by side.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use eframe::egui::{self, pos2, vec2, Color32, RichText, ScrollArea, Sense, Stroke, Ui};
 use serde_json::json;
@@ -9,7 +9,7 @@ use serde_json::json;
 use super::super::details::{caps, column, padded, panel, TEAL};
 use super::users::danger_button;
 use super::{not_set_up, Cx, Done, Remote, Section};
-use crate::api::{join, Collection, Item, Kind};
+use crate::api::{join, Collection, CollectionItem, Item, Kind};
 use crate::ui::{bold, image_cover, mono, placeholder, primary_button, small_button, text_field};
 use crate::ui::{ERROR, LINE, MUTED, SURFACE_HI, TEXT};
 
@@ -30,6 +30,49 @@ pub(in super::super) struct State {
     /// Filters the list of collections, by name or by a title in one.
     find: String,
     confirm_delete: bool,
+    /// Showing the movies without a collection instead of one collection.
+    loose: bool,
+    /// The ticked ones, by our id.
+    picked: Vec<String>,
+    /// Where they go: a collection's id, `""` for a new one.
+    target: Option<String>,
+    /// Asking "sort every collection by release date?".
+    confirm_sort: bool,
+}
+
+/// What the server takes to save a collection.
+fn save_body(name: &str, members: &[String]) -> serde_json::Value {
+    let items: Vec<_> = members
+        .iter()
+        .filter_map(|m| {
+            let (kind, id) = m.split_once(':')?;
+            Some(json!({ "type": kind, "id": id }))
+        })
+        .collect();
+    json!({ "name": name, "items": items })
+}
+
+/// A collection's members in release order, oldest first: by release date
+/// where there is one, else by year; titles with neither keep their place
+/// at the end.
+fn chronological(members: &[String], items: &[CollectionItem], cx: &Cx) -> Vec<String> {
+    let mut out = members.to_vec();
+    out.sort_by_cached_key(|m| {
+        let item = cx.find(m);
+        let released = item.and_then(|i| i.released.clone()).unwrap_or_default();
+        let year = released
+            .get(..4)
+            .and_then(|y| y.parse::<u32>().ok())
+            .or_else(|| item.and_then(|i| i.year))
+            .or_else(|| {
+                items
+                    .iter()
+                    .find(|ci| ci.key() == *m)
+                    .and_then(|ci| ci.year)
+            });
+        (year.is_none(), year, released)
+    });
+    out
 }
 
 impl State {
@@ -43,6 +86,7 @@ impl State {
 
     fn open(&mut self, c: Option<&Collection>) {
         self.confirm_delete = false;
+        self.loose = false;
         self.drag = None;
         self.search.clear();
         match c {
@@ -192,6 +236,21 @@ impl State {
                 if small_button(ui, "New collection").clicked() {
                     *new = true;
                 }
+                if small_button(ui, "Movies without a collection").clicked() {
+                    self.selected = None;
+                    self.loose = true;
+                    self.picked.clear();
+                    self.search.clear();
+                }
+                let b = ui
+                    .add_enabled_ui(!cx.busy && !list.is_empty(), |ui| {
+                        small_button(ui, "Sort all by release date")
+                    })
+                    .inner
+                    .on_hover_text("Put every collection's titles in release order, oldest first");
+                if b.clicked() {
+                    self.confirm_sort = true;
+                }
                 let b = ui
                     .add_enabled_ui(!cx.busy, |ui| small_button(ui, "Detect from TMDB"))
                     .inner
@@ -221,6 +280,9 @@ impl State {
                     });
                 }
             });
+            if self.confirm_sort {
+                self.sort_all_confirm(ui, cx, list);
+            }
             ui.add_space(10.0);
             text_field(ui, &mut self.find, "Search collections", false);
             ui.add_space(8.0);
@@ -249,7 +311,187 @@ impl State {
         });
     }
 
+    /// "Sort every collection?", and saving the ones whose order changes.
+    fn sort_all_confirm(&mut self, ui: &mut Ui, cx: &mut Cx, list: &[Collection]) {
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(
+                "Put the titles of every collection in release order, oldest first? \
+                 Orders you set by hand are replaced.",
+            )
+            .color(TEXT()),
+        );
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled_ui(!cx.busy, |ui| primary_button(ui, "Sort all", true))
+                .inner
+                .clicked()
+            {
+                let changes: Vec<(String, serde_json::Value)> = list
+                    .iter()
+                    .filter_map(|c| {
+                        let members = c.members();
+                        let sorted = chronological(&members, &c.items, cx);
+                        (sorted != members).then(|| (c.id.clone(), save_body(&c.name, &sorted)))
+                    })
+                    .collect();
+                cx.run(move |c| {
+                    for (id, body) in &changes {
+                        c.admin_save_collection(Some(id), body)?;
+                    }
+                    Ok(Done {
+                        msg: match changes.len() {
+                            0 => "Every collection was already in release order.".into(),
+                            1 => "Sorted 1 collection by release date.".into(),
+                            n => format!("Sorted {n} collections by release date."),
+                        },
+                        library: !changes.is_empty(),
+                        ..Default::default()
+                    })
+                });
+                self.confirm_sort = false;
+            }
+            if small_button(ui, "Cancel").clicked() {
+                self.confirm_sort = false;
+            }
+        });
+    }
+
+    /// Movies in no collection: tick some and add them to one.
+    fn loose_movies(&mut self, ui: &mut Ui, cx: &mut Cx) {
+        let list = self.list.data.clone().unwrap_or_default();
+        let taken: HashSet<String> = list.iter().flat_map(Collection::members).collect();
+        let mut loose: Vec<&Item> = cx
+            .movies
+            .iter()
+            .filter(|i| i.collection.is_none() && !taken.contains(&i.id))
+            .collect();
+        loose.sort_by_key(|i| i.title.to_lowercase());
+        self.picked.retain(|id| loose.iter().any(|i| i.id == *id));
+
+        caps(ui, "Movies without a collection", TEAL());
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!(
+                "{} movies aren't in a collection. Tick the ones that belong together and \
+                 add them to a collection.",
+                loose.len()
+            ))
+            .color(MUTED()),
+        );
+        ui.add_space(10.0);
+        text_field(ui, &mut self.search, "Search movies", false);
+        ui.add_space(8.0);
+        let q = self.search.trim().to_lowercase();
+        let shown: Vec<&Item> = loose
+            .into_iter()
+            .filter(|i| q.is_empty() || i.title.to_lowercase().contains(&q))
+            .collect();
+        ui.horizontal(|ui| {
+            if small_button(ui, "Tick all shown").clicked() {
+                for i in &shown {
+                    if !self.picked.contains(&i.id) {
+                        self.picked.push(i.id.clone());
+                    }
+                }
+            }
+            if !self.picked.is_empty() && small_button(ui, "Untick all").clicked() {
+                self.picked.clear();
+            }
+        });
+        ui.add_space(6.0);
+        egui::Frame::new()
+            .stroke(Stroke::new(1.0f32, LINE()))
+            .corner_radius(8)
+            .inner_margin(6)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ScrollArea::vertical()
+                    .id_salt("collection-loose")
+                    .max_height(420.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        if shown.is_empty() {
+                            ui.label(RichText::new("None.").color(MUTED()));
+                        }
+                        for i in &shown {
+                            let mut on = self.picked.contains(&i.id);
+                            let year = i.year.map(|y| format!(" ({y})")).unwrap_or_default();
+                            if ui.checkbox(&mut on, format!("{}{year}", i.title)).changed() {
+                                if on {
+                                    self.picked.push(i.id.clone());
+                                } else {
+                                    self.picked.retain(|p| *p != i.id);
+                                }
+                            }
+                        }
+                    });
+            });
+        ui.add_space(10.0);
+
+        // where they go
+        let target = self
+            .target
+            .clone()
+            .filter(|t| t.is_empty() || list.iter().any(|c| c.id == *t));
+        let target_name = match target.as_deref() {
+            None => "Choose a collection…".to_owned(),
+            Some("") => "New collection".to_owned(),
+            Some(t) => list
+                .iter()
+                .find(|c| c.id == t)
+                .map_or(String::new(), |c| c.name.clone()),
+        };
+        let mut add = false;
+        ui.horizontal(|ui| {
+            ui.label(mono("Add to", 10.5).color(MUTED()));
+            egui::ComboBox::from_id_salt("collection-target")
+                .width(220.0)
+                .selected_text(target_name)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.target, Some(String::new()), "New collection");
+                    for c in &list {
+                        ui.selectable_value(&mut self.target, Some(c.id.clone()), &c.name);
+                    }
+                });
+            let n = self.picked.len();
+            let label = match n {
+                1 => "Add 1 movie".to_owned(),
+                n => format!("Add {n} movies"),
+            };
+            add = ui
+                .add_enabled_ui(n > 0 && target.is_some(), |ui| {
+                    primary_button(ui, &label, true)
+                })
+                .inner
+                .clicked();
+        });
+        ui.label(
+            RichText::new("The collection opens with them added; press Save to keep it.")
+                .small()
+                .color(MUTED()),
+        );
+        if add {
+            let picked = std::mem::take(&mut self.picked);
+            match target
+                .as_deref()
+                .and_then(|t| list.iter().find(|c| c.id == t))
+            {
+                Some(c) => self.open(Some(c)),
+                None => self.open(None),
+            }
+            for id in picked {
+                if !self.members.contains(&id) {
+                    self.members.push(id);
+                }
+            }
+        }
+    }
+
     fn editor(&mut self, ui: &mut Ui, cx: &mut Cx) {
+        if self.loose {
+            return self.loose_movies(ui, cx);
+        }
         let Some(id) = self.selected.clone() else {
             panel(ui, |ui| {
                 caps(ui, "How collections work", TEAL());
@@ -323,16 +565,8 @@ impl State {
                 .inner
                 .clicked()
             {
-                let items: Vec<_> = self
-                    .members
-                    .iter()
-                    .filter_map(|m| {
-                        let (kind, id) = m.split_once(':')?;
-                        Some(json!({ "type": kind, "id": id }))
-                    })
-                    .collect();
                 let name = self.name.trim().to_owned();
-                let body = json!({ "name": name, "items": items });
+                let body = save_body(&name, &self.members);
                 let id = (!is_new).then(|| id.clone());
                 cx.run(move |c| {
                     c.admin_save_collection(id.as_deref(), &body)?;
