@@ -3,7 +3,7 @@ resolver = "2"
 members = ["apps/valo", "xtask"]
 
 [workspace.package]
-version = "0.8.4"
+version = "0.8.5"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
