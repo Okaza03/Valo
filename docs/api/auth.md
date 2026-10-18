@@ -52,6 +52,12 @@ Sent with the bearer token when the user signs out. Invalidate the token. The an
 
 Who the bearer token belongs to: `{"name": "user", "admin": true}`. A remembered session asks on every start, so admin rights given or taken away after signing in show up without signing in again. Without it, the app keeps what `/api/login` said.
 
+Add `"must_change_password": true` when an admin asked the user for a new password ([`PATCH /api/admin/users/<name>`](admin.md#patch-apiadminusersname)). The app asks on every start until it's `false` again.
+
+## `POST /api/password`: optional
+
+The signed-in user changes their own password: `{"current_password": "…", "password": "…"}`. Answer `200` and clear `must_change_password`. Keep the token this request came with and end the user's other sessions. A wrong `current_password` gets `403`, an empty `password` `422` with `{"error": "…"}` (shown to the user). Without this endpoint, the app says the server can't change passwords from the app.
+
 ## `GET /api/sessions`: optional
 
 Where the signed-in user is signed in. The profile page lists these under _Your devices_, and the user can sign any of them out. Without it, the page says the server doesn't list devices and links here.

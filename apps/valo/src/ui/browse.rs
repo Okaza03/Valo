@@ -4,6 +4,7 @@ mod arrivals;
 mod details;
 mod devices;
 mod layouts;
+mod password;
 mod people;
 
 use std::collections::HashMap;
@@ -155,6 +156,8 @@ pub struct Browse {
     probes: HashMap<String, Probe>,
     /// Re-checking a remembered session's admin rights (`GET /api/me`).
     me: Option<Task<Option<Me>>>,
+    /// Asking for a new password, when an admin wants one.
+    password: password::Prompt,
     admin: admin::AdminState,
     devices: devices::State,
     /// Titles each library had when the user last saw it.
@@ -195,6 +198,7 @@ impl Browse {
             shuffle: RandomState::new(),
             probes: HashMap::new(),
             me: None,
+            password: password::Prompt::default(),
             admin: admin::AdminState::default(),
             devices: devices::State::default(),
             known: Known::load(),
@@ -283,9 +287,12 @@ impl Browse {
         let mut action = Action::None;
         if let Some(r) = self.me.as_mut().and_then(|t| t.poll()) {
             self.me = None;
-            if let Some(me) = r.filter(|me| me.admin != self.client.admin) {
-                self.client.admin = me.admin;
-                action = Action::AdminChanged(me.admin);
+            if let Some(me) = r {
+                self.password.open |= me.must_change_password;
+                if me.admin != self.client.admin {
+                    self.client.admin = me.admin;
+                    action = Action::AdminChanged(me.admin);
+                }
             }
         }
         if self.view == View::Admin && !self.client.admin {
@@ -434,6 +441,8 @@ impl Browse {
                 });
             });
 
+        self.password_ui(ctx, popups, &mut action);
+        let popups = popups && !self.password.open;
         if let Some(lib) = self.lib.clone() {
             if let Some(c) = self.arrivals_ui(ctx, &lib, images, popups) {
                 click = Some(c);

@@ -31,6 +31,7 @@ enum Req {
     Rename(String, String),
     SetAdmin(String, bool),
     Password(String, String),
+    RequirePassword(String, bool),
     Logout(String),
     Delete(String),
 }
@@ -63,6 +64,16 @@ impl Req {
             Req::Password(name, pass) => {
                 c.admin_update_user(&name, Some(&pass), None)?;
                 format!("Changed {name}'s password.")
+            }
+            Req::RequirePassword(name, on) => {
+                c.admin_require_password_change(&name, on)?;
+                if on {
+                    format!(
+                        "{name} will be asked to change their password when they next open Valo."
+                    )
+                } else {
+                    format!("{name} no longer has to change their password.")
+                }
             }
             Req::Logout(name) => {
                 c.admin_logout_user(&name)?;
@@ -193,6 +204,9 @@ fn user_line(u: &AdminUser) -> String {
         Some(n) => parts.push(format!("{n} devices")),
         None => {}
     }
+    if u.must_change_password {
+        parts.push("must change password".into());
+    }
     if let Some(t) = u.last_active {
         parts.push(format!("active {}", ago(t)));
     }
@@ -269,6 +283,18 @@ fn user_row(
                                 }
                                 if menu_item(ui, "Reset password") {
                                     *reset = Some((u.name.clone(), String::new()));
+                                    ui.memory_mut(|m| m.close_popup());
+                                }
+                                let label = if u.must_change_password {
+                                    "Don't require a new password"
+                                } else {
+                                    "Require a new password"
+                                };
+                                if menu_item(ui, label) {
+                                    req = Some(Req::RequirePassword(
+                                        u.name.clone(),
+                                        !u.must_change_password,
+                                    ));
                                     ui.memory_mut(|m| m.close_popup());
                                 }
                                 // your own sessions or account: you'd lock yourself out

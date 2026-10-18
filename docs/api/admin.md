@@ -33,7 +33,7 @@ The app shows the Admin page when [`/api/login`](auth.md#post-apilogin-required-
 | ------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `GET /api/admin/users`                |                                                      | `[{"name": "user", "admin": false, "sessions": 2, "last_active": 1760400000}]`  |
 | `POST /api/admin/users`               | `{"username": "…", "password": "…", "admin": false, "display_name": "…"}` | `201`; `409` or `422` when the name is taken, `422` when a field is missing     |
-| `PATCH /api/admin/users/<name>`       | `{"admin": true}`, `{"password": "…"}` and/or `{"display_name": "…"}` | `200`. A new password ends the user's sessions                                  |
+| `PATCH /api/admin/users/<name>`       | `{"admin": true}`, `{"password": "…"}`, `{"display_name": "…"}` and/or `{"must_change_password": true}` | `200`. A new password ends the user's sessions                                  |
 | `DELETE /api/admin/users/<name>`      |                                                      | `200`                                                                           |
 | `POST /api/admin/users/<name>/logout` |                                                      | `200`: every session of that user ends                                          |
 | `POST /api/admin/rescan`              |                                                      | `{"movies": 12, "series": 3, "episodes": 80}`: read the media folders again now |
@@ -57,6 +57,7 @@ The app shows the Admin page when [`/api/login`](auth.md#post-apilogin-required-
 | `admin`       | bool        |              | Shown as _Admin_ or _User_. Missing counts as `false`                                             |
 | `sessions`    | int         |              | How many devices are signed in (active tokens)                                                    |
 | `display_name` | string     |              | Shown instead of the username when set; the username goes under it as `@name` |
+| `must_change_password` | bool |            | The user is asked to pick a new password (see below). Missing counts as `false` |
 | `last_active` | int or null |              | Unix time the user was last active: their last saved watch progress or last token use, whichever is later. `null` if never |
 
 This is also how the app finds out the server has an admin API at all: without it, the Admin page says the server can't be managed from the app.
@@ -78,13 +79,15 @@ Users created here must be able to sign in from the app right away. The app has 
 
 ## `PATCH /api/admin/users/<name>`
 
-Changes a user. The body has any of `admin`, `password` and `display_name`:
+Changes a user. The body has any of `admin`, `password`, `display_name` and `must_change_password`:
 
 ```json
 { "admin": true }
 ```
 
-`200` on success; the body is ignored. Setting a new password must also delete all of that user's tokens, so every device they're on is signed out. `422` with a message when the change isn't allowed, for example `{"message": "You cannot remove your own admin rights"}`.
+`200` on success; the body is ignored. Setting a new password must also delete all of that user's tokens, so every device they're on is signed out.
+
+`must_change_password` is the user menu's _Require a new password_. While it's `true`, report it from [`GET /api/me`](auth.md#get-apime-optional); the app then asks the user for a new password each time it opens (they can pick _Later_) and sends it to [`POST /api/password`](auth.md#post-apipassword-optional), which clears the flag. `422` with a message when the change isn't allowed, for example `{"message": "You cannot remove your own admin rights"}`.
 
 ## `DELETE /api/admin/users/<name>`
 

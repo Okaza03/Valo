@@ -44,6 +44,40 @@ Every field is optional; missing numbers show as 0 and missing lists as empty.
 
 `hours` is up to you: time actually watched (from progress positions) or the full length of everything played. Use the same rule as your website so the numbers match.
 
+## `GET /api/admin/analytics/users/<name>?days=30`: optional
+
+Clicking a user under _By user_ opens their page. `<name>` is the username (URL-encoded), `days` as above; `404` for an unknown user. Without this endpoint the page says it isn't set up.
+
+```json
+{
+  "name": "jo", "display_name": "Jo Ann", "admin": false,
+  "plays": 60, "hours": 101.2, "movies": 12, "episodes": 48,
+  "finished": 50, "in_progress": 10, "last_active": 1792103422,
+  "days": [{ "day": "2026-09-17", "plays": 3, "hours": 4.2 }],
+  "hours_of_day": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 5, 8, 9, 6, 2, 1],
+  "weekdays": [5, 4, 6, 8, 12, 14, 11],
+  "top": [{ "id": "s:Arcane", "title": "Arcane", "kind": "series", "plays": 9, "hours": 6.4 }],
+  "genres": [{ "name": "Drama", "hours": 30.1 }],
+  "recent": [
+    { "type": "episode", "id": "e:…", "series_id": "s:Arcane", "title": "Arcane", "episode": "S01E02 · Some Mysteries Are Better Left Unsolved",
+      "position": 1500, "duration": 2400, "completed": false, "updated": 1792103422 }
+  ],
+  "sessions": [{ "device": "Valo on jo-pc (Linux)", "ip": "192.168.1.20", "created": 1790000000, "last_used": 1792103422 }]
+}
+```
+
+| Field          | Type   |                                                                     |
+| -------------- | ------ | ------------------------------------------------------------------- |
+| `plays`, `hours`, `days` | | As in the overview, for this user only                      |
+| `movies`, `episodes` | int | Optional: how many of each they played                         |
+| `finished`, `in_progress` | int | Optional: plays watched to the end (95 %) and not          |
+| `hours_of_day` | array  | Optional: 24 counts, plays per hour of the day (server time), shown as _When they watch_ |
+| `weekdays`     | array  | Optional: 7 counts, Monday first                                    |
+| `top`          | array  | Most watched first, like the overview's; with `id` the title opens on click |
+| `genres`       | array  | Optional: `name`, `hours`, most watched first                       |
+| `recent`       | array  | Newest first: `type` (`movie`/`episode`), `id`, `series_id` for episodes, `title`, optional `episode` label, `position`, `duration` (seconds), `completed`, `updated` (unix time) |
+| `sessions`     | array  | Optional: their signed-in devices: `device`, `ip`, `created`, `last_used` |
+
 ## Where the numbers come from
 
 The simplest source is what you already store for [watch progress](progress.md): every saved entry is a play, its `updated` time says when, and its `position` says how much was watched. That's what the reference server does. It undercounts rewatches (a second viewing overwrites the first entry), which is fine for an overview.

@@ -245,6 +245,8 @@ pub(super) struct Cx<'a> {
     pub goto: Option<(Section, Option<String>)>,
     pub reload_library: bool,
     pub click: Option<Click>,
+    /// Scroll the page back to the top.
+    pub to_top: bool,
 }
 
 impl<'a> Cx<'a> {
@@ -554,6 +556,7 @@ impl Browse {
             goto: None,
             reload_library: false,
             click: None,
+            to_top: false,
         };
         match section {
             Section::Dashboard => st.dashboard.ui(ui, &mut cx),
@@ -569,8 +572,10 @@ impl Browse {
             goto,
             reload_library,
             click,
+            to_top,
             ..
         } = cx;
+        self.to_top |= to_top;
 
         if login || l2 {
             *action = Action::NeedLogin(self.client.clone());

@@ -706,6 +706,80 @@ def analytics(progress, lib, days):
     }
 
 
+def user_analytics(progress, users, lib, name, days):
+    """One user's watching: totals, when they watch, what and on which devices."""
+    since = time.time() - days * 86400
+    data = lib.get()
+    titles = {("movie", m["id"]): (m, None, None) for m in data["movies"]}
+    for s in data["series"]:
+        for se in s["seasons"]:
+            for e in se["episodes"]:
+                label = f"S{se['number']:02}E{e['number']:02} · {e.get('title') or ''}".rstrip(" ·")
+                titles[("episode", e["id"])] = (s, e["id"], label)
+    per_day, top, genres, recent = {}, {}, {}, []
+    hours_of_day, weekdays = [0] * 24, [0] * 7
+    plays, hours, movies, episodes, finished, started = 0, 0.0, 0, 0, 0, 0
+    for key, e in progress.data.get(name, {}).items():
+        if e["updated"] < since:
+            continue
+        kind, id = key.split(":", 1)
+        pos, dur = e["position"], e["duration"]
+        h = min(pos, dur or pos) / 3600
+        when = datetime.datetime.fromtimestamp(e["updated"])
+        day = when.date().isoformat()
+        d = per_day.setdefault(day, {"day": day, "plays": 0, "hours": 0.0})
+        d["plays"] += 1
+        d["hours"] += h
+        hours_of_day[when.hour] += 1
+        weekdays[when.weekday()] += 1
+        plays, hours = plays + 1, hours + h
+        done = dur > 0 and pos >= 0.95 * dur
+        finished, started = finished + done, started + (not done)
+        movies, episodes = movies + (kind == "movie"), episodes + (kind == "episode")
+        item, ep, label = titles.get((kind, id), (None, None, None))
+        if not item:
+            continue
+        tkind = "movie" if kind == "movie" else "series"
+        t = top.setdefault(item["title"], {"title": item["title"], "kind": tkind, "id": item["id"], "plays": 0, "hours": 0.0})
+        t["plays"] += 1
+        t["hours"] += h
+        for g in item.get("genres") or []:
+            genres[g] = genres.get(g, 0.0) + h
+        recent.append({
+            "type": kind, "id": id, "title": item["title"], "series_id": item["id"] if ep else None,
+            "episode": label, "position": pos, "duration": dur, "completed": done, "updated": e["updated"],
+        })
+    start = datetime.date.today() - datetime.timedelta(days=days - 1)
+    series = []
+    for n in range(days):
+        day = (start + datetime.timedelta(days=n)).isoformat()
+        d = per_day.get(day, {"day": day, "plays": 0, "hours": 0.0})
+        series.append({**d, "hours": round(d["hours"], 1)})
+    info = users.users.get(name, {})
+    return {
+        "name": name,
+        "display_name": info.get("display_name"),
+        "admin": bool(info.get("admin")),
+        "plays": plays,
+        "hours": round(hours, 1),
+        "movies": movies,
+        "episodes": episodes,
+        "finished": finished,
+        "in_progress": started,
+        "last_active": progress.last_active(name),
+        "days": series,
+        "hours_of_day": hours_of_day,
+        "weekdays": weekdays,
+        "top": [{**t, "hours": round(t["hours"], 1)} for t in sorted(top.values(), key=lambda t: -t["hours"])[:20]],
+        "genres": [{"name": g, "hours": round(v, 1)} for g, v in sorted(genres.items(), key=lambda g: -g[1])[:10]],
+        "recent": sorted(recent, key=lambda r: -r["updated"])[:30],
+        "sessions": [
+            {k: v for k, v in s.items() if k not in ("id", "current")}
+            for s in sorted(users.sessions(name, None), key=lambda s: -(s["last_used"] or 0))
+        ],
+    }
+
+
 def download(url, folder, name):
     """Save an image from `url` as folder/name.<ext>, replacing other formats."""
     req = urllib.request.Request(url, headers={"User-Agent": "valo-server"})
@@ -853,6 +927,31 @@ class Users:
         self.save("users.json", self.users)
         self.logout_all(name)
 
+    def check_password(self, name, password):
+        u = self.users.get(name)
+        return bool(u) and hmac.compare_digest(u["hash"], self.hash(password, u["salt"]))
+
+    def change_own_password(self, name, password, token):
+        """The user's own change: other devices are signed out, this one stays,
+        and an admin's "change your password" is done."""
+        salt = secrets.token_hex(16)
+        self.users[name].update(salt=salt, hash=self.hash(password, salt))
+        self.users[name].pop("must_change_password", None)
+        self.save("users.json", self.users)
+        with self.lock:
+            self.tokens = {t: s for t, s in self.tokens.items() if s["name"] != name or t == token}
+            self.save("tokens.json", self.tokens)
+
+    def must_change_password(self, name):
+        return bool(self.users.get(name, {}).get("must_change_password"))
+
+    def set_must_change_password(self, name, on):
+        if on:
+            self.users[name]["must_change_password"] = True
+        else:
+            self.users[name].pop("must_change_password", None)
+        self.save("users.json", self.users)
+
     def delete(self, name):
         del self.users[name]
         self.save("users.json", self.users)
@@ -869,6 +968,7 @@ class Users:
                 "name": n,
                 "display_name": self.users[n].get("display_name"),
                 "admin": self.is_admin(n),
+                "must_change_password": self.must_change_password(n),
                 "sessions": sessions.get(n, 0),
                 "last_active": max(
                     (t for t in (progress.last_active(n), used.get(n)) if t), default=None
@@ -1187,6 +1287,11 @@ def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_toke
             if parts == ["analytics"] and method == "GET":
                 days = max(1, min(int(self.query().get("days") or 30), 366))
                 return self.send_json(analytics(progress, lib, days))
+            if parts[:2] == ["analytics", "users"] and len(parts) == 3 and method == "GET":
+                if parts[2] not in users.users:
+                    return self.send_json({"error": f"no user named {parts[2]}"}, 404)
+                days = max(1, min(int(self.query().get("days") or 30), 366))
+                return self.send_json(user_analytics(progress, users, lib, parts[2], days))
             if parts == ["requests"] and method == "GET":
                 return self.send_json(sorted(reqs.items, key=lambda r: -r["created"]))
             if parts[:1] == ["requests"] and len(parts) == 2:
@@ -1286,6 +1391,8 @@ def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_toke
                     users.set_admin(name, bool(req["admin"]))
                 if req.get("password"):
                     users.set_password(name, str(req["password"]))
+                if "must_change_password" in req:
+                    users.set_must_change_password(name, bool(req["must_change_password"]))
                 if "display_name" in req:
                     users.users[name]["display_name"] = str(req["display_name"] or "").strip()[:64] or None
                     users.save("users.json", users.users)
@@ -1352,10 +1459,32 @@ def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_toke
                     return self.send_json({"error": "wrong username or password"}, 401)
                 user = users.find(str(req["username"]))
                 return self.send_json(
-                    {"token": token, "name": user, "admin": users.is_admin(user)}
+                    {
+                        "token": token,
+                        "name": user,
+                        "admin": users.is_admin(user),
+                        "must_change_password": users.must_change_password(user),
+                    }
                 )
             if path == "/api/logout":
                 users.logout(self.token())
+                return self.send_json({})
+            if path == "/api/password":
+                user = self.user()
+                if not user:
+                    return self.send_json({"error": "sign in required"}, 401)
+                try:
+                    req = json.loads(body)
+                    current, new = str(req["current_password"]), str(req["password"])
+                except (ValueError, KeyError, TypeError):
+                    return self.send_json({"error": "bad request"}, 422)
+                if not new:
+                    return self.send_json({"error": "the new password can't be empty"}, 422)
+                if not users.check_password(user, current):
+                    time.sleep(1)  # slow down guessing
+                    return self.send_json({"error": "wrong current password"}, 403)
+                users.change_own_password(user, new, self.token())
+                log(f"{user} changed their password")
                 return self.send_json({})
             if path == "/api/progress":
                 user = self.user()
@@ -1397,7 +1526,13 @@ def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_toke
                 user = self.user()
                 if not user:
                     return self.send_json({"error": "sign in required"}, 401)
-                return self.send_json({"name": user, "admin": users.is_admin(user)})
+                return self.send_json(
+                    {
+                        "name": user,
+                        "admin": users.is_admin(user),
+                        "must_change_password": users.must_change_password(user),
+                    }
+                )
             if path.startswith("/api/admin/"):
                 return self.admin("GET", path, b"")
             if path == "/api/sessions":

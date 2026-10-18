@@ -514,6 +514,9 @@ impl std::error::Error for Unauthorized {}
 pub struct Me {
     #[serde(default)]
     pub admin: bool,
+    /// An admin asked them to pick a new password.
+    #[serde(default)]
+    pub must_change_password: bool,
 }
 
 /// A user as the admin API lists them.
@@ -525,6 +528,9 @@ pub struct AdminUser {
     pub display_name: Option<String>,
     #[serde(default)]
     pub admin: bool,
+    /// Asked to pick a new password the next time they open the app.
+    #[serde(default)]
+    pub must_change_password: bool,
     /// How many devices are signed in.
     #[serde(default)]
     pub sessions: Option<u32>,
@@ -705,6 +711,9 @@ pub struct DayStat {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct TitleStat {
+    /// Optional; lets the app open the title.
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
     pub title: String,
     /// "movie" or "series"
     pub kind: Option<String>,
@@ -723,6 +732,77 @@ pub struct UserStat {
     pub movies: Option<u32>,
     pub episodes: Option<u32>,
     pub last_active: Option<i64>,
+}
+
+/// `GET /api/admin/analytics/users/<name>?days=N`: one user's watching.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UserAnalytics {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub admin: bool,
+    pub plays: u64,
+    pub hours: f64,
+    pub movies: Option<u32>,
+    pub episodes: Option<u32>,
+    pub finished: Option<u32>,
+    pub in_progress: Option<u32>,
+    pub last_active: Option<i64>,
+    /// Oldest first, one per day of the range.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub days: Vec<DayStat>,
+    /// Plays started in each hour of the day, 0 to 23 (server time).
+    #[serde(deserialize_with = "null_as_empty")]
+    pub hours_of_day: Vec<u32>,
+    /// Plays on each weekday, Monday first.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub weekdays: Vec<u32>,
+    /// Most watched first.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub top: Vec<TitleStat>,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub genres: Vec<GenreStat>,
+    /// Newest first.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub recent: Vec<RecentPlay>,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub sessions: Vec<UserSession>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct GenreStat {
+    pub name: String,
+    pub hours: f64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct RecentPlay {
+    /// "movie" or "episode"
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
+    pub title: String,
+    /// The episode's series, for episodes; empty otherwise.
+    #[serde(deserialize_with = "id_string")]
+    pub series_id: String,
+    /// "S01E02 · Pilot"
+    pub episode: Option<String>,
+    pub position: f64,
+    pub duration: f64,
+    pub completed: bool,
+    pub updated: i64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UserSession {
+    pub device: Option<String>,
+    pub ip: Option<String>,
+    pub created: Option<i64>,
+    pub last_used: Option<i64>,
 }
 
 /// A title someone asked for, e.g. through the Discord bot
@@ -1288,6 +1368,32 @@ impl Client {
             .ok()
     }
 
+    /// Change the signed-in user's own password (`POST /api/password`).
+    /// This session stays signed in.
+    pub fn change_password(&self, current: &str, new: &str) -> Result<()> {
+        let url = format!("{}/api/password", self.base);
+        let mut r = self.agent.post(&url).set("Accept", "application/json");
+        if let Some(h) = self.auth_header() {
+            r = r.set("Authorization", &h);
+        }
+        match r.send_json(serde_json::json!({ "current_password": current, "password": new })) {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(401, _)) => Err(anyhow!(Unauthorized)),
+            Err(ureq::Error::Status(403, _)) => bail!("Your current password isn't right"),
+            Err(ureq::Error::Status(404 | 405 | 501, _)) => {
+                bail!("This server can't change passwords from the app")
+            }
+            Err(ureq::Error::Status(code, r)) => {
+                let msg = r
+                    .into_json::<Value>()
+                    .ok()
+                    .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned));
+                bail!(msg.unwrap_or_else(|| format!("The server answered {code}")))
+            }
+            Err(e) => Err(status_err(e, "can't change the password")),
+        }
+    }
+
     /// Where the signed-in user is signed in (`GET /api/sessions`).
     /// `Ok(None)`: the server doesn't list sessions.
     pub fn sessions(&self) -> Result<Option<Vec<DeviceSession>>> {
@@ -1396,6 +1502,15 @@ impl Client {
         Ok(())
     }
 
+    /// Ask a user to pick a new password, or stop asking
+    /// (`PATCH /api/admin/users/<name>` with `must_change_password`).
+    pub fn admin_require_password_change(&self, name: &str, on: bool) -> Result<()> {
+        self.admin("PATCH", &format!("users/{}", encode_segment(name)))
+            .send_json(serde_json::json!({ "must_change_password": on }))
+            .map_err(admin_err)?;
+        Ok(())
+    }
+
     /// End all of a user's sessions (`POST /api/admin/users/<name>/logout`).
     pub fn admin_logout_user(&self, name: &str) -> Result<()> {
         self.admin("POST", &format!("users/{}/logout", encode_segment(name)))
@@ -1439,6 +1554,13 @@ impl Client {
 
     pub fn admin_analytics(&self, days: u32) -> Result<Analytics> {
         self.admin_json(&format!("analytics?days={days}"))
+    }
+
+    pub fn admin_user_analytics(&self, name: &str, days: u32) -> Result<UserAnalytics> {
+        self.admin_json(&format!(
+            "analytics/users/{}?days={days}",
+            encode_segment(name)
+        ))
     }
 
     pub fn admin_requests(&self) -> Result<Vec<MediaRequest>> {
@@ -2133,6 +2255,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!((a.top[0].users, a.top_rated[0].rating_count), (Some(2), 4));
+        let ua: UserAnalytics = serde_json::from_str(
+            r#"{"name": "jo", "hours_of_day": null, "recent": [{"type": "episode", "id": 7, "title": "Arcane", "updated": 1}]}"#,
+        )
+        .unwrap();
+        assert_eq!((ua.recent[0].id.as_str(), ua.hours_of_day.len()), ("7", 0));
         let u: AdminUser =
             serde_json::from_str(r#"{"name": "jo", "display_name": "Jo Ann"}"#).unwrap();
         assert_eq!(u.display_name.as_deref(), Some("Jo Ann"));
@@ -2141,7 +2268,9 @@ mod tests {
     #[test]
     fn admin_api_json() {
         let me: Me = serde_json::from_str(r#"{"name":"N","admin":true}"#).unwrap();
-        assert!(me.admin);
+        assert!(me.admin && !me.must_change_password);
+        let me: Me = serde_json::from_str(r#"{"must_change_password":true}"#).unwrap();
+        assert!(me.must_change_password);
         let u: Vec<AdminUser> = serde_json::from_str(
             r#"[{"name":"a","admin":true,"sessions":2,"last_active":1760400000},{"name":"b"}]"#,
         )
