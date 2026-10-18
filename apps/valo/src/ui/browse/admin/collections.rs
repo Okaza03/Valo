@@ -264,7 +264,9 @@ impl State {
                     .color(MUTED()),
                 );
                 ui.add_space(10.0);
-                ui.label(RichText::new("Pick one from the list, or make a new one.").color(MUTED()));
+                ui.label(
+                    RichText::new("Pick one from the list, or make a new one.").color(MUTED()),
+                );
             });
             return;
         };
