@@ -119,3 +119,65 @@ class Progress(private val file: File) {
         }
     }
 }
+
+/**
+ * My list, titles taken off Continue watching, and the titles each library
+ * had when last seen (for New arrivals), keyed like [Progress] ("<server>|@<user>|<id>").
+ * The desktop app keeps the same in watchlist.json, hidden.json and known.json.
+ */
+class Lists(private val file: File) {
+    @Serializable
+    private data class Saved(
+        val watchlist: List<String> = emptyList(),
+        val hidden: Map<String, Long> = emptyMap(),
+        val known: Map<String, Set<String>> = emptyMap(),
+    )
+
+    /** Newest first. */
+    private val watchlist = ArrayList<String>()
+    /** When each was taken off Continue watching. */
+    private val hidden = HashMap<String, Long>()
+    private val known = HashMap<String, Set<String>>()
+
+    init {
+        runCatching { json.decodeFromString<Saved>(file.readText()) }.onSuccess {
+            watchlist.addAll(it.watchlist)
+            hidden.putAll(it.hidden)
+            known.putAll(it.known)
+        }
+    }
+
+    fun onList(key: String) = key in watchlist
+
+    fun toggle(key: String) {
+        if (!watchlist.remove(key)) watchlist.add(0, key)
+        save()
+    }
+
+    /** Item ids on the list of the server and user whose keys start with `prefix`. */
+    fun listed(prefix: String): List<String> = watchlist.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }
+
+    fun hide(key: String) {
+        hidden[key] = System.currentTimeMillis() / 1000
+        save()
+    }
+
+    /** Whether `key`, last watched at `updated`, was taken off since; watching it again brings it back. */
+    fun hides(key: String, updated: Long) = hidden[key]?.let { updated <= it } == true
+
+    /** Null the first time a library is seen: nothing counts as new yet. */
+    fun known(prefix: String): Set<String>? = known[prefix]
+
+    fun setKnown(prefix: String, ids: Set<String>) {
+        known[prefix] = ids
+        save()
+    }
+
+    private fun save() {
+        runCatching {
+            val tmp = File(file.path + ".tmp")
+            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(watchlist.toList(), hidden.toMap(), known.toMap())))
+            tmp.renameTo(file)
+        }
+    }
+}

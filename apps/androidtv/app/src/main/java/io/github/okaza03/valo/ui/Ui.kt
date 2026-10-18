@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -618,3 +619,139 @@ fun metaLine(item: Item): String = buildList {
     item.score?.let { add("★ %.1f".format(it)) }
     if (item.genres.isNotEmpty()) add(item.genres.take(3).joinToString(", "))
 }.joinToString("  ·  ")
+
+/** The desktop app's gold, for ratings, quality and progress on details pages (details::GOLD). */
+val GOLD = Color(0xFFE8C46A)
+/** Small captions ("Cast", "File · Metadata") (details::TEAL). */
+val TEAL = Color(0xFF6ECDBE)
+
+/** A row's caption, with how many it holds. */
+@Composable
+fun RowTitle(text: String, count: Int? = null, modifier: Modifier = Modifier) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.padding(start = EDGE, bottom = 10.dp)) {
+        MonoText(text, 13.sp)
+        if (count != null) {
+            Spacer(Modifier.width(10.dp))
+            MonoText(count.toString(), 13.sp, MUTED)
+        }
+    }
+}
+
+/**
+ * A block of text the remote can land on, so a list scrolls down to it
+ * (text alone can't take focus). Outlined while focused.
+ */
+@Composable
+fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(6.dp)
+    Column(
+        modifier
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .clip(shape)
+            .background(SURFACE.copy(alpha = 0.85f))
+            .border(if (focused) 2.dp else 1.dp, if (focused) TEXT else LINE, shape)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) { content() }
+}
+
+/** Label and value pairs, the labels in a column of their own (details::kv_rows). */
+@Composable
+fun InfoRows(rows: List<Pair<String, String>>, labelWidth: Dp = 130.dp, valueColor: (String) -> Color = { TEXT }) {
+    for ((k, v) in rows) {
+        Row {
+            Text(k, color = MUTED, fontSize = 14.sp, modifier = Modifier.width(labelWidth))
+            Text(v, color = valueColor(k), fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** A person in a cast row: round photo (or initial), name, and their part. */
+@Composable
+fun PersonCard(name: String, photo: String?, role: String?, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Column(Modifier.width(120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Card(
+            onClick = onClick,
+            shape = CardDefaults.shape(CircleShape),
+            scale = CardDefaults.scale(focusedScale = 1.08f),
+            border = CardDefaults.border(focusedBorder = Border(BorderStroke(2.dp, TEXT), shape = CircleShape)),
+            colors = CardDefaults.colors(containerColor = SURFACE),
+            modifier = Modifier.size(96.dp).onFocusChanged { focused = it.isFocused },
+        ) {
+            if (photo != null) {
+                Art(photo, Modifier.fillMaxSize())
+            } else {
+                Box(Modifier.fillMaxSize().background(colorFor(name)), contentAlignment = Alignment.Center) {
+                    Text(name.firstOrNull()?.uppercase() ?: "?", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            name, fontSize = 14.sp, color = if (focused) TEXT else TEXT.copy(alpha = 0.85f),
+            maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+        )
+        if (role != null) {
+            Text(role, fontSize = 12.sp, color = MUTED, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+/**
+ * Something with a menu that holding OK opens (a card's "Add to My list").
+ * `content` gets a modifier for it, so focus comes back to it after the menu.
+ */
+@Composable
+fun WithMenu(items: () -> List<MenuItem?>, content: @Composable (Modifier, openMenu: () -> Unit) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var wasOpen by remember { mutableStateOf(false) }
+    val back = remember { FocusRequester() }
+    LaunchedEffect(open) {
+        if (open) wasOpen = true else if (wasOpen) runCatching { back.requestFocus() }
+    }
+    Box {
+        content(Modifier.focusRequester(back)) { open = true }
+        Menu(open = open, onDismiss = { open = false }, items = if (open) items() else emptyList())
+    }
+}
+
+/** "Jan 5, 2021" from "2021-01-05". */
+fun dateLong(s: String): String {
+    val p = s.take(10).split('-').mapNotNull { it.toIntOrNull() }
+    val months = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return when {
+        p.size == 3 && p[1] in 1..12 -> "${months[p[1] - 1]} ${p[2]}, ${p[0]}"
+        else -> s
+    }
+}
+
+/** "$160,000,000" */
+fun money(n: Long): String = "$" + "%,d".format(java.util.Locale.US, n)
+
+/** "1.4 GB" */
+fun bytes(n: Long): String = when {
+    n >= 1L shl 30 -> "%.1f GB".format(n / (1L shl 30).toDouble())
+    n >= 1L shl 20 -> "%.0f MB".format(n / (1L shl 20).toDouble())
+    else -> "%.0f KB".format(n / 1024.0)
+}
+
+/** "8.2 Mbps" */
+fun bitrate(n: Long): String = "%.1f Mbps".format(n / 1_000_000.0)
+
+/** "just now", "3 hours ago", "yesterday", "12 days ago", … (people::ago) */
+fun ago(t: Long): String {
+    val s = (System.currentTimeMillis() / 1000 - t).coerceAtLeast(0)
+    fun plural(n: Long, unit: String) = "$n $unit${if (n == 1L) "" else "s"} ago"
+    return when {
+        s < 60 -> "just now"
+        s < 3600 -> plural(s / 60, "minute")
+        s < 86_400 -> plural(s / 3600, "hour")
+        s < 2 * 86_400 -> "yesterday"
+        s < 60 * 86_400 -> plural(s / 86_400, "day")
+        s < 365 * 86_400 -> plural(s / (30 * 86_400), "month")
+        else -> plural(s / (365 * 86_400), "year")
+    }
+}

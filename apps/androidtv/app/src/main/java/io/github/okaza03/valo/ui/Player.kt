@@ -1,15 +1,19 @@
 // Full-screen playback with Media3/ExoPlayer, which uses the TV's hardware
 // decoders. Remembers where you stopped and plays the next episode on its own.
+// The controls (ExoPlayer's own) show the title on top while they're up.
 package io.github.okaza03.valo.ui
 
 import androidx.annotation.OptIn
 import android.net.Uri
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -20,8 +24,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -30,6 +37,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -52,6 +60,16 @@ import kotlinx.coroutines.delay
 /** Save the position this often while playing. */
 private const val SAVE_EVERY_MS = 5_000L
 
+/**
+ * The player's view while one is on screen. When the controls hide while one
+ * of their buttons has focus (after picking subtitles, say), Android hands
+ * focus to the window instead, and the remote's keys stop reaching the
+ * player; MainActivity sends them back here.
+ */
+object PlayerKeys {
+    var view: PlayerView? = null
+}
+
 @OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
@@ -60,6 +78,9 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
     val url = episode?.stream ?: item.stream ?: return
     val context = LocalContext.current
     var error by remember(key) { mutableStateOf<String?>(null) }
+    /** The controls are up. */
+    var hud by remember(key) { mutableStateOf(false) }
+    val next = episode?.let { model.episodeAfter(item, it.id) }
 
     val player = remember(key) {
         val auth = model.client?.authFor(url)
@@ -92,6 +113,29 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
             }
     }
 
+    // the controls' Next button moves on to the next episode
+    val shown = remember(player) {
+        object : ForwardingPlayer(player) {
+            private fun isNext(c: Int) = c == Player.COMMAND_SEEK_TO_NEXT || c == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
+
+            override fun isCommandAvailable(command: Int) =
+                if (isNext(command)) next != null else super.isCommandAvailable(command)
+
+            override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
+                .addIf(Player.COMMAND_SEEK_TO_NEXT, next != null)
+                .addIf(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, next != null)
+                .build()
+
+            override fun seekToNext() = playNext()
+
+            override fun seekToNextMediaItem() = playNext()
+
+            private fun playNext() {
+                if (next != null) model.swap(Screen.Player(item.id, next.id))
+            }
+        }
+    }
+
     fun save() {
         val dur = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
         model.save(key, player.currentPosition / 1000.0, dur / 1000.0)
@@ -102,7 +146,6 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state != Player.STATE_ENDED) return
                 save()
-                val next = if (episode != null) model.episodeAfter(item, episode.id) else null
                 if (next != null) model.swap(Screen.Player(item.id, next.id)) else model.back()
             }
 
@@ -165,18 +208,47 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
                     useController = true
                     controllerShowTimeoutMs = 4_000
                     setShowSubtitleButton(true)
-                    setShowNextButton(false)
+                    setShowNextButton(next != null)
                     setShowPreviousButton(false)
                     setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                     keepScreenOn = true
                     isFocusable = true
                     isFocusableInTouchMode = true
+                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
+                        hud = v == View.VISIBLE
+                        // the focused button just disappeared: keep the remote on the player
+                        if (v != View.VISIBLE) requestFocus()
+                    })
                     post { requestFocus() }
                 }
             },
-            update = { it.player = player },
+            update = {
+                it.player = shown
+                PlayerKeys.view = it
+            },
+            onRelease = { if (PlayerKeys.view === it) PlayerKeys.view = null },
             modifier = Modifier.fillMaxSize(),
         )
+        }
+        if (hud && error == null) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)))
+                    .padding(start = EDGE, end = EDGE, top = 28.dp, bottom = 40.dp),
+            ) {
+                Text(
+                    item.title, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                if (episode != null) {
+                    val season = item.seasons.find { s -> s.episodes.any { it.id == episode.id } }
+                    val what = listOfNotNull(
+                        season?.let { "S${it.number} E${episode.number}" },
+                        episode.title.takeIf { it.isNotEmpty() },
+                    ).joinToString("  ·  ")
+                    Text(what, color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
         error?.let {
             Column(Modifier.align(Alignment.Center).width(640.dp)) {

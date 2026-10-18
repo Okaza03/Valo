@@ -1,5 +1,6 @@
 // The home page: the focused title's artwork and details on top, rows of
-// titles below (Continue watching, Recently added, Movies, TV shows, genres).
+// titles below (Continue watching, My list, Recently added, Top rated,
+// Movies, TV shows, genres). Hold OK on a card for its menu.
 package io.github.okaza03.valo.ui
 
 import androidx.compose.foundation.background
@@ -23,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +40,7 @@ import io.github.okaza03.valo.Item
 import io.github.okaza03.valo.Kind
 import io.github.okaza03.valo.Library
 import io.github.okaza03.valo.Screen
+import kotlinx.coroutines.launch
 
 private class HomeCard(
     val key: String,
@@ -47,6 +50,8 @@ private class HomeCard(
     val art: String?,
     val progress: Float?,
     val open: Screen,
+    /** A Continue watching card, which can be taken off the row. */
+    val removable: Boolean = false,
 )
 
 private class HomeRow(val title: String, val wide: Boolean, val cards: List<HomeCard>)
@@ -66,24 +71,30 @@ private fun rows(model: AppModel, lib: Library): List<HomeRow> {
             val e = model.entry(item.id)
             HomeCard(
                 "cont/${item.id}", item, item.title, e?.let { "${fmtRuntime(it.dur - it.pos)} left" },
-                item.backdrop ?: item.poster, e?.fraction, Screen.Player(item.id),
+                item.thumb ?: item.backdrop ?: item.poster, e?.fraction, Screen.Player(item.id), removable = true,
             )
         } else {
             val ep = next.episode
             HomeCard(
                 "cont/${item.id}", item, item.title, "S${next.season.number} E${ep.number} · ${ep.title}",
-                ep.still ?: item.backdrop ?: item.poster, next.resume?.fraction ?: 0f, Screen.Player(item.id, ep.id),
+                ep.still ?: item.thumb ?: item.backdrop ?: item.poster, next.resume?.fraction ?: 0f,
+                Screen.Player(item.id, ep.id), removable = true,
             )
         }
     }
     if (cont.isNotEmpty()) out += HomeRow("Continue watching", true, cont)
 
+    val mine = model.myList(lib)
+    if (mine.isNotEmpty()) out += posters("My list", mine)
     val recent = lib.all.filter { it.added != null }.sortedByDescending { it.added }.take(24)
     if (recent.isNotEmpty()) out += posters("Recently added", recent)
-    if (lib.movies.isNotEmpty()) out += posters("Movies", lib.movies)
-    if (lib.series.isNotEmpty()) out += posters("TV shows", lib.series)
+    val rated = model.topRated(lib)
+    if (rated.isNotEmpty()) out += posters("Top rated", rated.take(24))
+    // the rest in a random order (the same all session), so the home page isn't A to Z
+    if (lib.movies.isNotEmpty()) out += posters("Movies", model.shuffled(lib.movies, "movies").take(30))
+    if (lib.series.isNotEmpty()) out += posters("TV shows", model.shuffled(lib.series, "series").take(30))
     for (g in lib.genres().take(8)) {
-        val items = lib.all.filter { g in it.genres }.take(30)
+        val items = model.shuffled(lib.all.filter { g in it.genres }, g).take(30)
         if (items.size >= 2) out += posters(g, items)
     }
     return out
@@ -96,6 +107,7 @@ fun HomeScreen(model: AppModel, lib: Library) {
     val target = model.homeFocus?.takeIf { k -> rows.any { r -> r.cards.any { it.key == k } } }
         ?: rows.firstOrNull()?.cards?.firstOrNull()?.key
     val requester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
     // again after a search, which replaced the rows
     LaunchedEffect(model.query.isBlank()) {
         if (model.query.isNotBlank()) return@LaunchedEffect
@@ -107,9 +119,10 @@ fun HomeScreen(model: AppModel, lib: Library) {
 
     // Continue watching shows up once progress arrives from the server. The
     // list keeps the row you're on in place, which would push it out of view.
+    // (Not for My list, which appears when you add to it: the card you're on stays in view.)
     val firstRow = rows.firstOrNull()?.title
     LaunchedEffect(firstRow) {
-        if (model.homeList.firstVisibleItemIndex <= 1) model.homeList.scrollToItem(0)
+        if (firstRow == "Continue watching" && model.homeList.firstVisibleItemIndex <= 1) model.homeList.scrollToItem(0)
     }
 
     Box(Modifier.fillMaxSize().background(BG)) {
@@ -133,7 +146,23 @@ fun HomeScreen(model: AppModel, lib: Library) {
                     CardRow(row, state, target, requester, onFocus = { card ->
                         focused = card.item
                         model.homeFocus = card.key
-                    }, onClick = { model.push(it.open) })
+                    }, onClick = { model.push(it.open) }, menu = { card ->
+                        if (card.removable) {
+                            listOf(
+                                MenuItem("Remove from Continue watching") {
+                                    model.hide(card.item.id)
+                                    // its card is gone: on to the first one once the row redraws
+                                    scope.launch {
+                                        kotlinx.coroutines.delay(50)
+                                        requester.focusSoon()
+                                    }
+                                },
+                                MenuItem("Open ${card.item.title}") { model.push(Screen.Details(card.item.id)) },
+                            )
+                        } else {
+                            listOf(listItem(model, card.item))
+                        }
+                    })
                 }
             }
         } }
@@ -171,6 +200,7 @@ private fun CardRow(
     requester: FocusRequester,
     onFocus: (HomeCard) -> Unit,
     onClick: (HomeCard) -> Unit,
+    menu: (HomeCard) -> List<MenuItem>,
 ) {
     Column {
         MonoText(row.title, 13.sp, modifier = Modifier.padding(start = EDGE, bottom = 10.dp))
@@ -180,16 +210,20 @@ private fun CardRow(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(row.cards, key = { it.key }) { card ->
-                ArtCard(
-                    art = card.art, title = card.title, sub = card.sub,
-                    width = if (row.wide) 200.dp else 112.dp,
-                    ratio = if (row.wide) 16f / 9f else 2f / 3f,
-                    progress = card.progress,
-                    plays = row.wide,
-                    onClick = { onClick(card) },
-                    onFocus = { onFocus(card) },
-                    focusRequester = if (card.key == target) requester else null,
-                )
+                WithMenu({ menu(card) }) { m, open ->
+                    ArtCard(
+                        art = card.art, title = card.title, sub = card.sub,
+                        width = if (row.wide) 200.dp else 112.dp,
+                        ratio = if (row.wide) 16f / 9f else 2f / 3f,
+                        progress = card.progress,
+                        plays = row.wide,
+                        onClick = { onClick(card) },
+                        onLongClick = open,
+                        onFocus = { onFocus(card) },
+                        focusRequester = if (card.key == target) requester else null,
+                        modifier = m,
+                    )
+                }
             }
         }
     }

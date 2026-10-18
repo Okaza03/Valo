@@ -161,17 +161,19 @@ fn latest() -> Result<Option<Release>> {
 
 /// The summary line and the points of a release's notes (notes.md: "# Valo
 /// v1.2.3", a summary, "### New" / "### Fixed" lists, "### Downloads").
+/// A "### Admin" list is left out: the popup isn't the place for admin features.
 fn release_notes(body: &str) -> (String, Vec<(String, String)>) {
     let plain = |s: &str| s.replace("**", "").replace('`', "").trim().to_owned();
     let (mut summary, mut notes) = (String::new(), Vec::new());
-    let mut in_list = false;
+    let (mut in_list, mut admin) = (false, false);
     for line in body.lines().map(str::trim) {
         if let Some(h) = line.strip_prefix("### ") {
             if h.trim().eq_ignore_ascii_case("downloads") {
                 break;
             }
             in_list = true;
-        } else if line.starts_with('#') || line.is_empty() {
+            admin = h.trim().eq_ignore_ascii_case("admin");
+        } else if line.starts_with('#') || line.is_empty() || admin {
         } else if let Some(point) = line.strip_prefix("- ").filter(|_| in_list) {
             // "- **Subtitles:** pick subtitles from …"
             let (title, text) = match point.strip_prefix("**").and_then(|p| p.split_once("**")) {
@@ -589,7 +591,8 @@ mod tests {
     fn notes() {
         let body = "# Valo v0.8.3\n\nSubtitles in the player, and more.\n\n### New\n\
             - **Subtitles:** pick them from the `subtitle` button.\n\
-            - **Click the banner:** opens it.\n\n### Fixed\n- Volume is kept.\n\n\
+            - **Click the banner:** opens it.\n\n### Admin\n- **Subtitle search:** for admins.\n\n\
+            ### Fixed\n- Volume is kept.\n\n\
             ### Downloads\n| File | For |\n- not a note\n";
         let (summary, notes) = release_notes(body);
         assert_eq!(summary, "Subtitles in the player, and more.");

@@ -1,5 +1,6 @@
 //! "What's new", shown once after the app updates itself (or is updated).
 //! Only the big things go in [`NOTES`]; the full list is in the release notes.
+//! Admin features stay out: they're for the server's admin, who knows about them.
 use eframe::egui::{self, RichText};
 
 use super::settings::{dialog, header};
@@ -9,12 +10,10 @@ use crate::update::{newer, Release, VERSION};
 struct Note {
     title: &'static str,
     text: &'static str,
-    /// Only admins see it.
-    admin: bool,
 }
 
 /// Newest last. Add an entry when a release brings something users would
-/// want to know about; leave small fixes out.
+/// want to know about; leave small fixes and admin features out.
 const NOTES: &[(&str, &[Note])] = &[
     (
         "0.7.0",
@@ -23,38 +22,26 @@ const NOTES: &[(&str, &[Note])] = &[
                 title: "New arrivals",
                 text: "When movies or series are added to your server, Valo shows them \
                    to you when you open the app or the library refreshes.",
-                admin: false,
             },
             Note {
                 title: "Refresh any time",
                 text: "Click \"Library updated …\" in the bottom-left corner to reload \
                    the library without restarting.",
-                admin: false,
             },
             Note {
                 title: "A fresh home page",
                 text: "The Movies, TV shows and genre rows show a new mix each time you \
                    open Valo, and a Top rated row shows the best scored titles.",
-                admin: false,
             },
             Note {
                 title: "Your devices",
                 text: "Your profile lists every device you're signed in on, and you can \
                    sign any of them out.",
-                admin: false,
             },
             Note {
                 title: "Collections",
                 text: "Film series like Batman stay together in A to Z, in the order your \
                    server's admin picked.",
-                admin: false,
-            },
-            Note {
-                title: "Admin page",
-                text: "Admin in the profile menu: a dashboard with syncs and the live log, \
-                   analytics, Discord requests, editing titles with IMDb, collections \
-                   and users. Sections your server doesn't support link to their setup guide.",
-                admin: true,
             },
         ],
     ),
@@ -65,13 +52,11 @@ const NOTES: &[(&str, &[Note])] = &[
                 title: "Discord status",
                 text: "Your Discord profile shows what you're watching and how much is left. \
                        Turn it off in Settings under Playback.",
-                admin: false,
             },
             Note {
                 title: "Time left",
                 text: "The player shows how long you've watched on the left and how much \
                        is left on the right.",
-                admin: false,
             },
         ],
     ),
@@ -81,7 +66,6 @@ const NOTES: &[(&str, &[Note])] = &[
             title: "Remembers its window",
             text: "Valo opens the way you closed it: maximized, or at the same size \
                    and place.",
-            admin: false,
         }],
     ),
     (
@@ -92,13 +76,11 @@ const NOTES: &[(&str, &[Note])] = &[
                 text: "Settings > Appearance has app styles that lay Valo out like Netflix, \
                        Prime Video, Disney+, HBO Max, YouTube or Apple TV (home page, cards, \
                        details pages and player), and Light, Black, Dim and Midnight themes.",
-                admin: false,
             },
             Note {
                 title: "Bookmark from anywhere",
                 text: "Hover over a movie or series on the home page, Movies or TV shows and \
                        click the bookmark in its corner to add it to My list.",
-                admin: false,
             },
         ],
     ),
@@ -108,7 +90,6 @@ const NOTES: &[(&str, &[Note])] = &[
             title: "Subtitles",
             text: "Pick subtitles from the subtitle button in the player (C turns them on \
                    and off). The language you pick comes on by itself next time.",
-            admin: false,
         }],
     ),
     (
@@ -118,44 +99,35 @@ const NOTES: &[(&str, &[Note])] = &[
                 title: "Updates show what's new",
                 text: "When a new version is out, a popup shows what it brings and updates \
                        Valo in one click. Click Later or outside it to update another time.",
-                admin: false,
             },
             Note {
                 title: "Subtitles in sync",
                 text: "With Bluetooth headphones, the picture and subtitles now wait for the \
                        sound instead of running a little ahead of it.",
-                admin: false,
-            },
-            Note {
-                title: "Subtitles that fit your file",
-                text: "Searching for subtitles online lists the ones made for your copy of \
-                       the movie first, marked Matches your file.",
-                admin: true,
             },
         ],
     ),
 ];
 
 /// The notes for versions after `seen`, up to `current`.
-fn between(seen: &str, current: &str, admin: bool) -> Vec<&'static Note> {
+fn between(seen: &str, current: &str) -> Vec<&'static Note> {
     NOTES
         .iter()
         .filter(|(v, _)| newer(v, seen) && !newer(v, current))
         .flat_map(|(_, notes)| notes.iter())
-        .filter(|n| admin || !n.admin)
         .collect()
 }
 
 /// Whether there's anything to show for a user who last saw `seen`
 /// (empty: a config from before this existed).
-pub fn pending(seen: &str, _admin: bool) -> bool {
+pub fn pending(seen: &str) -> bool {
     // every update gets the dialog: the notes, or at least a pointer to them
     seen != VERSION
 }
 
 /// Draw the dialog; true once it's dismissed.
-pub fn ui(ctx: &egui::Context, seen: &str, admin: bool) -> bool {
-    let notes = between(seen, VERSION, admin);
+pub fn ui(ctx: &egui::Context, seen: &str) -> bool {
+    let notes = between(seen, VERSION);
     let (done, close) = dialog(ctx, "whats-new", 460.0, |ui| {
         header(ui, "What's new", &format!("Valo {VERSION}"));
         ui.add_space(6.0);
@@ -272,18 +244,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn notes_are_ordered_and_filtered() {
+    fn notes_are_ordered_and_picked_by_version() {
         assert!(NOTES.windows(2).all(|w| newer(w[1].0, w[0].0)));
-        // admin-only notes stay hidden from everyone else
-        let all = between("0.6.1", "0.7.0", true);
-        let users = between("0.6.1", "0.7.0", false);
-        assert!(users.iter().all(|n| !n.admin));
-        assert!(users.len() < all.len());
         // nothing before its release, nothing twice
-        assert!(between("0.6.1", "0.6.1", true).is_empty());
-        assert!(between("0.7.0", "0.7.0", true).is_empty());
-        assert_eq!(between("", "0.7.0", true).len(), all.len());
+        let all = between("0.6.1", "0.7.0");
+        assert!(!all.is_empty());
+        assert!(between("0.6.1", "0.6.1").is_empty());
+        assert!(between("0.7.0", "0.7.0").is_empty());
+        assert_eq!(between("", "0.7.0").len(), all.len());
         // an update always shows the dialog, even without notes of its own
-        assert!(pending("0.0.1", false) && !pending(VERSION, false));
+        assert!(pending("0.0.1") && !pending(VERSION));
     }
 }

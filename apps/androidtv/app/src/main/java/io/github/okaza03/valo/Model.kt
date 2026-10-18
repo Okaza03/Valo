@@ -30,19 +30,43 @@ sealed interface Screen {
     data class Details(val itemId: String) : Screen
     /** `episodeId` for series; `fromStart` ignores the resume point. */
     data class Player(val itemId: String, val episodeId: String? = null, val fromStart: Boolean = false) : Screen
+    /** A cast member, director or creator, by name. */
+    data class Person(val name: String) : Screen
+    /** The signed-in user's watching stats and devices. */
+    data object Profile : Screen
 }
 
 enum class Filter { All, InProgress, Unwatched, Watched }
 
-enum class Sort { Title, Year, Added }
+/** `Director` sorts series by their creator. */
+enum class Sort { Title, Year, Added, Director }
+
+/** The profile page's "Your devices". */
+sealed interface Devices {
+    data object Loading : Devices
+    /** The server doesn't list sessions. */
+    data object Unsupported : Devices
+    data class Failed(val message: String) : Devices
+    data class Loaded(val list: List<DeviceSession>) : Devices
+}
 
 /** A grid page's choices and place, kept while you look at a title. */
 class GridState {
     var filter by mutableStateOf(Filter.All)
     var sort by mutableStateOf(Sort.Title)
+    /** Sort direction. */
+    var desc by mutableStateOf(false)
     var genre by mutableStateOf<String?>(null)
     var list = LazyGridState()
     var focus: String? = null
+}
+
+/** Scrambles a hash so a different seed gives a different order (SplitMix64's finalizer). */
+private fun mix(x: Long): Long {
+    var z = x + -7046029254386353131L
+    z = (z xor (z ushr 30)) * -4658895280553007687L
+    z = (z xor (z ushr 27)) * -7723592293110705685L
+    return z xor (z ushr 31)
 }
 
 /** What to play next in a series, and where in it. */
@@ -56,6 +80,7 @@ private const val PULL_EVERY_MS = 60_000L
 class AppModel(app: Application) : AndroidViewModel(app) {
     val prefs = Prefs(app)
     private val progress = Progress(File(app.filesDir, "progress.json"))
+    private val lists = Lists(File(app.filesDir, "lists.json"))
 
     private val stack = mutableStateListOf<Screen>(Screen.Loading("Starting…"))
     val screen get() = stack.last()
@@ -72,6 +97,18 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** Bumped whenever progress changes, so screens showing it redraw. */
     var progressVersion by mutableIntStateOf(0)
         private set
+    /** The same for My list and Continue watching removals. */
+    private var listsVersion by mutableIntStateOf(0)
+
+    /** Newly added titles, by id, waiting to be announced. */
+    var arrivals: List<String> by mutableStateOf(emptyList())
+        private set
+
+    var devices: Devices by mutableStateOf(Devices.Loading)
+        private set
+
+    /** Orders the home rows and "You might also like": random, but the same all session. */
+    private val shuffle = kotlin.random.Random.nextLong()
 
     /** Kept across screens so going back lands where you were. */
     val homeList = LazyListState()
@@ -114,6 +151,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------ navigation
 
     fun push(s: Screen) {
+        if (s == screen) return
         stack += s
     }
 
@@ -204,6 +242,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             busy = false
             res.onSuccess {
                 val first = library == null
+                noteArrivals(it)
                 library = it
                 if (first) {
                     query = ""
@@ -235,6 +274,93 @@ class AppModel(app: Application) : AndroidViewModel(app) {
                 eps.any { (it?.pos ?: 0.0) > 30 } -> Filter.InProgress
                 else -> Filter.Unwatched
             }
+        }
+    }
+
+    /** `items` in a random order that stays the same all session; `salt` gives each row its own. */
+    fun shuffled(items: List<Item>, salt: String): List<Item> =
+        items.sortedBy { mix((salt + "\u0000" + it.id).hashCode().toLong() xor shuffle) }
+
+    /** Up to `n` titles sharing a genre with `item`, the same ones each time. */
+    fun similar(lib: Library, item: Item, n: Int): List<Item> =
+        shuffled(lib.all.filter { it.id != item.id && it.genres.any { g -> g in item.genres } }, item.id).take(n)
+
+    /** Best scored first; empty when too few titles have a score for the row to mean much. */
+    fun topRated(lib: Library): List<Item> {
+        val rated = lib.all.filter { it.score != null }
+        if (rated.size < 5) return emptyList()
+        return shuffled(rated, "top").sortedByDescending { it.score }
+    }
+
+    // --------------------------------------------------------------- my list
+
+    fun onList(id: String): Boolean {
+        listsVersion
+        return lists.onList(prefix() + id)
+    }
+
+    fun toggleList(id: String) {
+        lists.toggle(prefix() + id)
+        listsVersion++
+    }
+
+    /** My list, newest first. */
+    fun myList(lib: Library): List<Item> {
+        listsVersion
+        return lists.listed(prefix()).mapNotNull(lib::find)
+    }
+
+    /** Take a movie or series off Continue watching, until it's watched again. */
+    fun hide(id: String) {
+        lists.hide(prefix() + id)
+        listsVersion++
+    }
+
+    // -------------------------------------------------------------- arrivals
+
+    /** A library (re)loaded: queue what's new since last time. The first load of a library only remembers it. */
+    private fun noteArrivals(lib: Library) {
+        val now = lib.all.map { it.id }.toSet()
+        val old = lists.known(prefix())
+        if (old == null) {
+            lists.setKnown(prefix(), now)
+            return
+        }
+        arrivals = (arrivals + now.filter { it !in old && it !in arrivals }).filter { it in now }
+    }
+
+    /** The arrivals were shown: they count as seen, even if the app closes with them up. */
+    fun closeArrivals() {
+        library?.let { l -> lists.setKnown(prefix(), l.all.map { it.id }.toSet()) }
+        arrivals = emptyList()
+    }
+
+    // --------------------------------------------------------------- devices
+
+    fun loadDevices() {
+        val c = client ?: return
+        // keep the list up while it reloads, so the rows don't jump
+        if (devices !is Devices.Loaded) devices = Devices.Loading
+        viewModelScope.launch {
+            val res = runCatching { withContext(Dispatchers.IO) { c.sessions() } }
+            devices = res.fold(
+                { if (it == null) Devices.Unsupported else Devices.Loaded(it.sortedByDescending { d -> d.current }) },
+                {
+                    if (it is Unauthorized) signedOut(it.message)
+                    Devices.Failed(it.message ?: "Can't load your devices")
+                },
+            )
+        }
+    }
+
+    fun signOutDevice(d: DeviceSession) {
+        if (d.current) return signOut()
+        val c = client ?: return
+        viewModelScope.launch {
+            val res = runCatching { withContext(Dispatchers.IO) { c.endSession(d.key) } }
+            res.onSuccess { toast("${d.device ?: "That device"} is signed out") }
+                .onFailure { toast(it.message ?: "Can't sign that device out") }
+            loadDevices()
         }
     }
 
@@ -349,6 +475,12 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         return c?.base.orEmpty() + "|@" + user + "|"
     }
 
+    /** Everything watched or started, newest first (the profile page's history). */
+    fun history(): List<Pair<String, Entry>> {
+        progressVersion
+        return progress.recent(prefix())
+    }
+
     fun entry(id: String): Entry? {
         // read so callers redraw when it changes
         progressVersion
@@ -390,17 +522,20 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** Continue watching: unfinished movies, and the next episode of each series. */
     fun continueWatching(lib: Library): List<Pair<Item, NextUp?>> {
         progressVersion
+        listsVersion
         val seenSeries = HashSet<String>()
         val out = ArrayList<Pair<Item, NextUp?>>()
         for ((id, e) in progress.recent(prefix())) {
             if (out.size >= 20) break
             val movie = lib.movies.find { it.id == id }
             if (movie != null) {
-                if (e.inProgress) out += movie to null
+                if (e.inProgress && !lists.hides(prefix() + movie.id, e.updated)) out += movie to null
                 continue
             }
             val s = lib.seriesOf(id) ?: continue
             if (!seenSeries.add(s.id)) continue
+            // newest first, so `e` is the series' latest watch
+            if (lists.hides(prefix() + s.id, e.updated)) continue
             nextUp(s)?.let { out += s to it }
         }
         return out

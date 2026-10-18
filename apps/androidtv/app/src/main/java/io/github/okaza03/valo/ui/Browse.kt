@@ -185,7 +185,7 @@ private fun UpdateButtons(model: AppModel) {
     }
 }
 
-/** The signed-in user, with a menu of account actions (no Profile page on TV). */
+/** The signed-in user, with a menu: their profile and account actions. */
 @Composable
 private fun ProfileMenu(model: AppModel) {
     val ctx = LocalContext.current
@@ -233,6 +233,8 @@ private fun ProfileMenu(model: AppModel) {
                 }
             },
             items = listOf(
+                MenuItem("Profile") { model.push(Screen.Profile) },
+                null,
                 MenuItem(if (model.busy) "Refreshing…" else "Refresh library") { model.loadLibrary() },
                 MenuItem("Change server", model::changeServer),
                 null,
@@ -292,15 +294,26 @@ fun GridScreen(model: AppModel, lib: Library, kind: Kind) {
     val status = inGenre.map(model::status)
     fun count(f: Filter) = status.count { it == f }
     var items = inGenre.zip(status).filter { g.filter == Filter.All || it.second == g.filter }.map { it.first }
-    items = when (g.sort) {
-        Sort.Title -> items
-        Sort.Year -> items.sortedByDescending { it.year ?: Int.MIN_VALUE }
-        Sort.Added -> items.sortedByDescending { it.added ?: Long.MIN_VALUE }
+    // titles without the key go last either way; the library comes A to Z
+    fun <K : Comparable<K>> by(key: (Item) -> K?): List<Item> {
+        val (with, without) = items.partition { key(it) != null }
+        val sorted = if (g.desc) with.sortedByDescending { key(it)!! } else with.sortedBy { key(it)!! }
+        return sorted + without
     }
+    items = when (g.sort) {
+        Sort.Title -> if (g.desc) items.reversed() else items
+        Sort.Year -> by { it.year }
+        Sort.Added -> by { it.added }
+        Sort.Director -> by { it.maker?.lowercase() }
+    }
+    val makerLabel = if (kind == Kind.Movie) "Director" else "Creator"
 
     Box(Modifier.fillMaxSize().background(BG)) {
         LibraryPage(model, lib, Screen.Grid(kind)) {
-            PosterGrid(model, items, g.list, g.focus, { g.focus = it }, empty = "Nothing here") {
+            PosterGrid(
+                model, items, g.list, g.focus, { g.focus = it }, empty = "Nothing here",
+                sub = if (g.sort == Sort.Director) { i -> i.maker } else { i -> i.year?.toString() },
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 14.dp, bottom = 10.dp)) {
                     Segmented(
                         g.filter,
@@ -313,14 +326,27 @@ fun GridScreen(model: AppModel, lib: Library, kind: Kind) {
                         { g.filter = it },
                     )
                     Spacer(Modifier.weight(1f).widthIn(min = 24.dp))
+                    // each sort both ways (the desktop app's direction button)
                     Choice(
-                        "Sort", g.sort,
+                        "Sort", g.sort to g.desc,
                         buildList {
-                            add(Sort.Title to "A – Z")
-                            add(Sort.Year to "Release year")
-                            if (all.any { it.added != null }) add(Sort.Added to "Recently added")
+                            add((Sort.Title to false) to "A – Z")
+                            add((Sort.Title to true) to "Z – A")
+                            add((Sort.Year to true) to "Newest first")
+                            add((Sort.Year to false) to "Oldest first")
+                            if (all.any { it.added != null }) {
+                                add((Sort.Added to true) to "Recently added")
+                                add((Sort.Added to false) to "Added first")
+                            }
+                            if (all.any { it.maker != null }) {
+                                add((Sort.Director to false) to "$makerLabel A – Z")
+                                add((Sort.Director to true) to "$makerLabel Z – A")
+                            }
                         },
-                    ) { g.sort = it }
+                    ) { (sort, desc) ->
+                        g.sort = sort
+                        g.desc = desc
+                    }
                     if (genres.isNotEmpty()) {
                         Spacer(Modifier.width(24.dp))
                         Choice("Genre", g.genre, listOf<Pair<String?, String>>(null to "All genres") + genres.map { it to it }) {
@@ -362,6 +388,7 @@ private fun PosterGrid(
     onFocus: (String) -> Unit,
     empty: String,
     grab: Boolean = true,
+    sub: (Item) -> String? = { it.year?.toString() },
     header: @Composable () -> Unit,
 ) {
     val target = focusKey?.takeIf { k -> items.any { it.id == k } } ?: items.firstOrNull()?.id
@@ -389,13 +416,17 @@ private fun PosterGrid(
             }
         }
         items(items, key = { it.id }) { i ->
-            ArtCard(
-                art = i.poster, title = i.title, sub = i.year?.toString(), width = POSTER_W, ratio = 2f / 3f,
-                progress = if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
-                onClick = { model.push(Screen.Details(i.id)) },
-                onFocus = { onFocus(i.id) },
-                focusRequester = if (i.id == target) requester else null,
-            )
+            WithMenu({ listOf(listItem(model, i)) }) { m, menu ->
+                ArtCard(
+                    art = i.poster, title = i.title, sub = sub(i), width = POSTER_W, ratio = 2f / 3f,
+                    progress = if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
+                    onClick = { model.push(Screen.Details(i.id)) },
+                    onLongClick = menu,
+                    onFocus = { onFocus(i.id) },
+                    focusRequester = if (i.id == target) requester else null,
+                    modifier = m,
+                )
+            }
         }
     }
 }

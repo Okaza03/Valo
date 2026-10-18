@@ -510,7 +510,7 @@ impl eframe::App for App {
         // "What's new" and new arrivals wait for the splash and other dialogs
         let whats_new = match &self.stage {
             Stage::Browse(b) if self.cfg.seen_version != update::VERSION => {
-                ui::whats_new::pending(&self.cfg.seen_version, b.client().admin)
+                ui::whats_new::pending(&self.cfg.seen_version)
             }
             _ => false,
         };
@@ -543,10 +543,7 @@ impl eframe::App for App {
         if let Stage::Browse(b) = &self.stage {
             let quiet = self.splash.is_none() && self.dialog.is_none() && b.settled();
             let seen = self.cfg.seen_version != update::VERSION;
-            if seen
-                && quiet
-                && (!whats_new || ui::whats_new::ui(ctx, &self.cfg.seen_version, b.client().admin))
-            {
+            if seen && quiet && (!whats_new || ui::whats_new::ui(ctx, &self.cfg.seen_version)) {
                 self.cfg.seen_version = update::VERSION.to_owned();
                 self.cfg.save();
             }
