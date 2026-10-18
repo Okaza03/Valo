@@ -8,7 +8,7 @@ use super::super::users::danger_button;
 use super::super::{needs_note, Cx, Done, Remote, Section};
 use super::{field, State};
 use crate::api::{
-    encode_segment, Client, Episode, Item, Kind, Subtitle, SubtitleResult, TmdbMatch,
+    encode_segment, Client, Episode, Item, Kind, Season, Subtitle, SubtitleResult, TmdbMatch,
 };
 use crate::ui::{image_cover, mono, placeholder, primary_button, small_button, text_field};
 use crate::ui::{ERROR, MUTED, TEXT};
@@ -78,6 +78,64 @@ fn video_name(item: &Item, episode: &str) -> String {
         .and_then(|(_, e)| file(&e.file))
         .or_else(|| eps().find_map(|(_, e)| file(&e.file)))
         .unwrap_or_default()
+}
+
+/// An episode's code as the subtitle endpoints take it: "S01E02".
+fn episode_code(season: u32, episode: u32) -> String {
+    format!("S{season:02}E{episode:02}")
+}
+
+/// The season and episode of a code like "S01E02" (any case).
+fn parse_code(code: &str) -> Option<(u32, u32)> {
+    let code = code.trim().to_lowercase();
+    let (s, e) = code.strip_prefix('s')?.split_once('e')?;
+    Some((s.parse().ok()?, e.parse().ok()?))
+}
+
+/// Season and episode dropdowns for the subtitle's episode, kept in
+/// `code` ("S01E02"; empty: none picked).
+fn episode_picker(ui: &mut Ui, seasons: &[Season], code: &mut String) {
+    let picked = parse_code(code);
+    let season = picked.and_then(|(n, _)| seasons.iter().find(|s| s.number == n));
+    ui.vertical(|ui| {
+        ui.label(mono("Season", 10.5).color(MUTED()));
+        egui::ComboBox::from_id_salt("subtitle-season")
+            .width(140.0)
+            .selected_text(season.map_or("Choose…".into(), Season::label))
+            .show_ui(ui, |ui| {
+                for s in seasons {
+                    let on = season.is_some_and(|c| c.number == s.number);
+                    if ui.selectable_label(on, s.label()).clicked() && !on {
+                        // the season's first episode, so a choice is always made
+                        *code = s
+                            .episodes
+                            .first()
+                            .map(|e| episode_code(s.number, e.number))
+                            .unwrap_or_default();
+                    }
+                }
+            });
+    });
+    let Some(season) = season else { return };
+    let ep = picked.and_then(|(_, n)| season.episodes.iter().find(|e| e.number == n));
+    let name = |e: &Episode| match e.title.trim() {
+        "" => format!("Episode {}", e.number),
+        t => format!("{}. {t}", e.number),
+    };
+    ui.vertical(|ui| {
+        ui.label(mono("Episode", 10.5).color(MUTED()));
+        egui::ComboBox::from_id_salt("subtitle-episode")
+            .width(260.0)
+            .selected_text(ep.map_or("Choose…".into(), name))
+            .show_ui(ui, |ui| {
+                for e in &season.episodes {
+                    let on = ep.is_some_and(|c| c.number == e.number);
+                    if ui.selectable_label(on, name(e)).clicked() {
+                        *code = episode_code(season.number, e.number);
+                    }
+                }
+            });
+    });
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -244,6 +302,11 @@ impl State {
             return;
         }
         let series = item.kind == Kind::Series;
+        let seasons = if series {
+            seasons_of(item, cx)
+        } else {
+            Vec::new()
+        };
         panel(ui, |ui| {
             caps(ui, "Subtitles", TEAL());
             ui.add_space(8.0);
@@ -306,11 +369,7 @@ impl State {
                     text_field(ui, &mut x.lang, "en", false);
                 });
                 if series {
-                    ui.vertical(|ui| {
-                        ui.set_width(160.0);
-                        ui.label(mono("Episode", 10.5).color(MUTED()));
-                        text_field(ui, &mut x.episode, "S01E02", false);
-                    });
+                    episode_picker(ui, &seasons, &mut x.episode);
                 }
             });
             ui.add_space(8.0);
@@ -410,12 +469,24 @@ impl State {
                                 .inner
                                 .clicked()
                             {
+                                // which episode it's for: the one picked, else the result's
+                                let episode = Some(x.episode.trim())
+                                    .filter(|e| !e.is_empty())
+                                    .map(str::to_owned)
+                                    .or_else(|| r.episode.clone());
                                 let (p, id) = (path.clone(), r.id.clone());
+                                let q = episode.as_ref().map_or(String::new(), |e| {
+                                    format!("?episode={}", encode_segment(e))
+                                });
+                                let body = match &episode {
+                                    Some(e) => json!({ "id": id, "episode": e }),
+                                    None => json!({ "id": id }),
+                                };
                                 cx.run(move |c| {
                                     c.admin_call(
                                         "POST",
-                                        &format!("{p}/subtitles/download"),
-                                        Some(&json!({ "id": id })),
+                                        &format!("{p}/subtitles/download{q}"),
+                                        Some(&body),
                                     )?;
                                     Ok(Done::msg("Downloaded the subtitle."))
                                 });
@@ -740,7 +811,17 @@ fn seasons_of(item: &Item, cx: &Cx) -> Vec<crate::api::Season> {
 
 #[cfg(test)]
 mod tests {
-    use super::release_score;
+    use super::{episode_code, parse_code, release_score};
+
+    #[test]
+    fn episode_codes() {
+        assert_eq!(episode_code(1, 2), "S01E02");
+        assert_eq!(episode_code(12, 104), "S12E104");
+        assert_eq!(parse_code("S01E02"), Some((1, 2)));
+        assert_eq!(parse_code(" s3e10 "), Some((3, 10)));
+        assert_eq!(parse_code(""), None);
+        assert_eq!(parse_code("Pilot"), None);
+    }
 
     #[test]
     fn release_matching() {

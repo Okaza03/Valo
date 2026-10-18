@@ -23,7 +23,7 @@ The Admin page's _Library_ section lets an admin fix a title by hand (title, yea
 | `PUT /api/admin/<kind>/<id>/subtitles?language=en[&episode=S01E02]` | the subtitle file | `200`                                     |
 | `DELETE /api/admin/<kind>/<id>/subtitles/<sid>` |                             | `200`                                                       |
 | `GET /api/admin/<kind>/<id>/subtitles/search?language=en[&episode=…]` |       | `[{"id", "name", "release", "language", "downloads", "episode", "moviehash_match"}]` ([picking one](#subtitle-search)) |
-| `POST /api/admin/<kind>/<id>/subtitles/download` | `{"id": "<result id>"}`    | `200`                                                       |
+| `POST /api/admin/<kind>/<id>/subtitles/download[?episode=S01E02]` | `{"id": "<result id>", "episode": "S01E02"}` (`episode` for series: the one picked, else the result's) | `200`          |
 | `POST /api/admin/subtitles/bulk`              | `{"type": "movies", "ids": […], "language": "en"}` | `202`; progress goes to the [live log](admin-dashboard.md#get-apiadminlogs) |
 | `PATCH /api/admin/episodes/<id>`              | `{"title", "aired", "duration", "overview"}` | `200`. `aired` as `YYYY-MM-DD`, `duration` in seconds, `null` clears |
 | `POST /api/admin/series/<id>/seasons/<n>/refresh` |                           | `200`: fetch the season's episode details again             |
