@@ -103,6 +103,9 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** Newly added titles, by id, waiting to be announced. */
     var arrivals: List<String> by mutableStateOf(emptyList())
         private set
+    /** Seasons added to series the user already knew, by series id. */
+    var newSeasons: Map<String, List<Int>> by mutableStateOf(emptyMap())
+        private set
 
     var devices: Devices by mutableStateOf(Devices.Loading)
         private set
@@ -320,19 +323,43 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** A library (re)loaded: queue what's new since last time. The first load of a library only remembers it. */
     private fun noteArrivals(lib: Library) {
-        val now = lib.all.map { it.id }.toSet()
+        val now = knownIds(lib)
         val old = lists.known(prefix())
         if (old == null) {
             lists.setKnown(prefix(), now)
             return
         }
-        arrivals = (arrivals + now.filter { it !in old && it !in arrivals }).filter { it in now }
+        // series remembered before seasons were: their seasons all count as known
+        val withSeasons = old.mapNotNull { k -> k.lastIndexOf("#S").takeIf { it >= 0 }?.let { k.substring(0, it) } }.toSet()
+        val queue = arrivals.toMutableList()
+        val seasons = newSeasons.toMutableMap()
+        for (i in lib.all) {
+            if (i.id !in old) {
+                if (i.id !in queue) queue += i.id
+                continue
+            }
+            if (i.kind != Kind.Series || i.id !in withSeasons) continue
+            val added = i.seasons.map { it.number }.filter { seasonKey(i.id, it) !in old }
+            if (added.isEmpty()) continue
+            if (i.id !in queue) queue += i.id
+            seasons[i.id] = ((seasons[i.id] ?: emptyList()) + added).distinct().sorted()
+        }
+        arrivals = queue.filter { it in now }
+        newSeasons = seasons.filterKeys { it in arrivals }
     }
+
+    /** A series' season as remembered next to the title ids: "<id>#S<n>". */
+    private fun seasonKey(id: String, n: Int) = "$id#S$n"
+
+    /** Every title's id, and every season's key. */
+    private fun knownIds(lib: Library) =
+        lib.all.flatMap { i -> listOf(i.id) + i.seasons.map { seasonKey(i.id, it.number) } }.toSet()
 
     /** The arrivals were shown: they count as seen, even if the app closes with them up. */
     fun closeArrivals() {
-        library?.let { l -> lists.setKnown(prefix(), l.all.map { it.id }.toSet()) }
+        library?.let { l -> lists.setKnown(prefix(), knownIds(l)) }
         arrivals = emptyList()
+        newSeasons = emptyMap()
     }
 
     // --------------------------------------------------------------- devices

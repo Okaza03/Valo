@@ -161,6 +161,8 @@ pub struct Browse {
     known: Known,
     /// Newly added titles, by id, waiting to be announced.
     arrivals: Vec<String>,
+    /// Seasons added to series the user already knew, by series id.
+    new_seasons: HashMap<String, Vec<u32>>,
     arrivals_open: bool,
 }
 
@@ -197,6 +199,7 @@ impl Browse {
             devices: devices::State::default(),
             known: Known::load(),
             arrivals: Vec::new(),
+            new_seasons: HashMap::new(),
             arrivals_open: false,
         };
         if b.client.token.is_some() {

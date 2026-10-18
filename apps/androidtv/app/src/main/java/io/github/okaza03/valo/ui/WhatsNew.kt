@@ -102,11 +102,34 @@ fun WhatsNew(notes: List<Note>, onClose: () -> Unit) {
 /** At most this many posters; the rest are counted. */
 private const val SHOWN = 12
 
-/** "2 new movies and 1 new series" */
-private fun summary(movies: Int, series: Int) = listOfNotNull(
-    when (movies) { 0 -> null; 1 -> "1 new movie"; else -> "$movies new movies" },
-    when (series) { 0 -> null; 1 -> "1 new series"; else -> "$series new series" },
-).joinToString(" and ")
+/** "1, 2 and 3" */
+private fun andList(parts: List<String>) =
+    if (parts.size < 2) parts.joinToString("") else parts.dropLast(1).joinToString(", ") + " and " + parts.last()
+
+/** "2 new movies, 1 new series and 3 new seasons" */
+private fun summary(movies: Int, series: Int, seasons: Int) = andList(
+    listOfNotNull(
+        when (movies) { 0 -> null; 1 -> "1 new movie"; else -> "$movies new movies" },
+        when (series) { 0 -> null; 1 -> "1 new series"; else -> "$series new series" },
+        when (seasons) { 0 -> null; 1 -> "1 new season"; else -> "$seasons new seasons" },
+    ),
+)
+
+/** "Season 2", "Seasons 1–3", "Seasons 1, 3 and 5", "Season 1 and Specials" */
+private fun seasonsLabel(nums: List<Int>): String {
+    val n = nums.filter { it > 0 }.distinct().sorted()
+    val numbered = when {
+        n.isEmpty() -> null
+        n.size == 1 -> "Season ${n[0]}"
+        n.last() - n.first() == n.size - 1 -> "Seasons ${n.first()}–${n.last()}"
+        else -> "Seasons " + andList(n.map { it.toString() })
+    }
+    return when {
+        numbered == null -> "Specials"
+        0 in nums -> "$numbered and Specials"
+        else -> numbered
+    }
+}
 
 @Composable
 fun Arrivals(model: AppModel, lib: Library) {
@@ -127,8 +150,10 @@ fun Arrivals(model: AppModel, lib: Library) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val movies = items.count { it.kind == Kind.Movie }
+            val series = items.count { it.kind == Kind.Series && it.id !in model.newSeasons }
+            val seasons = model.newSeasons.values.sumOf { it.size }
             Column(Modifier.padding(horizontal = 32.dp)) {
-                MonoText(summary(movies, items.size - movies), 12.sp, MUTED)
+                MonoText(summary(movies, series, seasons), 12.sp, MUTED)
                 Text("New on ${model.client?.name ?: "your server"}", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = TEXT)
             }
             Spacer(Modifier.height(10.dp))
@@ -137,9 +162,15 @@ fun Arrivals(model: AppModel, lib: Library) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(items.take(SHOWN), key = { it.id }) { i ->
+                    // a series: the seasons it came with, or the ones added since
+                    val new = model.newSeasons[i.id]
                     val sub = when {
-                        i.kind == Kind.Series -> listOfNotNull("Series", i.year?.toString()).joinToString(" · ")
-                        else -> i.year?.toString()
+                        i.kind != Kind.Series -> i.year?.toString()
+                        new != null -> "New: ${seasonsLabel(new)}"
+                        else -> {
+                            val label = if (i.seasons.isEmpty()) "Series" else seasonsLabel(i.seasons.map { it.number })
+                            listOfNotNull(label, i.year?.toString()).joinToString(" · ")
+                        }
                     }
                     ArtCard(
                         art = i.poster, title = i.title, sub = sub, width = 124.dp, ratio = 2f / 3f,

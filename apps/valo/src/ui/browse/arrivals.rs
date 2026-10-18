@@ -1,12 +1,12 @@
-//! "New on the server": movies and series added since the user last saw
-//! the library, announced on the browse pages (never over the player).
+//! "New on the server": movies, series and seasons added since the user
+//! last saw the library, announced on the browse pages (never over the player).
 use std::collections::HashSet;
 
 use eframe::egui::{self, RichText, Ui};
 
 use super::details::poster_tile;
 use super::{Browse, Click, View, GAP};
-use crate::api::{Kind, Library};
+use crate::api::{Item, Kind, Library};
 use crate::images::Images;
 use crate::ui::settings::{dialog, header};
 use crate::ui::{primary_button, MUTED};
@@ -14,25 +14,89 @@ use crate::ui::{primary_button, MUTED};
 /// At most this many posters; the rest are counted.
 const SHOWN: usize = 12;
 
-fn ids(lib: &Library) -> HashSet<String> {
-    lib.all().map(|i| i.id.clone()).collect()
+/// A series' season as remembered next to the title ids: "<id>#S<n>".
+fn season_key(id: &str, n: u32) -> String {
+    format!("{id}#S{n}")
 }
 
-/// "2 new movies and 1 new series"
-fn summary(movies: usize, series: usize) -> String {
+/// Every title's id, and every season's key.
+fn ids(lib: &Library) -> HashSet<String> {
+    lib.all()
+        .flat_map(|i| {
+            let seasons = i.seasons.iter().map(|s| season_key(&i.id, s.number));
+            std::iter::once(i.id.clone()).chain(seasons)
+        })
+        .collect()
+}
+
+/// "1, 2 and 3"
+fn and_list(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// "Season 2", "Seasons 1–3", "Seasons 1, 3 and 5", "Season 1 and Specials"
+fn seasons_label(nums: &[u32]) -> String {
+    let mut n: Vec<u32> = nums.iter().copied().filter(|&n| n > 0).collect();
+    n.sort_unstable();
+    n.dedup();
+    let specials = nums.contains(&0);
+    let numbered = match n.as_slice() {
+        [] => None,
+        [one] => Some(format!("Season {one}")),
+        [a, .., b] if (b - a) as usize == n.len() - 1 => Some(format!("Seasons {a}–{b}")),
+        _ => Some(format!(
+            "Seasons {}",
+            and_list(&n.iter().map(u32::to_string).collect::<Vec<_>>())
+        )),
+    };
+    match (numbered, specials) {
+        (Some(s), true) => format!("{s} and Specials"),
+        (Some(s), false) => s,
+        (None, _) => "Specials".into(),
+    }
+}
+
+/// "2 new movies, 1 new series and 3 new seasons"
+fn summary(movies: usize, series: usize, seasons: usize) -> String {
     let part = |n: usize, one: &str, many: &str| match n {
         0 => None,
         1 => Some(format!("1 new {one}")),
         n => Some(format!("{n} new {many}")),
     };
-    [
+    let parts: Vec<String> = [
         part(movies, "movie", "movies"),
         part(series, "series", "series"),
+        part(seasons, "season", "seasons"),
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join(" and ")
+    .collect();
+    and_list(&parts)
+}
+
+/// The line under an arrival's poster: the year for a movie; for a series,
+/// the seasons it came with, or the ones added since.
+fn subtitle(item: &Item, new_seasons: Option<&Vec<u32>>) -> String {
+    match (item.kind, new_seasons) {
+        (Kind::Series, Some(new)) => format!("New: {}", seasons_label(new)),
+        (Kind::Series, None) => {
+            let nums: Vec<u32> = item.seasons.iter().map(|s| s.number).collect();
+            let label = if nums.is_empty() {
+                "Series".into()
+            } else {
+                seasons_label(&nums)
+            };
+            match item.year {
+                Some(y) => format!("{label} · {y}"),
+                None => label,
+            }
+        }
+        _ => item.year.map(|y| y.to_string()).unwrap_or_default(),
+    }
 }
 
 impl Browse {
@@ -44,13 +108,41 @@ impl Browse {
         match self.known.get(&prefix) {
             None => self.known.set(&prefix, now),
             Some(old) => {
-                let fresh: Vec<String> = lib
-                    .all()
-                    .filter(|i| !old.contains(&i.id) && !self.arrivals.contains(&i.id))
-                    .map(|i| i.id.clone())
+                // series remembered before seasons were: their seasons all count as known
+                let with_seasons: HashSet<&str> = old
+                    .iter()
+                    .filter_map(|k| k.rsplit_once("#S").map(|(id, _)| id))
                     .collect();
-                self.arrivals.extend(fresh);
+                for i in lib.all() {
+                    if !old.contains(&i.id) {
+                        if !self.arrivals.contains(&i.id) {
+                            self.arrivals.push(i.id.clone());
+                        }
+                        continue;
+                    }
+                    if i.kind != Kind::Series || !with_seasons.contains(i.id.as_str()) {
+                        continue;
+                    }
+                    let added: Vec<u32> = i
+                        .seasons
+                        .iter()
+                        .map(|s| s.number)
+                        .filter(|&n| !old.contains(&season_key(&i.id, n)))
+                        .collect();
+                    if added.is_empty() {
+                        continue;
+                    }
+                    if !self.arrivals.contains(&i.id) {
+                        self.arrivals.push(i.id.clone());
+                    }
+                    let queued = self.new_seasons.entry(i.id.clone()).or_default();
+                    queued.extend(added);
+                    queued.sort_unstable();
+                    queued.dedup();
+                }
                 self.arrivals.retain(|id| now.contains(id));
+                let arrivals = &self.arrivals;
+                self.new_seasons.retain(|id, _| arrivals.contains(id));
             }
         }
     }
@@ -76,12 +168,17 @@ impl Browse {
         }
         let items: Vec<_> = self.arrivals.iter().filter_map(|id| lib.find(id)).collect();
         let movies = items.iter().filter(|i| i.kind == Kind::Movie).count();
+        let new_series = items
+            .iter()
+            .filter(|i| i.kind == Kind::Series && !self.new_seasons.contains_key(&i.id))
+            .count();
+        let seasons: usize = self.new_seasons.values().map(Vec::len).sum();
         let mut open = None;
         let (done, close) = dialog(ctx, "new-arrivals", 640.0, |ui: &mut Ui| {
             header(
                 ui,
                 &format!("New on {}", self.client.info.name),
-                &summary(movies, items.len() - movies),
+                &summary(movies, new_series, seasons),
             );
             ui.add_space(8.0);
             let w = ui.available_width();
@@ -96,11 +193,7 @@ impl Browse {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = GAP;
                     for item in row {
-                        let sub = match (item.kind, item.year) {
-                            (Kind::Series, Some(y)) => format!("Series · {y}"),
-                            (Kind::Series, None) => "Series".to_owned(),
-                            (_, y) => y.map(|y| y.to_string()).unwrap_or_default(),
-                        };
+                        let sub = subtitle(item, self.new_seasons.get(&item.id));
                         if poster_tile(ui, item, Some(&sub), tw, images) {
                             open = Some(item.id.clone());
                         }
@@ -120,6 +213,7 @@ impl Browse {
         });
         if done || close || open.is_some() || items.is_empty() {
             self.arrivals.clear();
+            self.new_seasons.clear();
             self.arrivals_open = false;
         }
         open.map(Click::Open)
@@ -128,12 +222,26 @@ impl Browse {
 
 #[cfg(test)]
 mod tests {
-    use super::summary;
+    use super::{seasons_label, summary};
 
     #[test]
     fn summaries() {
-        assert_eq!(summary(2, 1), "2 new movies and 1 new series");
-        assert_eq!(summary(1, 0), "1 new movie");
-        assert_eq!(summary(0, 3), "3 new series");
+        assert_eq!(summary(2, 1, 0), "2 new movies and 1 new series");
+        assert_eq!(summary(1, 0, 0), "1 new movie");
+        assert_eq!(summary(0, 3, 0), "3 new series");
+        assert_eq!(
+            summary(2, 1, 3),
+            "2 new movies, 1 new series and 3 new seasons"
+        );
+        assert_eq!(summary(0, 0, 1), "1 new season");
+    }
+
+    #[test]
+    fn season_labels() {
+        assert_eq!(seasons_label(&[2]), "Season 2");
+        assert_eq!(seasons_label(&[3, 1, 2]), "Seasons 1–3");
+        assert_eq!(seasons_label(&[1, 3, 5]), "Seasons 1, 3 and 5");
+        assert_eq!(seasons_label(&[0, 1]), "Season 1 and Specials");
+        assert_eq!(seasons_label(&[0]), "Specials");
     }
 }
