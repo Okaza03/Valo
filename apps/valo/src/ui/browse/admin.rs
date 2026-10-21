@@ -2,6 +2,7 @@
 //! section talks to its own part of the optional admin API (docs/api/admin*.md);
 //! when the server doesn't have that part, the section links to its setup
 //! guide instead.
+mod addons;
 mod analytics;
 mod collections;
 mod dashboard;
@@ -32,16 +33,18 @@ pub(super) enum Section {
     Requests,
     Library,
     Collections,
+    Addons,
     Users,
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    const ALL: [Section; 7] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
         Section::Collections,
+        Section::Addons,
         Section::Users,
     ];
 
@@ -52,6 +55,7 @@ impl Section {
             Section::Requests => "Requests",
             Section::Library => "Library",
             Section::Collections => "Collections",
+            Section::Addons => "Addons",
             Section::Users => "Users",
         }
     }
@@ -71,6 +75,10 @@ impl Section {
             Section::Collections => {
                 "Group titles like the Batman films, so A to Z keeps them together, oldest first."
             }
+            Section::Addons => {
+                "Stremio addons for everyone: catalogs on the home page, missing details \
+                 filled in, and subtitles in the player."
+            }
             Section::Users => "Who can sign in, and who can manage the server.",
         }
     }
@@ -83,6 +91,7 @@ impl Section {
             Section::Requests => api::ADMIN_DOCS_REQUESTS,
             Section::Library => api::ADMIN_DOCS_LIBRARY,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
+            Section::Addons => api::ADMIN_DOCS_ADDONS,
             Section::Users => api::ADMIN_API_DOCS,
         }
     }
@@ -103,6 +112,7 @@ impl Section {
                 "the endpoints for editing titles (/api/admin/movies/…, /api/admin/series/…)"
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
+            Section::Addons => "the addon endpoints (/api/addons, /api/admin/addons)",
             Section::Users => "Valo's admin API (/api/admin/users)",
         }
     }
@@ -289,6 +299,7 @@ pub(super) struct AdminState {
     requests: requests::State,
     library: library::State,
     collections: collections::State,
+    addons: addons::State,
     users: users::State,
     /// The server's own title lists (`GET /api/admin/movies`, `/series`).
     catalog: [Remote<Vec<Item>>; 2],
@@ -303,6 +314,7 @@ impl AdminState {
             Section::Requests => self.requests.refresh(),
             Section::Library => self.library.refresh(),
             Section::Collections => self.collections.refresh(),
+            Section::Addons => self.addons.refresh(),
             Section::Users => {}
         }
         self.users.refresh();
@@ -334,6 +346,7 @@ impl AdminState {
             Section::Requests => self.requests.missing(),
             Section::Library => self.library.missing,
             Section::Collections => self.collections.missing(),
+            Section::Addons => self.addons.missing(),
             Section::Users => self.users.missing(),
         }
     }
@@ -564,6 +577,7 @@ impl Browse {
             Section::Requests => st.requests.ui(ui, &mut cx),
             Section::Library => st.library.ui(ui, &mut cx),
             Section::Collections => st.collections.ui(ui, &mut cx),
+            Section::Addons => st.addons.ui(ui, &mut cx),
             Section::Users => st.users.ui(ui, &mut cx),
         }
         let Cx {

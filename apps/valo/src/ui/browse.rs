@@ -3,6 +3,7 @@ mod admin;
 mod arrivals;
 mod details;
 mod devices;
+mod discover;
 mod layouts;
 mod password;
 mod people;
@@ -24,6 +25,7 @@ use super::{
     segmented, tab,
 };
 use super::{ACCENT, BG, ERROR, MUTED, SURFACE, SURFACE_HI, TEXT};
+use crate::addons::Lookup;
 use crate::api::{Client, Item, Kind, Library, Me, Missing, Mode, Unauthorized};
 use crate::config::{Config, Entry, Hidden, Known, Progress, Watchlist};
 use crate::images::Images;
@@ -160,6 +162,8 @@ pub struct Browse {
     password: password::Prompt,
     admin: admin::AdminState,
     devices: devices::State,
+    /// Catalogs and details from the admin's Stremio addons.
+    discover: discover::State,
     /// Titles each library had when the user last saw it.
     known: Known,
     /// Newly added titles, by id, waiting to be announced.
@@ -201,6 +205,7 @@ impl Browse {
             password: password::Prompt::default(),
             admin: admin::AdminState::default(),
             devices: devices::State::default(),
+            discover: discover::State::default(),
             known: Known::load(),
             arrivals: Vec::new(),
             new_seasons: HashMap::new(),
@@ -217,6 +222,7 @@ impl Browse {
     pub fn reload(&mut self, ctx: &egui::Context) {
         let c = self.client.clone();
         self.loading = Some(Task::spawn(ctx, move || c.library()));
+        self.discover.reload(ctx, &self.client);
         self.error = None;
         self.missing = None;
     }
@@ -302,9 +308,12 @@ impl Browse {
         if let Some(r) = self.loading.as_mut().and_then(|t| t.poll()) {
             self.loading = None;
             match r {
-                Ok(lib) => {
+                Ok(mut lib) => {
+                    self.discover.on_library(&mut lib);
                     let gone = match &self.view {
-                        View::Details(id) => lib.find(id).is_none(),
+                        View::Details(id) => {
+                            lib.find(id).is_none() && !self.discover.remote.contains_key(id)
+                        }
                         View::Episode(_, ep) => lib.find_episode(ep).is_none(),
                         _ => false,
                     };
@@ -326,6 +335,7 @@ impl Browse {
                 }
             }
         }
+        self.discover.poll(ctx, &self.client, &mut self.lib);
         let every = Duration::from_secs(u64::from(cfg.refresh_minutes) * 60);
         if cfg.refresh_minutes > 0
             && self.loading.is_none()
@@ -417,10 +427,17 @@ impl Browse {
                             }
                             View::Details(id) => match lib.find(&id) {
                                 Some(item) if item.kind == Kind::Movie => {
+                                    self.discover.want_item(item);
                                     self.movie_page(ui, &lib, item, images, progress)
                                 }
-                                Some(item) => self.series_page(ui, &lib, item, images, progress),
-                                None => Some(Click::Nav(View::Home)),
+                                Some(item) => {
+                                    self.discover.want_item(item);
+                                    self.series_page(ui, &lib, item, images, progress)
+                                }
+                                None => match self.discover.remote.get(&id).cloned() {
+                                    Some(item) => self.remote_page(ui, &item, images),
+                                    None => Some(Click::Nav(View::Home)),
+                                },
                             },
                             View::Episode(_, ep) => match lib.find_episode(&ep) {
                                 Some((s, si, ei)) => {
@@ -758,6 +775,30 @@ impl Browse {
                 let cards = self.poster_cards(rated.into_iter().take(24), progress);
                 click = click.or(self.row(ui, "Top rated", &cards, false, None, images));
             }
+        }
+        // the admin's addon catalogs; titles we have play, the rest can be requested
+        let rows: Vec<(String, Vec<Card>)> = self
+            .discover
+            .shown
+            .iter()
+            .map(|(title, ids)| {
+                let items = ids
+                    .iter()
+                    .filter_map(|id| lib.find(id).or_else(|| self.discover.remote.get(id)));
+                let mut cards = self.poster_cards(items, progress);
+                for c in &mut cards {
+                    if self.discover.remote.contains_key(&c.item) {
+                        c.sub = Some(match c.sub.take() {
+                            Some(y) => format!("{y} · not on server"),
+                            None => "Not on server".into(),
+                        });
+                    }
+                }
+                (title.clone(), cards)
+            })
+            .collect();
+        for (title, cards) in rows {
+            click = click.or(self.row(ui, &title, &cards, false, None, images));
         }
         // the rest in a random order (the same all session), so the home page isn't A to Z
         if !lib.movies.is_empty() {
@@ -1436,6 +1477,7 @@ impl Browse {
                     start: resume(&key),
                     key: Some(key),
                     subtitles: item.subtitles.clone(),
+                    addons: Lookup::movie(&self.client, item.imdb_id.as_deref()),
                 }]))
             }
             Kind::Series => {
@@ -1466,6 +1508,12 @@ impl Browse {
                             start: if queue.is_empty() { resume(&key) } else { 0.0 },
                             key: Some(key),
                             subtitles: e.subtitles.clone(),
+                            addons: Lookup::episode(
+                                &self.client,
+                                item.imdb_id.as_deref(),
+                                season.number,
+                                e.number,
+                            ),
                         });
                     }
                 }

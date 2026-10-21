@@ -31,9 +31,18 @@ pub struct Release {
     package: Option<(String, String)>,
     /// Download URL of SHA256SUMS.txt.
     sums: Option<String>,
-    /// The release notes' one-line summary.
+    /// The notes of every release since this build, newest first, so
+    /// someone a few versions behind sees everything they'd get.
+    pub changes: Vec<Changes>,
+}
+
+/// One release's notes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Changes {
+    pub version: String,
+    /// The one-line summary.
     pub summary: String,
-    /// Its "New"/"Fixed" points as (title, text); the title may be empty.
+    /// The "New"/"Fixed" points as (title, text); the title may be empty.
     pub notes: Vec<(String, String)>,
 }
 
@@ -45,6 +54,10 @@ struct GhRelease {
     body: Option<String>,
     #[serde(default)]
     assets: Vec<GhAsset>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
 }
 
 #[derive(Deserialize)]
@@ -148,15 +161,61 @@ fn latest() -> Result<Option<Release>> {
     };
     let package = asset(&|n| n.ends_with(&suffix));
     let sums = asset(&|n| n == "SHA256SUMS.txt").map(|(_, u)| u);
-    let (summary, notes) = release_notes(r.body.as_deref().unwrap_or_default());
-    Ok(newer(&version, VERSION).then_some(Release {
+    if !newer(&version, VERSION) {
+        return Ok(None);
+    }
+    // the releases in between, for their notes; just the latest's if that fails
+    let skipped: Vec<GhRelease> = agent(Some(Duration::from_secs(10)))
+        .get(&format!(
+            "https://api.github.com/repos/{REPO}/releases?per_page=50"
+        ))
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .ok()
+        .and_then(|r| r.into_json().ok())
+        .unwrap_or_default();
+    let changes = since(&r, &skipped, VERSION);
+    Ok(Some(Release {
         version,
         url: r.html_url,
         package,
         sums,
-        summary,
-        notes,
+        changes,
     }))
+}
+
+/// The notes of `latest` and of every release in `all` after `current` and
+/// before it, newest first.
+fn since(latest: &GhRelease, all: &[GhRelease], current: &str) -> Vec<Changes> {
+    let version = |r: &GhRelease| r.tag_name.trim_start_matches(['v', 'V']).to_owned();
+    let top = version(latest);
+    let mut v: Vec<&GhRelease> = all
+        .iter()
+        .filter(|r| !r.draft && !r.prerelease)
+        .filter(|r| newer(&version(r), current) && newer(&top, &version(r)))
+        .collect();
+    v.push(latest);
+    v.sort_by(|a, b| {
+        let (a, b) = (version(a), version(b));
+        if newer(&a, &b) {
+            std::cmp::Ordering::Less
+        } else if newer(&b, &a) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+    v.dedup_by(|a, b| version(a) == version(b));
+    v.into_iter()
+        .map(|r| {
+            let (summary, notes) = release_notes(r.body.as_deref().unwrap_or_default());
+            Changes {
+                version: version(r),
+                summary,
+                notes,
+            }
+        })
+        .collect()
 }
 
 /// The summary line and the points of a release's notes (notes.md: "# Valo
@@ -608,6 +667,37 @@ mod tests {
             ]
         );
         assert_eq!(release_notes(""), (String::new(), vec![]));
+    }
+
+    #[test]
+    fn notes_since_this_version() {
+        let rel = |tag: &str, pre: bool| GhRelease {
+            tag_name: tag.into(),
+            html_url: String::new(),
+            body: Some(format!("# Valo {tag}\n\nSummary {tag}.\n")),
+            assets: Vec::new(),
+            draft: false,
+            prerelease: pre,
+        };
+        let all = [
+            rel("v0.8.7", false),
+            rel("v0.8.6", false),
+            rel("v0.8.5-beta", true),
+            rel("v0.8.4", false),
+            rel("v0.8.3", false),
+            rel("v0.8.2", false),
+        ];
+        let got: Vec<_> = since(&all[0], &all, "0.8.2")
+            .into_iter()
+            .map(|c| c.version)
+            .collect();
+        assert_eq!(got, ["0.8.7", "0.8.6", "0.8.4", "0.8.3"]);
+        // the list failed to load: the latest alone
+        let only = since(&all[0], &[], "0.8.2");
+        assert_eq!(
+            (only.len(), only[0].summary.as_str()),
+            (1, "Summary v0.8.7.")
+        );
     }
 
     #[test]

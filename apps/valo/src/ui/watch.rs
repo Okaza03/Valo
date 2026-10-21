@@ -10,6 +10,7 @@ use eframe::egui::{
 use super::chrome::{self, Icon};
 use super::theme::{self, PlayerLayout, Skin, Times, TitleAt};
 use super::{gradient, mono, ERROR, MUTED, TEXT};
+use crate::addons::{self, Lookup};
 use crate::api::SubtitleTrack;
 use crate::audio::AudioOut;
 use crate::config::{Config, Progress};
@@ -61,6 +62,8 @@ pub struct PlayItem {
     pub start: f64,
     /// Subtitle files on the server.
     pub subtitles: Vec<SubtitleTrack>,
+    /// Ask the admin's subtitle addons for more; None once they've answered.
+    pub addons: Option<Lookup>,
 }
 
 impl PlayItem {
@@ -74,6 +77,7 @@ impl PlayItem {
             key: None,
             start: 0.0,
             subtitles: Vec::new(),
+            addons: None,
         }
     }
 }
@@ -122,6 +126,10 @@ pub struct Watch {
     /// Keeps the screen from blanking or sleeping while playing.
     inhibit: Inhibit,
     subs: SubState,
+    /// The addons' subtitles for an item, on their way.
+    addon_subs: Option<(usize, Task<Vec<SubtitleTrack>>)>,
+    /// Subtitles were picked or turned off by hand for this video.
+    subs_chosen: bool,
 }
 
 impl Watch {
@@ -144,6 +152,8 @@ impl Watch {
             vol_key: None,
             inhibit: Inhibit::new(),
             subs: SubState::Off,
+            addon_subs: None,
+            subs_chosen: false,
         }
     }
 
@@ -193,8 +203,8 @@ impl Watch {
             (Some(item), Some(t)) if t < item.subtitles.len() => {
                 let track = item.subtitles[t].clone();
                 let auth = match &item.source {
-                    Source::Url { auth, .. } => auth.clone(),
-                    Source::File(_) => None,
+                    Source::Url { auth, .. } if !track.external => auth.clone(),
+                    _ => None, // never hand our token to an addon
                 };
                 SubState::Loading(
                     t,
@@ -214,6 +224,7 @@ impl Watch {
             cfg.subtitle_sdh = tr.sdh;
         }
         cfg.save();
+        self.subs_chosen = true;
         self.set_subs(ctx, t);
     }
 
@@ -243,9 +254,14 @@ impl Watch {
             cfg.subtitle_sdh,
         );
         self.set_subs(ctx, t);
+        self.subs_chosen = false;
+        self.addon_subs = None;
         let Some(item) = self.items.get(i) else {
             return;
         };
+        if let Some(l) = item.addons.clone() {
+            self.addon_subs = Some((i, Task::spawn(ctx, move || addons::subtitles(&l))));
+        }
         let (src, shared) = (item.source.clone(), audio.shared.clone());
         self.opening = Some((i, Task::spawn(ctx, move || Player::open(&src, shared))));
         let title = if item.subtitle.is_empty() {
@@ -330,6 +346,26 @@ impl Watch {
                 };
             }
         }
+        if let Some((i, task)) = self.addon_subs.as_mut() {
+            if let Some(found) = task.poll() {
+                let i = *i;
+                self.addon_subs = None;
+                let item = &mut self.items[i];
+                item.addons = None;
+                item.subtitles.extend(found);
+                // nothing on yet: the language used last may be here now
+                if self.current == Some(i) && self.subs.track().is_none() && !self.subs_chosen {
+                    let t = subs::pick(
+                        &item.subtitles,
+                        cfg.subtitle_language.as_deref(),
+                        cfg.subtitle_sdh,
+                    );
+                    if t.is_some() {
+                        self.set_subs(ctx, t);
+                    }
+                }
+            }
+        }
         if self.opening.is_none() {
             if let Some(q) = self.queued.take() {
                 self.open_index(ctx, q, audio, progress, cfg);
@@ -349,6 +385,10 @@ impl Watch {
             .map(|it| it.subtitles.iter().map(SubtitleTrack::label).collect())
             .unwrap_or_default();
         let sub_on = self.subs.track();
+        let none_yet = match self.addon_subs {
+            Some((i, _)) if self.current == Some(i) => "Looking for subtitles…",
+            _ => "No subtitles for this video",
+        };
 
         // keys. Only read them here: anything that talks back to egui (like
         // leaving fullscreen) waits until the input lock is released, or the app freezes.
@@ -818,7 +858,7 @@ impl Watch {
                                 if m == Menu::Settings {
                                     heading(ui, "SUBTITLES");
                                     let label = match (current, tracks.is_empty()) {
-                                        (_, true) => "No subtitles for this video",
+                                        (_, true) => none_yet,
                                         (Some(l), _) => l.as_str(),
                                         (None, _) => "Off",
                                     };
@@ -853,7 +893,7 @@ impl Watch {
                                         ui.painter().text(
                                             pos2(mr.left() + 18.0, ui.cursor().top() - 6.0),
                                             Align2::LEFT_TOP,
-                                            "No subtitles for this video",
+                                            none_yet,
                                             FontId::proportional(14.0),
                                             Color32::from_gray(200),
                                         );

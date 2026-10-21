@@ -1,10 +1,11 @@
-//! "What's new", shown once after the app updates itself (or is updated).
+//! "What's new", shown once after the app updates itself (or is updated),
+//! with the notes of every version since the one last seen.
 //! Only the big things go in [`NOTES`]; the full list is in the release notes.
 //! Admin features stay out: they're for the server's admin, who knows about them.
 use eframe::egui::{self, RichText};
 
 use super::settings::{dialog, header};
-use super::{bold, primary_button, MUTED};
+use super::{bold, mono, primary_button, ACCENT, MUTED, TEXT};
 use crate::update::{newer, Release, VERSION};
 
 struct Note {
@@ -107,15 +108,38 @@ const NOTES: &[(&str, &[Note])] = &[
             },
         ],
     ),
+    (
+        "0.8.6",
+        &[Note {
+            title: "Seasons in new arrivals",
+            text: "A new series shows the seasons it came with, and when a new season is \
+                   added to a series you already have, it shows up in new arrivals again.",
+        }],
+    ),
+    (
+        "0.8.7",
+        &[Note {
+            title: "Change your password",
+            text: "When your server's admin asks you for a new password, Valo asks each \
+                   time it opens until you change it, right there in the popup.",
+        }],
+    ),
 ];
 
-/// The notes for versions after `seen`, up to `current`.
-fn between(seen: &str, current: &str) -> Vec<&'static Note> {
+/// The notes for versions after `seen`, up to `current`, newest first.
+fn between(seen: &str, current: &str) -> Vec<(&'static str, &'static [Note])> {
     NOTES
         .iter()
+        .rev()
         .filter(|(v, _)| newer(v, seen) && !newer(v, current))
-        .flat_map(|(_, notes)| notes.iter())
+        .map(|(v, notes)| (*v, *notes))
         .collect()
+}
+
+/// "Valo 0.8.6", over a version's notes when there's more than one version.
+fn version_heading(ui: &mut egui::Ui, v: &str) {
+    ui.label(mono(format!("VALO {v}"), 11.0).color(ACCENT()));
+    ui.add_space(6.0);
 }
 
 /// Whether there's anything to show for a user who last saw `seen`
@@ -131,11 +155,16 @@ pub fn ui(ctx: &egui::Context, seen: &str) -> bool {
     let (done, close) = dialog(ctx, "whats-new", 460.0, |ui| {
         header(ui, "What's new", &format!("Valo {VERSION}"));
         ui.add_space(6.0);
-        for n in &notes {
-            ui.label(bold(n.title, 16.0));
-            ui.add_space(2.0);
-            ui.label(RichText::new(n.text).size(14.5).color(MUTED()));
-            ui.add_space(14.0);
+        for (v, list) in &notes {
+            if notes.len() > 1 {
+                version_heading(ui, v);
+            }
+            for n in list.iter() {
+                ui.label(bold(n.title, 16.0));
+                ui.add_space(2.0);
+                ui.label(RichText::new(n.text).size(14.5).color(MUTED()));
+                ui.add_space(14.0);
+            }
         }
         if notes.is_empty() {
             ui.label(
@@ -182,19 +211,40 @@ pub fn update_available(
             &format!("Valo {}  ·  you have {VERSION}", rel.version),
         );
         ui.add_space(6.0);
-        if !rel.summary.is_empty() {
-            ui.label(RichText::new(&rel.summary).size(15.0));
+        let many = rel.changes.len() > 1;
+        if many {
+            ui.label(
+                RichText::new(format!(
+                    "{} updates since your version, newest first.",
+                    rel.changes.len()
+                ))
+                .size(14.5)
+                .color(MUTED()),
+            );
             ui.add_space(14.0);
         }
-        for (title, text) in &rel.notes {
-            if !title.is_empty() {
-                ui.label(bold(title, 16.0));
-                ui.add_space(2.0);
+        for c in &rel.changes {
+            if many {
+                version_heading(ui, &c.version);
             }
-            ui.label(RichText::new(text).size(14.5).color(MUTED()));
-            ui.add_space(14.0);
+            if !c.summary.is_empty() {
+                ui.label(RichText::new(&c.summary).size(15.0).color(TEXT()));
+                ui.add_space(14.0);
+            }
+            for (title, text) in &c.notes {
+                if !title.is_empty() {
+                    ui.label(bold(title, 16.0));
+                    ui.add_space(2.0);
+                }
+                ui.label(RichText::new(text).size(14.5).color(MUTED()));
+                ui.add_space(14.0);
+            }
         }
-        if rel.summary.is_empty() && rel.notes.is_empty() {
+        if rel
+            .changes
+            .iter()
+            .all(|c| c.summary.is_empty() && c.notes.is_empty())
+        {
             ui.label(
                 RichText::new("This update brings fixes and small improvements.")
                     .size(14.5)
@@ -252,6 +302,9 @@ mod tests {
         assert!(between("0.6.1", "0.6.1").is_empty());
         assert!(between("0.7.0", "0.7.0").is_empty());
         assert_eq!(between("", "0.7.0").len(), all.len());
+        // several versions behind: every one of them, newest first
+        let v: Vec<_> = between("0.8.2", "0.8.7").iter().map(|(v, _)| *v).collect();
+        assert_eq!(v, ["0.8.7", "0.8.6", "0.8.4", "0.8.3"]);
         // an update always shows the dialog, even without notes of its own
         assert!(pending("0.0.1") && !pending(VERSION));
     }

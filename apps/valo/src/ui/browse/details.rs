@@ -41,7 +41,7 @@ pub(super) fn TEAL() -> Color32 {
 }
 
 /// The main button: gold for Valo, the style's own button color otherwise.
-fn play_colors() -> (Color32, Color32) {
+pub(super) fn play_colors() -> (Color32, Color32) {
     if crate::ui::theme::skin() == crate::ui::theme::Skin::Valo {
         (GOLD(), INK())
     } else {
@@ -252,7 +252,7 @@ fn shade(c: Color32, f: f32) -> Color32 {
 // ------------------------------------------------------------- widgets
 
 /// A filled button with an optional icon; `radius` 0 makes it a pill.
-fn fill_button(
+pub(super) fn fill_button(
     ui: &mut Ui,
     text: &str,
     icon: Option<Icon>,
@@ -338,7 +338,7 @@ pub(super) fn link(
 }
 
 /// A small outlined tag: "1080p", "TV-14".
-fn tag(ui: &mut Ui, text: &str) {
+pub(super) fn tag(ui: &mut Ui, text: &str) {
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), FontId::proportional(11.5), TEXT());
@@ -405,7 +405,7 @@ pub(super) fn image_circle(p: &Painter, c: egui::Pos2, r: f32, tex: &TextureHand
 
 /// Headshots in a grid, name and character under each. Returns whose
 /// person page to open.
-fn cast_grid(
+pub(super) fn cast_grid(
     ui: &mut Ui,
     cast: &[CastMember],
     images: &mut Images,

@@ -33,7 +33,7 @@ where
     Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub enum Kind {
     #[default]
     Movie,
@@ -265,6 +265,9 @@ pub struct SubtitleTrack {
     /// With sound descriptions, for the deaf and hard of hearing.
     pub sdh: bool,
     pub url: String,
+    /// From a Stremio addon, not our server: fetched without our credentials.
+    #[serde(skip)]
+    pub external: bool,
 }
 
 impl SubtitleTrack {
@@ -277,7 +280,7 @@ impl SubtitleTrack {
     }
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Library {
     #[serde(deserialize_with = "null_as_empty")]
@@ -833,6 +836,87 @@ pub struct MediaRequest {
     pub notified: Option<bool>,
 }
 
+/// A Stremio addon the admin added (`GET /api/addons`): catalogs,
+/// metadata and/or subtitles. Never streams.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Addon {
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
+    /// Its manifest: `https://…/manifest.json`.
+    pub url: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    /// "movie", "series"; empty: whatever it says in its manifest.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub types: Vec<String>,
+    /// What it offers. Empty: subtitles (older servers).
+    #[serde(deserialize_with = "null_as_empty")]
+    pub resources: Vec<AddonResource>,
+    /// Lists of titles, shown as rows on the home page.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub catalogs: Vec<AddonCatalog>,
+    /// Unix seconds.
+    pub added: Option<i64>,
+    pub added_by: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct AddonResource {
+    /// "catalog", "meta" or "subtitles".
+    pub name: String,
+    /// Empty: any.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub types: Vec<String>,
+    /// Ids it knows ("tt", "tmdb:"); None: any.
+    pub id_prefixes: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct AddonCatalog {
+    /// "movie" or "series".
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+}
+
+impl Addon {
+    /// It answers `resource` requests for this type and id.
+    pub fn serves(&self, resource: &str, kind: &str, id: &str) -> bool {
+        if self.resources.is_empty() {
+            return resource == "subtitles"
+                && (self.types.is_empty() || self.types.iter().any(|t| t == kind));
+        }
+        self.resources.iter().any(|r| {
+            r.name == resource
+                && (r.types.is_empty() || r.types.iter().any(|t| t == kind))
+                && r.id_prefixes
+                    .as_ref()
+                    .is_none_or(|p| p.iter().any(|p| id.starts_with(p.as_str())))
+        })
+    }
+
+    /// "Catalogs · Metadata · Subtitles"
+    pub fn offers(&self) -> String {
+        let has = |n: &str| self.resources.iter().any(|r| r.name == n);
+        let mut out = Vec::new();
+        if has("catalog") || !self.catalogs.is_empty() {
+            out.push("Catalogs");
+        }
+        if has("meta") {
+            out.push("Metadata");
+        }
+        if has("subtitles") || self.resources.is_empty() {
+            out.push("Subtitles");
+        }
+        out.join(" · ")
+    }
+}
+
 /// A TMDB search result, to match a title by hand.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
@@ -1046,6 +1130,8 @@ pub const ADMIN_DOCS_LIBRARY: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-library.md";
 pub const ADMIN_DOCS_COLLECTIONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-collections.md";
+pub const ADMIN_DOCS_ADDONS: &str =
+    "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-addons.md";
 
 /// The server is reachable but lacks a part of the Valo API, so only
 /// its admin can fix it. The UI offers a message the user can send them.
@@ -1716,6 +1802,85 @@ impl Client {
 
     pub fn admin_delete_collection(&self, id: &str) -> Result<()> {
         self.admin("DELETE", &format!("collections/{}", encode_segment(id)))
+            .call()
+            .map_err(admin_err)?;
+        Ok(())
+    }
+
+    /// The admin's Stremio subtitle addons, for everyone (`GET /api/addons`).
+    /// A server without them has none.
+    pub fn addons(&self) -> Result<Vec<Addon>> {
+        if self.info.mode != Mode::Api {
+            return Ok(Vec::new());
+        }
+        match self
+            .get(&format!("{}/api/addons", self.base))
+            .set("Accept", "application/json")
+            .call()
+        {
+            Ok(r) => Ok(r.into_json().unwrap_or_default()),
+            Err(ureq::Error::Status(404 | 405 | 501, _)) => Ok(Vec::new()),
+            Err(e) => Err(status_err(e, "addons")),
+        }
+    }
+
+    /// The signed-in user's own requests (`GET /api/requests`).
+    pub fn my_requests(&self) -> Result<Vec<MediaRequest>> {
+        let r = self
+            .get(&format!("{}/api/requests", self.base))
+            .set("Accept", "application/json")
+            .call()
+            .map_err(admin_missing)?;
+        r.into_json().map_err(|_| anyhow!(NoAdminApi))
+    }
+
+    /// Ask the admin for a title that isn't on the server (`POST /api/requests`).
+    pub fn request_title(&self, item: &Item) -> Result<MediaRequest> {
+        let kind = match item.kind {
+            Kind::Movie => "movie",
+            Kind::Series => "series",
+        };
+        let mut r = self
+            .agent
+            .post(&format!("{}/api/requests", self.base))
+            .set("Accept", "application/json");
+        if let Some(h) = self.auth_header() {
+            r = r.set("Authorization", &h);
+        }
+        let r = r
+            .send_json(serde_json::json!({
+                "title": item.title,
+                "year": item.year,
+                "kind": kind,
+                "imdb_id": item.imdb_id,
+                "poster": item.poster,
+                "source": "app",
+            }))
+            .map_err(admin_missing)?;
+        Ok(r.into_json().unwrap_or_default())
+    }
+
+    /// The addon list for the Admin page; a server without it is "not set up".
+    pub fn admin_addons(&self) -> Result<Vec<Addon>> {
+        let r = self
+            .get(&format!("{}/api/addons", self.base))
+            .set("Accept", "application/json")
+            .call()
+            .map_err(admin_missing)?;
+        r.into_json().map_err(|_| anyhow!(NoAdminApi))
+    }
+
+    /// Add an addon by its manifest URL; the server refuses stream addons.
+    pub fn admin_add_addon(&self, url: &str) -> Result<Addon> {
+        let r = self
+            .admin("POST", "addons")
+            .send_json(serde_json::json!({ "url": url.trim() }))
+            .map_err(admin_err)?;
+        Ok(r.into_json().unwrap_or_default())
+    }
+
+    pub fn admin_delete_addon(&self, id: &str) -> Result<()> {
+        self.admin("DELETE", &format!("addons/{}", encode_segment(id)))
             .call()
             .map_err(admin_err)?;
         Ok(())

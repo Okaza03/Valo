@@ -28,8 +28,9 @@ and served from /api/progress, so it follows them between devices, and
 (--add-user NAME --admin) get the app's Admin page through /api/admin/...:
 users, a dashboard with syncs and the live log, analytics from watch
 progress, requests (filled by a Discord bot, see docs/api/admin-requests.md),
-editing titles (written to info.json; IMDb lookups need --omdb-key) and
-collections (.valo/collections.json).
+editing titles (written to info.json; IMDb lookups need --omdb-key),
+collections (.valo/collections.json) and Stremio addons (.valo/addons.json):
+their catalogs, metadata and subtitles show up for every user.
 """
 
 import argparse
@@ -616,6 +617,122 @@ class Requests:
             return len(self.items) < before
 
 
+class AddonError(Exception):
+    """An addon the admin can't add; the message says why."""
+
+
+ADDON_RESOURCES = ("catalog", "meta", "subtitles")
+
+
+def addon_manifest(url):
+    """Fetch a Stremio addon's manifest.json. Catalog, metadata and subtitle
+    addons are taken; the videos come from this server, so its streams
+    (torrents included) never are."""
+    url = url.strip()
+    if url.startswith("stremio://"):
+        url = "https://" + url[len("stremio://"):]
+    if not url.startswith(("http://", "https://")):
+        raise AddonError("paste the addon's manifest URL (https://…/manifest.json)")
+    if not urlparse(url).path.endswith("/manifest.json"):
+        url = url.rstrip("/") + "/manifest.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "valo-server", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            m = json.loads(r.read(1 << 20))
+    except (OSError, ValueError) as e:
+        raise AddonError(f"couldn't load the addon's manifest: {e}")
+    if not isinstance(m, dict) or not m.get("id") or not m.get("name"):
+        raise AddonError("that URL isn't a Stremio addon manifest")
+    hints = m.get("behaviorHints") or {}
+    if hints.get("p2p"):
+        raise AddonError("torrent (P2P) addons aren't allowed")
+    if hints.get("configurationRequired"):
+        raise AddonError("this addon has to be configured first: open its configure page and paste the URL it gives you")
+    names = [r if isinstance(r, str) else (r or {}).get("name") for r in m.get("resources") or []]
+    if not any(n in ADDON_RESOURCES for n in names):
+        if "stream" in names:
+            raise AddonError("this is a stream addon; Valo plays from this server, so it doesn't take those")
+        raise AddonError("this addon has no catalogs, metadata or subtitles")
+    return url, m
+
+
+def addon_resources(m):
+    """The resources Valo uses, each with the types and id prefixes it serves."""
+    types = [t for t in m.get("types") or [] if isinstance(t, str)]
+    prefixes = m.get("idPrefixes")
+    out = []
+    for r in m.get("resources") or []:
+        r = {"name": r} if isinstance(r, str) else r
+        if not isinstance(r, dict) or r.get("name") not in ADDON_RESOURCES:
+            continue
+        p = r.get("idPrefixes", prefixes)
+        out.append(
+            {
+                "name": r["name"],
+                "types": [t for t in r.get("types") or types if isinstance(t, str)],
+                "id_prefixes": [x for x in p if isinstance(x, str)] if isinstance(p, list) else None,
+            }
+        )
+    return out
+
+
+def addon_catalogs(m):
+    """Catalogs the app can show as rows: movies and series that need no search or filter."""
+    out = []
+    for c in m.get("catalogs") or []:
+        if not isinstance(c, dict) or c.get("type") not in ("movie", "series") or not c.get("id"):
+            continue
+        extra = [e for e in c.get("extra") or [] if isinstance(e, dict)]
+        if c.get("extraRequired") or any(e.get("isRequired") for e in extra):
+            continue
+        out.append({"type": c["type"], "id": str(c["id"]), "name": str(c.get("name") or c["id"])[:100]})
+    return out
+
+
+class Addons:
+    """addons.json: Stremio addons the admin added (catalogs, metadata,
+    subtitles), for every user."""
+
+    def __init__(self, folder):
+        self.path = folder / "addons.json"
+        data = read_info(self.path)
+        self.items = data if isinstance(data, list) else []
+        self.lock = threading.Lock()
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.items, indent=2, ensure_ascii=False))
+
+    def add(self, url, by):
+        url, m = addon_manifest(url)
+        with self.lock:
+            if any(a["url"] == url for a in self.items):
+                raise AddonError(f"{m['name']} is already added")
+            a = {
+                "id": secrets.token_hex(4),
+                "url": url,
+                "name": str(m["name"])[:100],
+                "description": str(m.get("description") or "")[:500] or None,
+                "version": str(m.get("version") or "") or None,
+                "logo": m.get("logo") if isinstance(m.get("logo"), str) else None,
+                "types": [t for t in m.get("types") or [] if isinstance(t, str)],
+                "resources": addon_resources(m),
+                "catalogs": addon_catalogs(m),
+                "added": int(time.time()),
+                "added_by": by,
+            }
+            self.items.append(a)
+            self.save()
+        return a
+
+    def delete(self, id):
+        with self.lock:
+            before = len(self.items)
+            self.items = [a for a in self.items if a["id"] != id]
+            self.save()
+            return len(self.items) < before
+
+
 def omdb(key, title, year, kind, imdb_id):
     """Look a title up on OMDb (IMDb's data); library-shaped fields."""
     q = {"apikey": key, "plot": "full"}
@@ -1041,7 +1158,7 @@ def library_ids(lib, kind):
     }
 
 
-def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_token=None):
+def make_handler(lib, users, progress, name, cols, reqs, addons, omdb_key=None, bot_token=None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -1345,6 +1462,17 @@ def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_toke
                         return self.send_json({"error": "no such collection"}, 404)
                     lib.get(fresh=True)
                     return self.send_json({})
+            if parts == ["addons"] and method == "POST":
+                try:
+                    a = addons.add(str(req.get("url", "")), user)
+                except AddonError as e:
+                    return self.send_json({"error": str(e)}, 422)
+                log(f"addon {a['name']} added by {user}")
+                return self.send_json(a, 201)
+            if parts[:1] == ["addons"] and len(parts) == 2 and method == "DELETE":
+                if not addons.delete(parts[1]):
+                    return self.send_json({"error": "no such addon"}, 404)
+                return self.send_json({})
             if parts == ["rescan"] and method == "POST":
                 data = lib.get(fresh=True)
                 episodes = sum(
@@ -1535,6 +1663,8 @@ def make_handler(lib, users, progress, name, cols, reqs, omdb_key=None, bot_toke
                 )
             if path.startswith("/api/admin/"):
                 return self.admin("GET", path, b"")
+            if path == "/api/addons":
+                return self.send_json(addons.items)
             if path == "/api/sessions":
                 user = self.user()
                 if not user:
@@ -1635,8 +1765,9 @@ def main():
     progress = Progress(data)
     cols = Collections(data)
     reqs = Requests(data)
+    addons = Addons(data)
     handler = make_handler(
-        Library(root, cols), users, progress, name, cols, reqs, a.omdb_key, a.bot_token
+        Library(root, cols), users, progress, name, cols, reqs, addons, a.omdb_key, a.bot_token
     )
     srv = ThreadingHTTPServer((a.host, a.port), handler)
     log(
