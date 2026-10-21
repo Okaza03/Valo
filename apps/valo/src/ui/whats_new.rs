@@ -124,6 +124,32 @@ const NOTES: &[(&str, &[Note])] = &[
                    time it opens until you change it, right there in the popup.",
         }],
     ),
+    (
+        "0.8.8",
+        &[
+            Note {
+                title: "Streaming and requests",
+                text: "If your server's admin has added Stremio addons, Home has rows like \
+                       Popular and Netflix, and the new Streaming page shows what's on each \
+                       service. Titles that aren't on the server can be requested.",
+            },
+            Note {
+                title: "Search beyond the server",
+                text: "Search also finds movies and series the server doesn't have, so you \
+                       can open them and ask for them.",
+            },
+            Note {
+                title: "Everything they've been in",
+                text: "A person's page lists all their movies and series, and which of them \
+                       are on the server.",
+            },
+            Note {
+                title: "Subtitle timing",
+                text: "Subtitles running early or late? Press Z or X, or use the subtitle \
+                       menu, to move them.",
+            },
+        ],
+    ),
 ];
 
 /// The notes for versions after `seen`, up to `current`, newest first.
