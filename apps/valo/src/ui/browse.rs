@@ -56,6 +56,8 @@ enum View {
     Profile,
     /// Server management, for admins.
     Admin,
+    /// What's on Netflix, HBO Max, …: the addons' catalogs, one at a time.
+    Streaming,
 }
 
 /// Background probe of a stream's file info (see `player::probe`).
@@ -435,7 +437,7 @@ impl Browse {
                                     self.series_page(ui, &lib, item, images, progress)
                                 }
                                 None => match self.discover.remote.get(&id).cloned() {
-                                    Some(item) => self.remote_page(ui, &item, images),
+                                    Some(item) => self.remote_page(ui, &lib, &item, images),
                                     None => Some(Click::Nav(View::Home)),
                                 },
                             },
@@ -452,6 +454,7 @@ impl Browse {
                                 self.profile_page(ui, &lib, images, progress, &mut action)
                             }
                             View::Admin => self.admin_page(ui, &lib, images, &mut action),
+                            View::Streaming => self.streaming_page(ui, &lib, images, progress),
                         }
                     };
                     ui.add_space(40.0);
@@ -505,6 +508,7 @@ impl Browse {
             View::Details(_) | View::Episode(..) | View::Person(_) | View::Profile | View::Admin
         );
         let (current, searching) = (self.view.clone(), !self.search.is_empty());
+        let streaming = !self.discover.shown.is_empty();
         let name = self.client.info.name.clone();
         let mut open: Option<View> = None;
         chrome::title_bar(
@@ -518,16 +522,19 @@ impl Browse {
                 {
                     back = true;
                 }
-                let tabs: &[(&str, View)] = if theme::spec().layout.nav == theme::Nav::Top {
-                    &[
+                let mut tabs: Vec<(&str, View)> = if theme::spec().layout.nav == theme::Nav::Top {
+                    vec![
                         ("Home", View::Home),
                         ("Movies", View::Movies),
                         ("TV Shows", View::Series),
                     ]
                 } else {
-                    &[] // they're in the sidebar
+                    Vec::new() // they're in the sidebar
                 };
-                for (label, v) in tabs.iter().cloned() {
+                if streaming && !tabs.is_empty() {
+                    tabs.push(("Streaming", View::Streaming));
+                }
+                for (label, v) in tabs {
                     let selected = !searching && current == v;
                     if tab(ui, label, selected).clicked() {
                         nav = Some(v);
@@ -777,26 +784,7 @@ impl Browse {
             }
         }
         // the admin's addon catalogs; titles we have play, the rest can be requested
-        let rows: Vec<(String, Vec<Card>)> = self
-            .discover
-            .shown
-            .iter()
-            .map(|(title, ids)| {
-                let items = ids
-                    .iter()
-                    .filter_map(|id| lib.find(id).or_else(|| self.discover.remote.get(id)));
-                let mut cards = self.poster_cards(items, progress);
-                for c in &mut cards {
-                    if self.discover.remote.contains_key(&c.item) {
-                        c.sub = Some(match c.sub.take() {
-                            Some(y) => format!("{y} · not on server"),
-                            None => "Not on server".into(),
-                        });
-                    }
-                }
-                (title.clone(), cards)
-            })
-            .collect();
+        let rows = self.catalog_rows(lib, progress);
         for (title, cards) in rows {
             click = click.or(self.row(ui, &title, &cards, false, None, images));
         }
@@ -1423,14 +1411,52 @@ impl Browse {
             });
         }
         ui.add_space(16.0);
-        if hits.is_empty() {
+        let ctx = ui.ctx().clone();
+        let (found, more) = self.discover.search(&ctx, &self.search);
+        let none_here = hits.is_empty();
+        if none_here && found.is_empty() && !more {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| ui.label(mono("Nothing matches", 12.0).color(MUTED())));
-            return None;
+            return click;
         }
-        let cards = self.poster_cards(hits.into_iter(), progress);
         let marked = |id: &str| self.watchlist.contains(&self.key(id));
-        grid(ui, &cards, &marked, images).or(click)
+        if none_here {
+            ui.horizontal(|ui| {
+                ui.add_space(SIDE);
+                ui.label(mono("Nothing on the server matches", 12.0).color(MUTED()));
+            });
+        } else {
+            let cards = self.poster_cards(hits.into_iter(), progress);
+            click = grid(ui, &cards, &marked, images).or(click);
+        }
+        // titles the server doesn't have, from the admin's addons, to request
+        if !found.is_empty() {
+            ui.add_space(28.0);
+            ui.horizontal(|ui| {
+                ui.add_space(SIDE);
+                ui.label(crate::ui::heading("Not on the server"));
+                ui.label(mono(found.len().to_string(), 13.0).color(MUTED()));
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(SIDE);
+                ui.label(
+                    RichText::new("Open one to see what it is and ask for it.").color(MUTED()),
+                );
+            });
+            ui.add_space(12.0);
+            let items = found.iter().filter_map(|id| self.discover.remote.get(id));
+            let cards = self.poster_cards(items, progress);
+            click = grid(ui, &cards, &marked, images).or(click);
+        }
+        if more {
+            ui.add_space(20.0);
+            ui.horizontal(|ui| {
+                ui.add_space(SIDE);
+                ui.add(egui::Spinner::new().size(14.0).color(MUTED()));
+                ui.label(mono("Searching beyond the server…", 11.0).color(MUTED()));
+            });
+        }
+        click
     }
 
     // -------------------------------------------------------------- details
@@ -1477,7 +1503,7 @@ impl Browse {
                     start: resume(&key),
                     key: Some(key),
                     subtitles: item.subtitles.clone(),
-                    addons: Lookup::movie(&self.client, item.imdb_id.as_deref()),
+                    addons: Some(Lookup::movie(&self.client, item)),
                 }]))
             }
             Kind::Series => {
@@ -1508,12 +1534,12 @@ impl Browse {
                             start: if queue.is_empty() { resume(&key) } else { 0.0 },
                             key: Some(key),
                             subtitles: e.subtitles.clone(),
-                            addons: Lookup::episode(
+                            addons: Some(Lookup::episode(
                                 &self.client,
-                                item.imdb_id.as_deref(),
+                                item,
                                 season.number,
                                 e.number,
-                            ),
+                            )),
                         });
                     }
                 }
@@ -1531,6 +1557,7 @@ fn view_index(v: &View) -> usize {
         View::Details(_) | View::Episode(..) | View::Person(_) => 3,
         View::Profile => 4,
         View::Admin => 5,
+        View::Streaming => 6,
     }
 }
 

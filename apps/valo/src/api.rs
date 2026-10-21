@@ -122,6 +122,24 @@ pub struct Item {
     #[serde(deserialize_with = "null_as_empty")]
     pub locked: Vec<String>,
     pub tmdb_id: Option<Value>,
+
+    /// What a Stremio addon told us that the library has no field for.
+    #[serde(skip)]
+    pub addon: Option<AddonInfo>,
+}
+
+/// Extra details from a Stremio addon.
+#[derive(Clone, Default, Debug)]
+pub struct AddonInfo {
+    pub writers: Vec<String>,
+    /// "United States"
+    pub country: Option<String>,
+    /// "Won 2 Oscars. 159 wins & 220 nominations total"
+    pub awards: Option<String>,
+    /// A YouTube video id.
+    pub trailer: Option<String>,
+    /// The addon it came from.
+    pub source: String,
 }
 
 /// "2021-11-06 00:00:00" (a database timestamp) -> "2021-11-06".
@@ -857,6 +875,8 @@ pub struct Addon {
     /// Lists of titles, shown as rows on the home page.
     #[serde(deserialize_with = "null_as_empty")]
     pub catalogs: Vec<AddonCatalog>,
+    /// It has a settings page (`<addon>/configure`).
+    pub configurable: bool,
     /// Unix seconds.
     pub added: Option<i64>,
     pub added_by: Option<String>,

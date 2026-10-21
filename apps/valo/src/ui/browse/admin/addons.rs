@@ -8,8 +8,10 @@ use super::super::details::{caps, panel, TEAL};
 use super::super::people::{ago, columns_with, section_title};
 use super::users::danger_button;
 use super::{not_set_up, Cx, Done, Remote, Section};
+use crate::addons::configure_url;
 use crate::api::Addon;
-use crate::ui::{bold, mono, primary_button, small_button, text_field};
+use crate::ui::chrome::{self, Icon};
+use crate::ui::{bold, mono, primary_button, small_button, small_button_icon, text_field};
 use crate::ui::{ERROR, LINE, MUTED, TEXT};
 
 #[derive(Default)]
@@ -18,6 +20,15 @@ pub(in super::super) struct State {
     /// The manifest URL being added.
     url: String,
     confirm_delete: Option<String>,
+    /// Swapping an addon's link for a newly configured one: (addon id, new link).
+    relink: Option<(String, String)>,
+}
+
+/// What the admin asked for on an addon's card.
+enum Ask {
+    Remove,
+    /// Use this link instead (new settings).
+    Relink(String),
 }
 
 impl State {
@@ -33,7 +44,11 @@ impl State {
         self.list.poll(&mut cx.login);
         if self.list.due() {
             let c = cx.client.clone();
-            self.list.load(&cx.ctx, move || c.admin_addons());
+            self.list.load(&cx.ctx, move || {
+                let mut l = c.admin_addons()?;
+                crate::addons::mark_configurable(&mut l);
+                Ok(l)
+            });
         }
         if self.list.missing {
             super::super::details::padded(ui, |ui| {
@@ -46,15 +61,17 @@ impl State {
         let busy = cx.busy;
         let mut add = None;
         let mut delete = None;
+        let mut relinked = None;
         let State {
             list,
             url,
             confirm_delete,
+            relink,
         } = self;
         columns_with(
             ui,
-            &mut (&mut add, &mut delete),
-            |ui, (_, delete)| {
+            &mut (&mut add, &mut delete, &mut relinked),
+            |ui, (_, delete, relinked)| {
                 let n = list.data.as_ref().map_or(0, Vec::len);
                 section_title(ui, "Stremio", "Addons", n);
                 if let Some(e) = list.error.as_ref() {
@@ -72,18 +89,37 @@ impl State {
                     ui.label(mono("No addons yet", 12.0).color(MUTED()));
                 }
                 for a in addons {
-                    if addon_row(ui, a, busy, confirm_delete) {
-                        **delete = Some((a.id.clone(), a.name.clone()));
+                    match addon_row(ui, a, busy, confirm_delete, relink) {
+                        Some(Ask::Remove) => **delete = Some((a.id.clone(), a.name.clone())),
+                        Some(Ask::Relink(u)) => {
+                            **relinked = Some((a.id.clone(), a.name.clone(), u));
+                        }
+                        None => {}
                     }
                     ui.add_space(8.0);
                 }
             },
-            |ui, (add, _)| {
+            |ui, (add, _, _)| {
                 panel(ui, |ui| {
                     caps(ui, "Add an addon", TEAL());
                     ui.add_space(10.0);
                     ui.label(mono("Manifest URL", 11.0).color(MUTED()));
                     let f = text_field(ui, url, "https://…/manifest.json", false);
+                    let typed = url.trim();
+                    if typed.starts_with("http") || typed.starts_with("stremio://") {
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if crate::ui::ext_link(ui, RichText::new("Configure it first").small())
+                            {
+                                chrome::open_url(&configure_url(typed));
+                            }
+                            ui.label(
+                                RichText::new("then paste the link it gives you")
+                                    .small()
+                                    .color(MUTED()),
+                            );
+                        });
+                    }
                     ui.add_space(10.0);
                     let ok = !busy && !url.trim().is_empty();
                     let enter = f.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -127,6 +163,18 @@ impl State {
                 )))
             });
         }
+        if let Some((old, name, u)) = relinked {
+            self.relink = None;
+            cx.run(move |c| {
+                // the new link first, so a bad one leaves the old addon working
+                let a = c.admin_add_addon(&u)?;
+                c.admin_delete_addon(&old)?;
+                let name = if a.name.is_empty() { name } else { a.name };
+                Ok(Done::msg(format!(
+                    "Updated {name}. Everyone gets the new settings now."
+                )))
+            });
+        }
         if let Some((id, name)) = delete {
             cx.run(move |c| {
                 c.admin_delete_addon(&id)?;
@@ -136,9 +184,15 @@ impl State {
     }
 }
 
-/// One addon: name, what it is, its link. True when the admin removes it.
-fn addon_row(ui: &mut Ui, a: &Addon, busy: bool, confirm: &mut Option<String>) -> bool {
-    let mut remove = false;
+/// One addon: name, what it is, its link, and its buttons.
+fn addon_row(
+    ui: &mut Ui,
+    a: &Addon,
+    busy: bool,
+    confirm: &mut Option<String>,
+    relink: &mut Option<(String, String)>,
+) -> Option<Ask> {
+    let mut ask = None;
     egui::Frame::new()
         .stroke(Stroke::new(1.0f32, LINE()))
         .corner_radius(8)
@@ -164,7 +218,7 @@ fn addon_row(ui: &mut Ui, a: &Addon, busy: bool, confirm: &mut Option<String>) -
                             .iter()
                             .map(|c| {
                                 let what = if c.kind == "movie" { "movies" } else { "TV" };
-                                format!("{} ({what})", c.name)
+                                format!("{} ({what})", c.name.trim())
                             })
                             .collect();
                         ui.label(
@@ -189,16 +243,49 @@ fn addon_row(ui: &mut Ui, a: &Addon, busy: bool, confirm: &mut Option<String>) -
                     ui.add(egui::Label::new(mono(&a.url, 10.0).color(MUTED())).truncate());
                 });
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    if confirm.is_none()
-                        && ui
-                            .add_enabled_ui(!busy, |ui| small_button(ui, "Remove…"))
-                            .inner
-                            .clicked()
-                    {
-                        *confirm = Some(a.id.clone());
-                    }
+                    ui.add_enabled_ui(!busy, |ui| {
+                        if confirm.is_none() && small_button(ui, "Remove…").clicked() {
+                            *confirm = Some(a.id.clone());
+                            *relink = None;
+                        }
+                        if a.configurable {
+                            if relink.is_none() && small_button(ui, "New link…").clicked() {
+                                *relink = Some((a.id.clone(), String::new()));
+                                *confirm = None;
+                            }
+                            if small_button_icon(ui, Icon::External, "Configure").clicked() {
+                                chrome::open_url(&configure_url(&a.url));
+                            }
+                        }
+                    });
                 });
             });
+            if let Some((_, new)) = relink.as_mut().filter(|(id, _)| *id == a.id) {
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(
+                        "Change the settings on its configure page, copy the link it gives \
+                         you, and paste it here. Everyone gets the new settings.",
+                    )
+                    .color(TEXT()),
+                );
+                ui.add_space(4.0);
+                let f = text_field(ui, new, "https://…/manifest.json", false);
+                let enter = f.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let mut close = false;
+                ui.horizontal(|ui| {
+                    let ok = !busy && !new.trim().is_empty() && new.trim() != a.url;
+                    if (primary_button(ui, "Use this link", ok).clicked() || enter) && ok {
+                        ask = Some(Ask::Relink(new.trim().to_owned()));
+                    }
+                    if small_button(ui, "Cancel").clicked() {
+                        close = true;
+                    }
+                });
+                if close {
+                    *relink = None;
+                }
+            }
             if confirm.as_deref() == Some(a.id.as_str()) {
                 ui.add_space(10.0);
                 ui.label(
@@ -211,7 +298,7 @@ fn addon_row(ui: &mut Ui, a: &Addon, busy: bool, confirm: &mut Option<String>) -
                         .inner
                         .clicked()
                     {
-                        remove = true;
+                        ask = Some(Ask::Remove);
                         *confirm = None;
                     }
                     if small_button(ui, "Cancel").clicked() {
@@ -220,5 +307,5 @@ fn addon_row(ui: &mut Ui, a: &Addon, busy: bool, confirm: &mut Option<String>) -
                 });
             }
         });
-    remove
+    ask
 }

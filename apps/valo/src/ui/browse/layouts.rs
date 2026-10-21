@@ -586,11 +586,15 @@ impl Browse {
                     );
                     resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
                 };
-                for (icon, label, v) in [
+                let mut nav = vec![
                     (Icon::Home, "Home", View::Home),
                     (Icon::Film, "Movies", View::Movies),
                     (Icon::Tv, "TV Shows", View::Series),
-                ] {
+                ];
+                if !self.discover.shown.is_empty() {
+                    nav.push((Icon::List, "Streaming", View::Streaming));
+                }
+                for (icon, label, v) in nav {
                     if item(ui, icon, label, !searching && self.view == v) {
                         go = Some(Click::Nav(v));
                     }

@@ -82,6 +82,9 @@ impl PlayItem {
     }
 }
 
+/// The addons' subtitles for an item, or why they couldn't be asked.
+type AddonSubs = Result<Vec<SubtitleTrack>, String>;
+
 /// The subtitle track that's on, and its file.
 enum SubState {
     Off,
@@ -127,9 +130,16 @@ pub struct Watch {
     inhibit: Inhibit,
     subs: SubState,
     /// The addons' subtitles for an item, on their way.
-    addon_subs: Option<(usize, Task<Vec<SubtitleTrack>>)>,
+    addon_subs: Option<(usize, Task<AddonSubs>)>,
+    /// Why the addons couldn't be asked about an item's subtitles.
+    addon_note: Option<(usize, String)>,
     /// Subtitles were picked or turned off by hand for this video.
     subs_chosen: bool,
+    /// Seconds the subtitles are shifted: negative shows them earlier. For
+    /// files made for a slightly different cut (an addon's, usually).
+    sub_delay: f64,
+    /// When the delay last changed, to show it for a moment.
+    delay_changed: Option<Instant>,
 }
 
 impl Watch {
@@ -153,6 +163,9 @@ impl Watch {
             inhibit: Inhibit::new(),
             subs: SubState::Off,
             addon_subs: None,
+            addon_note: None,
+            sub_delay: 0.0,
+            delay_changed: None,
             subs_chosen: false,
         }
     }
@@ -198,6 +211,7 @@ impl Watch {
 
     /// Turn on track `t` of the current item (None: off) and fetch its file.
     fn set_subs(&mut self, ctx: &egui::Context, t: Option<usize>) {
+        self.sub_delay = 0.0; // another file, its own timing
         let item = self.current.and_then(|i| self.items.get(i));
         self.subs = match (item, t) {
             (Some(item), Some(t)) if t < item.subtitles.len() => {
@@ -352,7 +366,10 @@ impl Watch {
                 self.addon_subs = None;
                 let item = &mut self.items[i];
                 item.addons = None;
-                item.subtitles.extend(found);
+                match found {
+                    Ok(found) => item.subtitles.extend(found),
+                    Err(e) => self.addon_note = Some((i, e)),
+                }
                 // nothing on yet: the language used last may be here now
                 if self.current == Some(i) && self.subs.track().is_none() && !self.subs_chosen {
                     let t = subs::pick(
@@ -379,15 +396,23 @@ impl Watch {
         let mut pick: Option<usize> = None;
         // a subtitle track picked (Some(None): turned off)
         let mut sub_pick: Option<Option<usize>> = None;
+        // subtitles shifted by this many seconds (0: back in sync)
+        let mut delay_by: Option<f64> = None;
         let tracks: Vec<String> = self
             .current
             .and_then(|i| self.items.get(i))
             .map(|it| it.subtitles.iter().map(SubtitleTrack::label).collect())
             .unwrap_or_default();
         let sub_on = self.subs.track();
-        let none_yet = match self.addon_subs {
-            Some((i, _)) if self.current == Some(i) => "Looking for subtitles…",
-            _ => "No subtitles for this video",
+        // where the addons' tracks start in the list
+        let first_addon = self
+            .current
+            .and_then(|i| self.items.get(i))
+            .and_then(|it| it.subtitles.iter().position(|t| t.external));
+        let none_yet = match (&self.addon_subs, &self.addon_note) {
+            (Some((i, _)), _) if self.current == Some(*i) => "Looking for subtitles…".to_owned(),
+            (_, Some((i, note))) if self.current == Some(*i) => note.clone(),
+            _ => "No subtitles for this video".to_owned(),
         };
 
         // keys. Only read them here: anything that talks back to egui (like
@@ -435,6 +460,14 @@ impl Watch {
                             .unwrap_or(0),
                     ),
                 });
+            }
+            // Z / X: subtitles earlier / later (Shift: a whole second)
+            let step = if shift { 1.0 } else { 0.1 };
+            if i.key_pressed(Key::Z) && sub_on.is_some() {
+                delay_by = Some(-step);
+            }
+            if i.key_pressed(Key::X) && sub_on.is_some() {
+                delay_by = Some(step);
             }
             do_next |= i.key_pressed(Key::N);
             do_prev |= i.key_pressed(Key::P);
@@ -572,7 +605,7 @@ impl Watch {
                     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
                     ui.painter().image(t.id(), dest, uv, Color32::WHITE);
                     if let SubState::Ready(_, subs) = &self.subs {
-                        if let Some(text) = subs.at(pos) {
+                        if let Some(text) = subs.at(pos - self.sub_delay) {
                             // above the controls while they're up
                             let mut base = dest.bottom().min(rect.bottom()) - dest.height() * 0.06;
                             if !hide_ui {
@@ -580,6 +613,22 @@ impl Watch {
                             }
                             draw_subtitle(ui.painter(), dest, base, &text);
                         }
+                    }
+                    // the new timing, for a moment after Z / X
+                    if self
+                        .delay_changed
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(2))
+                    {
+                        let p = ui.painter();
+                        let text = format!(
+                            "Subtitles: {}",
+                            delay_text(self.sub_delay).replace("Timing: ", "")
+                        );
+                        let g = p.layout_no_wrap(text, FontId::proportional(16.0), Color32::WHITE);
+                        let at = pos2(rect.center().x, rect.top() + TOP_H + 24.0);
+                        let bg = Rect::from_center_size(at, g.size() + vec2(28.0, 14.0));
+                        p.rect_filled(bg, 8.0, Color32::from_black_alpha(170));
+                        p.galley(bg.center() - g.size() / 2.0, g, Color32::WHITE);
                     }
                 } else if !self.status.is_empty() {
                     ui.painter().text(
@@ -858,7 +907,7 @@ impl Watch {
                                 if m == Menu::Settings {
                                     heading(ui, "SUBTITLES");
                                     let label = match (current, tracks.is_empty()) {
-                                        (_, true) => none_yet,
+                                        (_, true) => none_yet.as_str(),
                                         (Some(l), _) => l.as_str(),
                                         (None, _) => "Off",
                                     };
@@ -893,7 +942,7 @@ impl Watch {
                                         ui.painter().text(
                                             pos2(mr.left() + 18.0, ui.cursor().top() - 6.0),
                                             Align2::LEFT_TOP,
-                                            none_yet,
+                                            none_yet.as_str(),
                                             FontId::proportional(14.0),
                                             Color32::from_gray(200),
                                         );
@@ -914,6 +963,19 @@ impl Watch {
                                                 sub_pick = Some(None);
                                             }
                                             for (t, label) in tracks.iter().enumerate() {
+                                                if first_addon == Some(t) {
+                                                    let (r, _) = ui.allocate_exact_size(
+                                                        vec2(w, 30.0),
+                                                        Sense::hover(),
+                                                    );
+                                                    ui.painter().text(
+                                                        pos2(r.left() + 18.0, r.bottom() - 8.0),
+                                                        Align2::LEFT_BOTTOM,
+                                                        "FROM ADDONS",
+                                                        FontId::proportional(11.0),
+                                                        Color32::from_gray(150),
+                                                    );
+                                                }
                                                 let on = sub_on == Some(t);
                                                 let r = menu_row(ui, w, label, Some(on), false);
                                                 let r = match note {
@@ -944,6 +1006,60 @@ impl Watch {
                                                 }
                                             }
                                         });
+                                    if sub_on.is_some() {
+                                        ui.add_space(6.0);
+                                        let y = ui.cursor().top();
+                                        ui.painter().hline(
+                                            mr.x_range().shrink(18.0),
+                                            y,
+                                            egui::Stroke::new(1.0f32, Color32::from_gray(48)),
+                                        );
+                                        ui.add_space(8.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(18.0);
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            ui.label(
+                                                egui::RichText::new(delay_text(self.sub_delay))
+                                                    .size(13.0)
+                                                    .color(Color32::from_gray(200)),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.add_space(14.0);
+                                                    let b = |t: &str| {
+                                                        egui::Button::new(
+                                                            egui::RichText::new(t)
+                                                                .size(12.5)
+                                                                .color(Color32::WHITE),
+                                                        )
+                                                        .fill(Color32::from_white_alpha(20))
+                                                        .corner_radius(5)
+                                                    };
+                                                    if ui
+                                                        .add(b("Later"))
+                                                        .on_hover_text("X")
+                                                        .clicked()
+                                                    {
+                                                        delay_by = Some(0.1);
+                                                    }
+                                                    if ui
+                                                        .add(b("Earlier"))
+                                                        .on_hover_text("Z")
+                                                        .clicked()
+                                                    {
+                                                        delay_by = Some(-0.1);
+                                                    }
+                                                    if self.sub_delay != 0.0
+                                                        && ui.add(b("Reset")).clicked()
+                                                    {
+                                                        delay_by = Some(0.0);
+                                                    }
+                                                },
+                                            );
+                                        });
+                                        ui.add_space(8.0);
+                                    }
                                 }
                             });
                         let area_r = area.response.rect.union(mr);
@@ -1292,6 +1408,14 @@ impl Watch {
         if let Some(t) = sub_pick {
             self.choose_subs(ctx, cfg, t);
         }
+        if let Some(d) = delay_by {
+            self.sub_delay = if d == 0.0 {
+                0.0
+            } else {
+                ((self.sub_delay + d) * 10.0).round() / 10.0
+            };
+            self.delay_changed = Some(Instant::now());
+        }
         cfg.volume = vol;
         ctx.request_repaint_after(Duration::from_millis(if playing { 8 } else { 100 }));
         close
@@ -1377,4 +1501,15 @@ fn draw_subtitle(p: &egui::Painter, video: Rect, base: f32, text: &str) {
         p.galley(top + vec2(dx, dy), shadow.clone(), Color32::BLACK);
     }
     p.galley(top, fg, Color32::WHITE);
+}
+
+/// "In sync", "0.8 s earlier", "1.5 s later".
+fn delay_text(d: f64) -> String {
+    if d.abs() < 0.05 {
+        "Timing: in sync".into()
+    } else if d < 0.0 {
+        format!("{:.1} s earlier", -d)
+    } else {
+        format!("{d:.1} s later")
+    }
 }

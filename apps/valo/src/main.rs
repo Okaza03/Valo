@@ -5,6 +5,7 @@ mod addons;
 mod api;
 mod audio;
 mod config;
+mod filmography;
 mod images;
 mod inhibit;
 mod integrate;

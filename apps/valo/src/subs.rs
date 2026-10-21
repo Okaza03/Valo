@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 
+use crate::addons::lang_code;
 use crate::api::SubtitleTrack;
 
 /// One line (or a few) on screen from `start` to `end`, in seconds.
@@ -252,13 +253,14 @@ fn parse_ass(text: &str) -> Vec<Cue> {
 /// Which track to turn on: one in the language picked last time, the SDH
 /// kind if that's what was picked, and not one that's only forced parts.
 pub fn pick(tracks: &[SubtitleTrack], language: Option<&str>, sdh: bool) -> Option<usize> {
-    let lang = language?;
+    let want = lang_code(language?);
     let score = |t: &SubtitleTrack| (!t.forced as u8) * 2 + (t.sdh == sdh) as u8;
     tracks
         .iter()
         .enumerate()
-        .filter(|(_, t)| t.language.eq_ignore_ascii_case(lang))
-        .max_by_key(|(i, t)| (score(t), std::cmp::Reverse(*i)))
+        .filter(|(_, t)| lang_code(&t.language) == want)
+        // the server's own files before an addon's, then the best fit
+        .max_by_key(|(i, t)| (!t.external, score(t), std::cmp::Reverse(*i)))
         .map(|(i, _)| i)
 }
 
@@ -331,5 +333,13 @@ mod tests {
         assert_eq!(pick(&tracks, Some("en"), true), Some(1));
         assert_eq!(pick(&tracks, Some("nb"), true), Some(3));
         assert_eq!(pick(&tracks, Some("de"), false), None);
+
+        // an addon's track comes after the server's file, whatever the order
+        let addon = SubtitleTrack {
+            external: true,
+            ..t("eng", false, false)
+        };
+        let tracks = [addon, t("English", false, true)];
+        assert_eq!(pick(&tracks, Some("en"), false), Some(1));
     }
 }

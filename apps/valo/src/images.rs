@@ -1,8 +1,8 @@
 //! Posters and backdrops: downloaded and decoded on worker threads, uploaded
 //! as textures on the UI thread.
 use std::collections::HashMap;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
@@ -20,26 +20,49 @@ enum State {
 
 type Done = (String, Option<ColorImage>);
 
+/// Images waiting for a worker. The newest go first: they're what's on
+/// screen now (a search's results, a page just opened), while older ones
+/// may have scrolled away.
+#[derive(Default)]
+struct Queue {
+    urls: Mutex<Vec<String>>,
+    ready: Condvar,
+}
+
+impl Queue {
+    fn push(&self, url: String) {
+        self.urls.lock().unwrap().push(url);
+        self.ready.notify_one();
+    }
+
+    fn pop(&self) -> String {
+        let mut urls = self.urls.lock().unwrap();
+        loop {
+            if let Some(u) = urls.pop() {
+                return u;
+            }
+            urls = self.ready.wait(urls).unwrap();
+        }
+    }
+}
+
 pub struct Images {
     map: HashMap<String, State>,
-    req: Sender<String>,
+    req: Arc<Queue>,
     done: Receiver<Done>,
     client: Arc<Mutex<Option<Client>>>,
 }
 
 impl Images {
     pub fn new(ctx: &egui::Context) -> Self {
-        let (req, req_rx) = mpsc::channel::<String>();
+        let req = Arc::new(Queue::default());
         let (done_tx, done) = mpsc::channel::<Done>();
-        let req_rx = Arc::new(Mutex::new(req_rx));
         let client: Arc<Mutex<Option<Client>>> = Arc::default();
         for _ in 0..WORKERS {
-            let (rx, tx, client, ctx) =
-                (req_rx.clone(), done_tx.clone(), client.clone(), ctx.clone());
+            let (queue, tx, client, ctx) =
+                (req.clone(), done_tx.clone(), client.clone(), ctx.clone());
             thread::spawn(move || loop {
-                let Ok(url) = rx.lock().unwrap().recv() else {
-                    return;
-                };
+                let url = queue.pop();
                 let c = client.lock().unwrap().clone();
                 let img = c.and_then(|c| load(&c, &url));
                 if tx.send((url, img)).is_err() {
@@ -66,7 +89,7 @@ impl Images {
     pub fn get(&mut self, url: &str) -> Option<TextureHandle> {
         if !self.map.contains_key(url) {
             self.map.insert(url.to_owned(), State::Loading);
-            let _ = self.req.send(url.to_owned());
+            self.req.push(url.to_owned());
         }
         match self.map.get(url) {
             Some(State::Ready(t)) => Some(t.clone()),

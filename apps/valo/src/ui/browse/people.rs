@@ -368,7 +368,12 @@ impl Browse {
         let c = pos2(rect.left() + m + r, rect.center().y + 14.0);
         let p = ui.painter_at(rect);
         p.circle_filled(c, r + 4.0, Color32::from_black_alpha(120));
-        match person.photo.and_then(|u| images.get(u)) {
+        let wikidata = self.discover.person_photo(name);
+        match person
+            .photo
+            .or(wikidata.as_deref())
+            .and_then(|u| images.get(u))
+        {
             Some(t) => image_circle(&p, c, r, &t),
             None => chrome::avatar(&p, c, r, name),
         }
@@ -425,7 +430,10 @@ impl Browse {
             ui.vertical_centered(|ui| {
                 ui.label(mono("Nothing in your library with them", 12.0).color(MUTED()))
             });
-            return click;
+            ui.add_space(20.0);
+            return self
+                .filmography_section(ui, lib, name, images, progress)
+                .or(click);
         }
         let watched = titles
             .iter()
@@ -485,8 +493,8 @@ impl Browse {
             ui,
             |ui| {
                 for (kicker, title, list) in [
-                    ("Filmography", "Movies", &person.movies),
-                    ("Filmography", "TV shows", &person.shows),
+                    ("In your library", "Movies", &person.movies),
+                    ("In your library", "TV shows", &person.shows),
                     ("Behind the camera", "Directed", &person.directed),
                     ("Behind the camera", "Created", &person.created),
                 ] {
@@ -530,7 +538,9 @@ impl Browse {
                 }
             },
         );
-        click.or(main_click).or(side_click)
+        ui.add_space(12.0);
+        let all = self.filmography_section(ui, lib, name, images, progress);
+        click.or(main_click).or(side_click).or(all)
     }
 
     pub(super) fn profile_page(

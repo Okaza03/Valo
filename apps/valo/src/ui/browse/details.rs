@@ -69,7 +69,7 @@ fn ymd(s: &str) -> Option<(u32, usize, u32)> {
 }
 
 /// "31 Oct 2002"
-fn date_long(s: &str) -> String {
+pub(super) fn date_long(s: &str) -> String {
     ymd(s).map_or_else(
         || s.to_owned(),
         |(y, m, d)| format!("{d} {} {y}", MONTHS[m - 1]),
@@ -525,7 +525,7 @@ pub(super) fn kv_rows(ui: &mut Ui, rows: &[(&str, String, Color32, f32)]) {
 }
 
 /// Label column + value column, no lines (series "Info").
-fn info_rows(ui: &mut Ui, rows: &[(&str, String)], label_w: f32) {
+pub(super) fn info_rows(ui: &mut Ui, rows: &[(&str, String)], label_w: f32) {
     for (k, v) in rows {
         ui.horizontal_top(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(label_w, 18.0), Sense::hover());
@@ -665,7 +665,12 @@ fn wide_tile(ui: &mut Ui, item: &Item, size: egui::Vec2, images: &mut Images) ->
 
 /// `n` random items sharing a genre with `item`, the same ones each time
 /// for one `shuffle`.
-fn similar<'a>(lib: &'a Library, item: &'a Item, n: usize, shuffle: &RandomState) -> Vec<&'a Item> {
+pub(super) fn similar<'a>(
+    lib: &'a Library,
+    item: &'a Item,
+    n: usize,
+    shuffle: &RandomState,
+) -> Vec<&'a Item> {
     let mut v: Vec<&Item> = lib
         .all()
         .filter(|i| i.id != item.id && i.genres.iter().any(|g| item.genres.contains(g)))
@@ -1109,10 +1114,13 @@ impl Browse {
                 ),
             ),
         ];
-        let rows: Vec<(&str, String, Color32, f32)> = candidates
+        let mut rows: Vec<(&str, String, Color32, f32)> = candidates
             .into_iter()
             .filter_map(|(k, v)| v.map(|(v, c, s)| (k, v, c, s)))
             .collect();
+        if let Some(s) = self.discover.streaming_on(&item.id) {
+            rows.insert(0, ("Streaming on", s, TEAL(), 14.0));
+        }
         panel(ui, |ui| {
             caps(ui, "File · Metadata", TEAL());
             ui.add_space(6.0);
@@ -1551,6 +1559,9 @@ impl Browse {
         };
         let eps: usize = item.seasons.iter().map(|s| s.episodes.len()).sum();
         let mut rows = Vec::new();
+        if let Some(s) = self.discover.streaming_on(&item.id) {
+            rows.push(("Streaming on", s));
+        }
         if let Some(n) = &item.network {
             rows.push(("Network", n.clone()));
         }

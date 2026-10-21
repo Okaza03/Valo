@@ -72,6 +72,7 @@ Any signed-in user. `200` with the list, oldest first; `[]` when there are none.
 | `types`       | string[] |              | The manifest's `types`                                                  |
 | `resources`   | object[] |              | What it offers, from the manifest: `catalog`, `meta` and/or `subtitles` (see below). Missing or empty: subtitles only |
 | `catalogs`    | object[] |              | The rows: `type` (`movie` or `series`), `id` and `name` from the manifest's `catalogs` |
+| `configurable` | bool    |              | The manifest's `behaviorHints.configurable` (or `configurationRequired`). The app also checks the manifest itself when this is missing |
 | `added`       | int      |              | Unix time                                                               |
 | `added_by`    | string   |              | The admin who added it                                                  |
 
@@ -102,3 +103,7 @@ The server fetches the manifest and checks it before adding the addon:
 - Keep only the `catalog`, `meta` and `subtitles` resources, and only the `movie` and `series` catalogs that don't need a search or a filter (an `extra` with `"isRequired": true`, or `extraRequired`).
 
 The app shows the `error` (or `message`) to the admin.
+
+### Changing an addon's settings
+
+A configurable addon has a _Configure_ button on its card, which opens `<addon>/configure` in the browser. Its settings live in the link, so new settings mean a new link. The admin pastes it with _New link…_, and the app adds the new link, then removes the old addon. No extra endpoint is needed. The addon moves to the end of the list, so its rows move to the bottom of the home page.
