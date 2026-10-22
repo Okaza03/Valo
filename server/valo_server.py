@@ -31,7 +31,7 @@ progress, requests (filled by a Discord bot, see docs/api/admin-requests.md),
 editing titles (written to info.json; IMDb lookups need --omdb-key),
 collections (.valo/collections.json), Stremio addons (.valo/addons.json):
 their catalogs, metadata and subtitles show up for every user, and the home
-page's layout (.valo/layout.json): which rows everyone sees.
+page's layout (.valo/layout.json): which rows everyone sees, in what order.
 """
 
 import argparse
@@ -738,12 +738,13 @@ class Addons:
 
 class Layout:
     """layout.json: what the admin set for everyone's home page, like which
-    rows are hidden ("recent", "genre:Drama", "catalog:<addon>:movie:top")."""
+    rows are hidden ("recent", "genre:Drama", "catalog:<addon>:movie:top")
+    and the order they go in."""
 
     def __init__(self, folder):
         self.path = folder / "layout.json"
         data = read_info(self.path)
-        self.data = {"home_hidden": []}
+        self.data = {"home_hidden": [], "home_order": []}
         if isinstance(data, dict):
             self.data.update(self.clean(data))
         self.lock = threading.Lock()
@@ -754,6 +755,9 @@ class Layout:
         if isinstance(req.get("home_hidden"), list):
             keys = [str(k)[:200] for k in req["home_hidden"] if isinstance(k, str) and k]
             out["home_hidden"] = list(dict.fromkeys(keys))[:500]
+        if isinstance(req.get("home_order"), list):
+            keys = [str(k)[:200] for k in req["home_order"] if isinstance(k, str) and k]
+            out["home_order"] = list(dict.fromkeys(keys))[:500]
         return out
 
     def update(self, req):

@@ -701,19 +701,19 @@ impl Browse {
         cards
     }
 
-    /// The catalogs as home page rows: (title, cards).
+    /// The catalogs as home page rows: (key, title, cards).
     pub(super) fn catalog_rows(
         &self,
         lib: &Library,
         progress: &Progress,
-    ) -> Vec<(String, Vec<Card>)> {
+    ) -> Vec<(String, String, Vec<Card>)> {
         self.discover
             .shown
             .iter()
             .filter(|s| self.layout.shows(&s.key))
             .map(|s| {
                 let cards = self.catalog_cards(lib, s.ids.iter().take(HOME_ROW), progress);
-                (s.title.clone(), cards)
+                (s.key.clone(), s.title.clone(), cards)
             })
             .collect()
     }

@@ -83,7 +83,9 @@ impl Section {
                 "Stremio addons for everyone: catalogs on the home page, missing details \
                  filled in, and subtitles in the player."
             }
-            Section::Layout => "How the app looks for everyone: which rows the home page shows.",
+            Section::Layout => {
+                "How the app looks for everyone: which rows the home page shows, in what order."
+            }
             Section::Users => "Who can sign in, and who can manage the server.",
         }
     }

@@ -2,7 +2,7 @@
 
 [← Back to the Admin API](admin.md)
 
-Admins choose which rows everyone sees on the home page, from the Admin page's _Layout_ section. Without these endpoints, that section says _Not set up_ and links here, and the home page shows every row.
+Admins choose which rows everyone sees on the home page, and in what order, from the Admin page's _Layout_ section. Without these endpoints, that section says _Not set up_ and links here, and the home page shows every row.
 
 There are two parts:
 
@@ -29,15 +29,22 @@ There are two parts:
 
 The server should keep keys it doesn't know, so newer apps can add more.
 
+## Row order
+
+`home_order` lists the rows top to bottom, by the same keys. The featured banner and genre tiles always stay at the top, so only `continue`, `mylist`, `recent`, `top`, `movies`, `series`, `genres` and the `catalog:…` keys count here. Empty means the usual order: the first four, then the addon catalogs, then the last three. A row missing from the list, like a newly added addon's catalog, goes right after the row it usually follows.
+
 ## `GET /api/layout`
 
 Any signed-in user. `200`:
 
 ```json
-{ "home_hidden": ["recent", "genre:Drama", "catalog:ba3e09ce:movie:top"] }
+{
+  "home_hidden": ["recent", "genre:Drama", "catalog:ba3e09ce:movie:top"],
+  "home_order": ["mylist", "continue", "catalog:ba3e09ce:movie:top", "recent", "top", "movies", "series", "genres"]
+}
 ```
 
-A server without this endpoint (`404`) has nothing hidden.
+A server without this endpoint (`404`) has nothing hidden, in the usual order.
 
 ## `GET /api/admin/layout`
 
@@ -48,7 +55,7 @@ Admins only. The same as `GET /api/layout`.
 Admins only. Replaces the fields it sends, and answers `200` with the whole layout.
 
 ```json
-{ "home_hidden": ["recent", "genre:Drama"] }
+{ "home_hidden": ["recent", "genre:Drama"], "home_order": ["mylist", "continue"] }
 ```
 
 `400` for a body that isn't a JSON object. The reference server keeps it in `.valo/layout.json`.

@@ -911,11 +911,38 @@ pub struct ServerLayout {
     /// Rows nobody sees: "recent", "genre:Drama", "catalog:<addon id>:movie:top", …
     #[serde(deserialize_with = "null_as_empty")]
     pub home_hidden: Vec<String>,
+    /// The home page's rows top to bottom: "continue", "catalog:…", "genres", …
+    /// Empty for the usual order.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub home_order: Vec<String>,
 }
 
 impl ServerLayout {
     pub fn shows(&self, key: &str) -> bool {
         !self.home_hidden.iter().any(|k| k == key)
+    }
+
+    /// `keys`, the rows in their usual order, in the admin's order. A row the
+    /// admin never placed, like a new addon's, goes after the row it follows.
+    pub fn ordered(&self, keys: &[String]) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(keys.len());
+        for k in &self.home_order {
+            if keys.contains(k) && !out.contains(k) {
+                out.push(k.clone());
+            }
+        }
+        for (i, k) in keys.iter().enumerate() {
+            if out.contains(k) {
+                continue;
+            }
+            let at = keys[..i]
+                .iter()
+                .rev()
+                .find_map(|p| out.iter().position(|o| o == p))
+                .map_or(0, |p| p + 1);
+            out.insert(at, k.clone());
+        }
+        out
     }
 }
 

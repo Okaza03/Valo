@@ -41,6 +41,11 @@ const WIDE: egui::Vec2 = vec2(288.0, 162.0);
 const GAP: f32 = 14.0;
 const SIDE: f32 = 40.0;
 const HERO_ROTATE: Duration = Duration::from_secs(9);
+/// The home page's own rows in their usual order (their layout keys). The
+/// addon catalogs go between the first four and the rest.
+const HOME_ROWS: [&str; 7] = [
+    "continue", "mylist", "recent", "top", "movies", "series", "genres",
+];
 
 #[derive(Clone, PartialEq)]
 enum View {
@@ -777,68 +782,93 @@ impl Browse {
         if lay.genre_tiles && shows(self, "genre_tiles") {
             click = click.or(self.genre_tiles(ui, lib));
         }
-        let cont = self.continue_cards(lib, progress);
-        if !cont.is_empty() && shows(self, "continue") {
-            click = click.or(self.row(ui, "Continue watching", &cont, true, None, images));
-        }
-        let prefix = self.prefix();
-        let mine: Vec<&Item> = self
-            .watchlist
-            .ids(&prefix)
-            .filter_map(|id| lib.find(id))
-            .collect();
-        if !mine.is_empty() && shows(self, "mylist") {
-            let cards = self.poster_cards(mine.into_iter(), progress);
-            click = click.or(self.row(ui, "My list", &cards, false, None, images));
-        }
-        if lib.all().any(|i| i.added.is_some()) && shows(self, "recent") {
-            let mut recent: Vec<&Item> = lib.all().filter(|i| i.added.is_some()).collect();
-            recent.sort_by_key(|i| std::cmp::Reverse(i.added));
-            let cards = self.poster_cards(recent.into_iter().take(24), progress);
-            click = click.or(self.row(ui, "Recently added", &cards, false, None, images));
-        }
-        // best rated first, from the server's scores
-        let mut rated: Vec<&Item> = lib.all().filter(|i| i.score.is_some()).collect();
-        if rated.len() >= 5 && shows(self, "top") {
-            rated = shuffled(rated.into_iter(), "top", &self.shuffle); // ties in a random order
-            rated.sort_by(|a, b| b.score.unwrap_or(0.0).total_cmp(&a.score.unwrap_or(0.0)));
-            if lay.top10 {
-                click = click.or(self.top10_row(ui, &rated, images));
-            } else {
-                let cards = self.poster_cards(rated.into_iter().take(24), progress);
-                click = click.or(self.row(ui, "Top rated", &cards, false, None, images));
-            }
-        }
         // the admin's addon catalogs; titles we have play, the rest can be requested
-        let rows = self.catalog_rows(lib, progress);
-        for (title, cards) in rows {
-            click = click.or(self.row(ui, &title, &cards, false, None, images));
-        }
-        // the rest in a random order (the same all session), so the home page isn't A to Z
-        if !lib.movies.is_empty() && shows(self, "movies") {
-            let movies = shuffled(lib.movies.iter(), "movies", &self.shuffle);
-            let cards = self.poster_cards(movies.into_iter().take(30), progress);
-            click = click.or(self.row(ui, "Movies", &cards, false, Some(View::Movies), images));
-        }
-        if !lib.series.is_empty() && shows(self, "series") {
-            let series = shuffled(lib.series.iter(), "series", &self.shuffle);
-            let cards = self.poster_cards(series.into_iter().take(30), progress);
-            click = click.or(self.row(ui, "TV shows", &cards, false, Some(View::Series), images));
-        }
-        let genres = if cfg.genre_rows && shows(self, "genres") {
-            self.home_genres(lib)
-        } else {
-            Vec::new()
-        };
-        for g in genres.into_iter().take(8) {
-            let items = shuffled(
-                lib.all().filter(|i| i.genres.contains(&g)),
-                &g,
-                &self.shuffle,
-            );
-            let cards = self.poster_cards(items.into_iter().take(30), progress);
-            if cards.len() >= 2 {
-                click = click.or(self.row(ui, &g, &cards, false, None, images));
+        let catalogs = self.catalog_rows(lib, progress);
+        let mut keys: Vec<String> = HOME_ROWS[..4].iter().map(|k| k.to_string()).collect();
+        keys.extend(catalogs.iter().map(|c| c.0.clone()));
+        keys.extend(HOME_ROWS[4..].iter().map(|k| k.to_string()));
+        for key in self.layout.ordered(&keys) {
+            if !shows(self, &key) {
+                continue;
+            }
+            match key.as_str() {
+                "continue" => {
+                    let cont = self.continue_cards(lib, progress);
+                    if !cont.is_empty() {
+                        click =
+                            click.or(self.row(ui, "Continue watching", &cont, true, None, images));
+                    }
+                }
+                "mylist" => {
+                    let prefix = self.prefix();
+                    let mine: Vec<&Item> = self
+                        .watchlist
+                        .ids(&prefix)
+                        .filter_map(|id| lib.find(id))
+                        .collect();
+                    if !mine.is_empty() {
+                        let cards = self.poster_cards(mine.into_iter(), progress);
+                        click = click.or(self.row(ui, "My list", &cards, false, None, images));
+                    }
+                }
+                "recent" if lib.all().any(|i| i.added.is_some()) => {
+                    let mut recent: Vec<&Item> = lib.all().filter(|i| i.added.is_some()).collect();
+                    recent.sort_by_key(|i| std::cmp::Reverse(i.added));
+                    let cards = self.poster_cards(recent.into_iter().take(24), progress);
+                    click = click.or(self.row(ui, "Recently added", &cards, false, None, images));
+                }
+                "top" => {
+                    // best rated first, from the server's scores
+                    let mut rated: Vec<&Item> = lib.all().filter(|i| i.score.is_some()).collect();
+                    if rated.len() < 5 {
+                        continue;
+                    }
+                    rated = shuffled(rated.into_iter(), "top", &self.shuffle); // ties in a random order
+                    rated.sort_by(|a, b| b.score.unwrap_or(0.0).total_cmp(&a.score.unwrap_or(0.0)));
+                    if lay.top10 {
+                        click = click.or(self.top10_row(ui, &rated, images));
+                    } else {
+                        let cards = self.poster_cards(rated.into_iter().take(24), progress);
+                        click = click.or(self.row(ui, "Top rated", &cards, false, None, images));
+                    }
+                }
+                // the rest in a random order (the same all session), so the home page isn't A to Z
+                "movies" if !lib.movies.is_empty() => {
+                    let movies = shuffled(lib.movies.iter(), "movies", &self.shuffle);
+                    let cards = self.poster_cards(movies.into_iter().take(30), progress);
+                    click =
+                        click.or(self.row(ui, "Movies", &cards, false, Some(View::Movies), images));
+                }
+                "series" if !lib.series.is_empty() => {
+                    let series = shuffled(lib.series.iter(), "series", &self.shuffle);
+                    let cards = self.poster_cards(series.into_iter().take(30), progress);
+                    click = click.or(self.row(
+                        ui,
+                        "TV shows",
+                        &cards,
+                        false,
+                        Some(View::Series),
+                        images,
+                    ));
+                }
+                "genres" if cfg.genre_rows => {
+                    for g in self.home_genres(lib).into_iter().take(8) {
+                        let items = shuffled(
+                            lib.all().filter(|i| i.genres.contains(&g)),
+                            &g,
+                            &self.shuffle,
+                        );
+                        let cards = self.poster_cards(items.into_iter().take(30), progress);
+                        if cards.len() >= 2 {
+                            click = click.or(self.row(ui, &g, &cards, false, None, images));
+                        }
+                    }
+                }
+                k => {
+                    if let Some((_, title, cards)) = catalogs.iter().find(|c| c.0 == k) {
+                        click = click.or(self.row(ui, title, cards, false, None, images));
+                    }
+                }
             }
         }
         click
