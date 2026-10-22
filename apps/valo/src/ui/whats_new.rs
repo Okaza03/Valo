@@ -150,6 +150,14 @@ const NOTES: &[(&str, &[Note])] = &[
             },
         ],
     ),
+    (
+        "0.8.9",
+        &[Note {
+            title: "Your home page, your way",
+            text: "Your server's admin can now choose which rows show on Home, and in \
+                   what order.",
+        }],
+    ),
 ];
 
 /// The notes for versions after `seen`, up to `current`, newest first.
