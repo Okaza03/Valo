@@ -12,6 +12,7 @@ The app's Admin page has a sidebar of sections. Each one needs its own endpoints
 | Library     | Edit a title's details and artwork, fetch them from IMDb                  | [Library editing](admin-library.md)         |
 | Collections | Group titles so A to Z keeps them together, in an order the admin picks   | [Collections](admin-collections.md)         |
 | Addons      | Stremio addons for everyone: home-page catalogs, missing details, subtitles | [Addons](admin-addons.md)                 |
+| Layout      | Which rows everyone sees on the home page                                   | [Layout](admin-layout.md)                 |
 | Users       | List, add and remove users, admin rights, passwords, sign out everywhere  | this page                                   |
 
 This page covers the Users section and the rules every admin endpoint follows. The library numbers and health checks on the Dashboard work with no admin endpoints at all; they come from the library.

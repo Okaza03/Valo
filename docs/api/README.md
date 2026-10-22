@@ -20,6 +20,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | Edit titles and fetch details from IMDb in the app           | [Library editing](admin-library.md)        |
 | Group titles into collections (Batman, Harry Potter, …)      | [Collections](admin-collections.md)        |
 | Add Stremio addons (catalogs, metadata, subtitles) for everyone | [Addons](admin-addons.md)               |
+| Choose which rows everyone sees on the home page             | [Layout](admin-layout.md)                  |
 | List and sign out a user's devices                           | [Sign-in](auth.md#get-apisessions-optional) |
 | Copy a working server in Laravel, Express or Flask           | [Examples](examples.md)                    |
 | Test the server by hand with curl                            | [Testing with curl](testing.md)            |
@@ -44,6 +45,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | `/api/admin/movies/…`, `/api/admin/series/…` | optional                | [Library editing](admin-library.md)   |
 | `/api/admin/collections`                | optional                     | [Collections](admin-collections.md)   |
 | `GET /api/addons`, `/api/admin/addons`  | optional                     | [Addons](admin-addons.md)             |
+| `GET /api/layout`, `/api/admin/layout`  | optional                     | [Layout](admin-layout.md)             |
 | `/api/admin/subtitles/bulk`, `/api/admin/episodes/…` | optional        | [Library editing](admin-library.md)   |
 | `GET /admin`                            | optional                     | [Admin API](admin.md#get-admin-optional) |
 

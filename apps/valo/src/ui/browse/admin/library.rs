@@ -767,6 +767,7 @@ impl State {
                                 msg: format!("Saved {title}."),
                                 library: true,
                                 forget: art,
+                                ..Default::default()
                             })
                         });
                     }
@@ -798,6 +799,7 @@ impl State {
                     msg: format!("Downloaded {} images, kept {}.", n("downloaded"), n("kept")),
                     library: true,
                     forget: old,
+                    ..Default::default()
                 })
             });
         }
@@ -826,6 +828,7 @@ impl State {
                         msg: format!("Uploaded a new {which} for {}.", it.title),
                         library: true,
                         forget: old,
+                        ..Default::default()
                     })
                 });
             }

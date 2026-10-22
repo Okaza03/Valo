@@ -215,6 +215,7 @@ impl State {
                     })
                     .collect();
                 Shown {
+                    key: r.key.clone(),
                     title: r.title.clone(),
                     source: r.source.clone(),
                     service: r.service,
@@ -404,6 +405,8 @@ type YearId<'a> = (Option<u32>, &'a str);
 
 /// A catalog, its titles as ids.
 pub(super) struct Shown {
+    /// [`addons::catalog_key`]
+    pub key: String,
     /// "Netflix · Movies"
     pub title: String,
     /// "Netflix"
@@ -707,6 +710,7 @@ impl Browse {
         self.discover
             .shown
             .iter()
+            .filter(|s| self.layout.shows(&s.key))
             .map(|s| {
                 let cards = self.catalog_cards(lib, s.ids.iter().take(HOME_ROW), progress);
                 (s.title.clone(), cards)

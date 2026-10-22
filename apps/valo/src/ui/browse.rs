@@ -26,7 +26,7 @@ use super::{
 };
 use super::{ACCENT, BG, ERROR, MUTED, SURFACE, SURFACE_HI, TEXT};
 use crate::addons::Lookup;
-use crate::api::{Client, Item, Kind, Library, Me, Missing, Mode, Unauthorized};
+use crate::api::{Client, Item, Kind, Library, Me, Missing, Mode, ServerLayout, Unauthorized};
 use crate::config::{Config, Entry, Hidden, Known, Progress, Watchlist};
 use crate::images::Images;
 use crate::player::Source;
@@ -166,6 +166,9 @@ pub struct Browse {
     devices: devices::State,
     /// Catalogs and details from the admin's Stremio addons.
     discover: discover::State,
+    /// The home page as the server's admin set it up.
+    layout: ServerLayout,
+    layout_task: Option<Task<Result<ServerLayout>>>,
     /// Titles each library had when the user last saw it.
     known: Known,
     /// Newly added titles, by id, waiting to be announced.
@@ -208,6 +211,8 @@ impl Browse {
             admin: admin::AdminState::default(),
             devices: devices::State::default(),
             discover: discover::State::default(),
+            layout: ServerLayout::default(),
+            layout_task: None,
             known: Known::load(),
             arrivals: Vec::new(),
             new_seasons: HashMap::new(),
@@ -225,8 +230,21 @@ impl Browse {
         let c = self.client.clone();
         self.loading = Some(Task::spawn(ctx, move || c.library()));
         self.discover.reload(ctx, &self.client);
+        self.reload_layout(ctx);
         self.error = None;
         self.missing = None;
+    }
+
+    fn reload_layout(&mut self, ctx: &egui::Context) {
+        let c = self.client.clone();
+        self.layout_task = Some(Task::spawn(ctx, move || c.layout()));
+    }
+
+    /// The library's genres, less the ones the admin hid from Home.
+    fn home_genres(&self, lib: &Library) -> Vec<String> {
+        let mut g = lib.genres();
+        g.retain(|g| self.layout.shows(&format!("genre:{g}")));
+        g
     }
 
     fn prefix(&self) -> String {
@@ -338,6 +356,13 @@ impl Browse {
             }
         }
         self.discover.poll(ctx, &self.client, &mut self.lib);
+        if let Some(r) = self.layout_task.as_mut().and_then(|t| t.poll()) {
+            self.layout_task = None;
+            // can't load it: keep what we had (everything, at first)
+            if let Ok(l) = r {
+                self.layout = l;
+            }
+        }
         let every = Duration::from_secs(u64::from(cfg.refresh_minutes) * 60);
         if cfg.refresh_minutes > 0
             && self.loading.is_none()
@@ -725,7 +750,7 @@ impl Browse {
             return self.home_grid(ui, lib, images, progress);
         }
         let featured = featured(lib, &self.shuffle);
-        if !featured.is_empty() && lay.hero != theme::Hero::None {
+        if !featured.is_empty() && lay.hero != theme::Hero::None && self.layout.shows("featured") {
             if self.hero_since.elapsed() > HERO_ROTATE {
                 self.hero_idx = (self.hero_idx + 1) % featured.len();
                 self.hero_since = Instant::now();
@@ -748,11 +773,12 @@ impl Browse {
             }
         }
 
-        if lay.genre_tiles {
+        let shows = |b: &Browse, k: &str| b.layout.shows(k);
+        if lay.genre_tiles && shows(self, "genre_tiles") {
             click = click.or(self.genre_tiles(ui, lib));
         }
         let cont = self.continue_cards(lib, progress);
-        if !cont.is_empty() {
+        if !cont.is_empty() && shows(self, "continue") {
             click = click.or(self.row(ui, "Continue watching", &cont, true, None, images));
         }
         let prefix = self.prefix();
@@ -761,11 +787,11 @@ impl Browse {
             .ids(&prefix)
             .filter_map(|id| lib.find(id))
             .collect();
-        if !mine.is_empty() {
+        if !mine.is_empty() && shows(self, "mylist") {
             let cards = self.poster_cards(mine.into_iter(), progress);
             click = click.or(self.row(ui, "My list", &cards, false, None, images));
         }
-        if lib.all().any(|i| i.added.is_some()) {
+        if lib.all().any(|i| i.added.is_some()) && shows(self, "recent") {
             let mut recent: Vec<&Item> = lib.all().filter(|i| i.added.is_some()).collect();
             recent.sort_by_key(|i| std::cmp::Reverse(i.added));
             let cards = self.poster_cards(recent.into_iter().take(24), progress);
@@ -773,7 +799,7 @@ impl Browse {
         }
         // best rated first, from the server's scores
         let mut rated: Vec<&Item> = lib.all().filter(|i| i.score.is_some()).collect();
-        if rated.len() >= 5 {
+        if rated.len() >= 5 && shows(self, "top") {
             rated = shuffled(rated.into_iter(), "top", &self.shuffle); // ties in a random order
             rated.sort_by(|a, b| b.score.unwrap_or(0.0).total_cmp(&a.score.unwrap_or(0.0)));
             if lay.top10 {
@@ -789,18 +815,18 @@ impl Browse {
             click = click.or(self.row(ui, &title, &cards, false, None, images));
         }
         // the rest in a random order (the same all session), so the home page isn't A to Z
-        if !lib.movies.is_empty() {
+        if !lib.movies.is_empty() && shows(self, "movies") {
             let movies = shuffled(lib.movies.iter(), "movies", &self.shuffle);
             let cards = self.poster_cards(movies.into_iter().take(30), progress);
             click = click.or(self.row(ui, "Movies", &cards, false, Some(View::Movies), images));
         }
-        if !lib.series.is_empty() {
+        if !lib.series.is_empty() && shows(self, "series") {
             let series = shuffled(lib.series.iter(), "series", &self.shuffle);
             let cards = self.poster_cards(series.into_iter().take(30), progress);
             click = click.or(self.row(ui, "TV shows", &cards, false, Some(View::Series), images));
         }
-        let genres = if cfg.genre_rows {
-            lib.genres()
+        let genres = if cfg.genre_rows && shows(self, "genres") {
+            self.home_genres(lib)
         } else {
             Vec::new()
         };

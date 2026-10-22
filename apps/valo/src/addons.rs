@@ -293,6 +293,8 @@ fn fetch_subs(a: &Addon, kind: &str, id: &str) -> Result<Vec<SubtitleTrack>> {
 /// A catalog as a row of titles. Its items are addon titles ([`remote_id`]);
 /// the home page swaps in our own where the IMDb id matches.
 pub struct Row {
+    /// Its [`catalog_key`], for hiding it from the home page.
+    pub key: String,
     /// "Netflix · Movies"
     pub title: String,
     /// The catalog's name: "Netflix".
@@ -302,6 +304,12 @@ pub struct Row {
     pub service: bool,
     pub kind: Kind,
     pub items: Vec<Item>,
+}
+
+/// How the admin's home page layout names a catalog's row:
+/// "catalog:ba3e09ce:movie:top".
+pub fn catalog_key(addon: &str, kind: &str, catalog: &str) -> String {
+    format!("catalog:{addon}:{kind}:{catalog}")
 }
 
 /// The id an addon title goes by in the app: "addon:movie:tt1375666".
@@ -372,6 +380,7 @@ pub fn catalogs(client: &Client) -> Result<Catalogs> {
         // "Prime  Video" -> "Prime Video"
         let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
         (!items.is_empty()).then(|| Row {
+            key: catalog_key(&a.id, &c.kind, &c.id),
             title: format!("{name} · {what}"),
             source: name,
             service: !a.resources.iter().any(|r| r.name == "meta"),

@@ -904,6 +904,21 @@ pub struct AddonCatalog {
     pub name: String,
 }
 
+/// What the server's admin set for everyone's home page (`GET /api/layout`).
+#[derive(Clone, Debug, Default, Deserialize, serde::Serialize, PartialEq)]
+#[serde(default)]
+pub struct ServerLayout {
+    /// Rows nobody sees: "recent", "genre:Drama", "catalog:<addon id>:movie:top", …
+    #[serde(deserialize_with = "null_as_empty")]
+    pub home_hidden: Vec<String>,
+}
+
+impl ServerLayout {
+    pub fn shows(&self, key: &str) -> bool {
+        !self.home_hidden.iter().any(|k| k == key)
+    }
+}
+
 impl Addon {
     /// It answers `resource` requests for this type and id.
     pub fn serves(&self, resource: &str, kind: &str, id: &str) -> bool {
@@ -1152,6 +1167,8 @@ pub const ADMIN_DOCS_COLLECTIONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-collections.md";
 pub const ADMIN_DOCS_ADDONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-addons.md";
+pub const ADMIN_DOCS_LAYOUT: &str =
+    "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-layout.md";
 
 /// The server is reachable but lacks a part of the Valo API, so only
 /// its admin can fix it. The UI offers a message the user can send them.
@@ -1842,6 +1859,36 @@ impl Client {
             Err(ureq::Error::Status(404 | 405 | 501, _)) => Ok(Vec::new()),
             Err(e) => Err(status_err(e, "addons")),
         }
+    }
+
+    /// The admin's home page layout, for everyone (`GET /api/layout`).
+    /// A server without it shows everything.
+    pub fn layout(&self) -> Result<ServerLayout> {
+        if self.info.mode != Mode::Api {
+            return Ok(ServerLayout::default());
+        }
+        match self
+            .get(&format!("{}/api/layout", self.base))
+            .set("Accept", "application/json")
+            .call()
+        {
+            Ok(r) => Ok(r.into_json().unwrap_or_default()),
+            Err(ureq::Error::Status(404 | 405 | 501, _)) => Ok(ServerLayout::default()),
+            Err(e) => Err(status_err(e, "layout")),
+        }
+    }
+
+    /// The layout for the Admin page; a server without it is "not set up".
+    pub fn admin_layout(&self) -> Result<ServerLayout> {
+        self.admin_json("layout")
+    }
+
+    pub fn admin_set_layout(&self, layout: &ServerLayout) -> Result<ServerLayout> {
+        let r = self
+            .admin("PATCH", "layout")
+            .send_json(layout)
+            .map_err(admin_missing)?;
+        Ok(r.into_json().unwrap_or_else(|_| layout.clone()))
     }
 
     /// The signed-in user's own requests (`GET /api/requests`).

@@ -6,6 +6,7 @@ mod addons;
 mod analytics;
 mod collections;
 mod dashboard;
+mod layout;
 mod library;
 mod requests;
 mod users;
@@ -34,17 +35,19 @@ pub(super) enum Section {
     Library,
     Collections,
     Addons,
+    Layout,
     Users,
 }
 
 impl Section {
-    const ALL: [Section; 7] = [
+    const ALL: [Section; 8] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
         Section::Collections,
         Section::Addons,
+        Section::Layout,
         Section::Users,
     ];
 
@@ -56,6 +59,7 @@ impl Section {
             Section::Library => "Library",
             Section::Collections => "Collections",
             Section::Addons => "Addons",
+            Section::Layout => "Layout",
             Section::Users => "Users",
         }
     }
@@ -79,6 +83,7 @@ impl Section {
                 "Stremio addons for everyone: catalogs on the home page, missing details \
                  filled in, and subtitles in the player."
             }
+            Section::Layout => "How the app looks for everyone: which rows the home page shows.",
             Section::Users => "Who can sign in, and who can manage the server.",
         }
     }
@@ -92,6 +97,7 @@ impl Section {
             Section::Library => api::ADMIN_DOCS_LIBRARY,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
             Section::Addons => api::ADMIN_DOCS_ADDONS,
+            Section::Layout => api::ADMIN_DOCS_LAYOUT,
             Section::Users => api::ADMIN_API_DOCS,
         }
     }
@@ -113,6 +119,7 @@ impl Section {
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
             Section::Addons => "the addon endpoints (/api/addons, /api/admin/addons)",
+            Section::Layout => "the layout endpoints (/api/layout, /api/admin/layout)",
             Section::Users => "Valo's admin API (/api/admin/users)",
         }
     }
@@ -217,6 +224,8 @@ pub(super) struct Done {
     pub library: bool,
     /// Images that changed on the server.
     pub forget: Vec<String>,
+    /// Load the home page layout again afterwards.
+    pub layout: bool,
 }
 
 impl Done {
@@ -300,6 +309,7 @@ pub(super) struct AdminState {
     library: library::State,
     collections: collections::State,
     addons: addons::State,
+    layout: layout::State,
     users: users::State,
     /// The server's own title lists (`GET /api/admin/movies`, `/series`).
     catalog: [Remote<Vec<Item>>; 2],
@@ -315,6 +325,7 @@ impl AdminState {
             Section::Library => self.library.refresh(),
             Section::Collections => self.collections.refresh(),
             Section::Addons => self.addons.refresh(),
+            Section::Layout => self.layout.refresh(),
             Section::Users => {}
         }
         self.users.refresh();
@@ -347,6 +358,7 @@ impl AdminState {
             Section::Library => self.library.missing,
             Section::Collections => self.collections.missing(),
             Section::Addons => self.addons.missing(),
+            Section::Layout => self.layout.missing(),
             Section::Users => self.users.missing(),
         }
     }
@@ -491,6 +503,8 @@ impl Browse {
                     st.refresh();
                     if done.library {
                         self.reload(&ctx);
+                    } else if done.layout {
+                        self.reload_layout(&ctx);
                     }
                 }
                 Err(e) if e.is::<Unauthorized>() => login = true,
@@ -578,6 +592,7 @@ impl Browse {
             Section::Library => st.library.ui(ui, &mut cx),
             Section::Collections => st.collections.ui(ui, &mut cx),
             Section::Addons => st.addons.ui(ui, &mut cx),
+            Section::Layout => st.layout.ui(ui, &mut cx),
             Section::Users => st.users.ui(ui, &mut cx),
         }
         let Cx {

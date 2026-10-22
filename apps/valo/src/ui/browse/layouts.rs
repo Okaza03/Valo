@@ -423,7 +423,7 @@ impl Browse {
 
     /// Disney+'s row of tiles under the banner, here one per genre.
     pub(super) fn genre_tiles(&mut self, ui: &mut Ui, lib: &Library) -> Option<Click> {
-        let genres: Vec<String> = lib.genres().into_iter().take(5).collect();
+        let genres: Vec<String> = self.home_genres(lib).into_iter().take(5).collect();
         if genres.len() < 3 {
             return None;
         }
@@ -492,7 +492,11 @@ impl Browse {
         progress: &Progress,
     ) -> Option<Click> {
         let mut click = None;
-        let genres: Vec<String> = lib.genres().into_iter().take(8).collect();
+        let genres: Vec<String> = if self.layout.shows("genres") {
+            self.home_genres(lib).into_iter().take(8).collect()
+        } else {
+            Vec::new()
+        };
         let mut chips: Vec<(usize, &str, Option<usize>)> =
             vec![(0, "All", None), (1, "Movies", None), (2, "TV shows", None)];
         for (i, g) in genres.iter().enumerate() {
@@ -508,7 +512,7 @@ impl Browse {
         });
         ui.add_space(18.0);
         let marked = |b: &Browse, id: &str| b.watchlist.contains(&b.key(id));
-        if self.chip == 0 {
+        if self.chip == 0 && self.layout.shows("continue") {
             let cont = self.continue_cards(lib, progress);
             if !cont.is_empty() {
                 ui.horizontal(|ui| {

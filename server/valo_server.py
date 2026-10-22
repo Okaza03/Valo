@@ -29,8 +29,9 @@ and served from /api/progress, so it follows them between devices, and
 users, a dashboard with syncs and the live log, analytics from watch
 progress, requests (filled by a Discord bot, see docs/api/admin-requests.md),
 editing titles (written to info.json; IMDb lookups need --omdb-key),
-collections (.valo/collections.json) and Stremio addons (.valo/addons.json):
-their catalogs, metadata and subtitles show up for every user.
+collections (.valo/collections.json), Stremio addons (.valo/addons.json):
+their catalogs, metadata and subtitles show up for every user, and the home
+page's layout (.valo/layout.json): which rows everyone sees.
 """
 
 import argparse
@@ -735,6 +736,34 @@ class Addons:
             return len(self.items) < before
 
 
+class Layout:
+    """layout.json: what the admin set for everyone's home page, like which
+    rows are hidden ("recent", "genre:Drama", "catalog:<addon>:movie:top")."""
+
+    def __init__(self, folder):
+        self.path = folder / "layout.json"
+        data = read_info(self.path)
+        self.data = {"home_hidden": []}
+        if isinstance(data, dict):
+            self.data.update(self.clean(data))
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def clean(req):
+        out = {}
+        if isinstance(req.get("home_hidden"), list):
+            keys = [str(k)[:200] for k in req["home_hidden"] if isinstance(k, str) and k]
+            out["home_hidden"] = list(dict.fromkeys(keys))[:500]
+        return out
+
+    def update(self, req):
+        with self.lock:
+            self.data.update(self.clean(req))
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self.data, indent=2, ensure_ascii=False))
+            return dict(self.data)
+
+
 def omdb(key, title, year, kind, imdb_id):
     """Look a title up on OMDb (IMDb's data); library-shaped fields."""
     q = {"apikey": key, "plot": "full"}
@@ -1160,7 +1189,9 @@ def library_ids(lib, kind):
     }
 
 
-def make_handler(lib, users, progress, name, cols, reqs, addons, omdb_key=None, bot_token=None):
+def make_handler(
+    lib, users, progress, name, cols, reqs, addons, layout, omdb_key=None, bot_token=None
+):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -1471,6 +1502,14 @@ def make_handler(lib, users, progress, name, cols, reqs, addons, omdb_key=None, 
                     return self.send_json({"error": str(e)}, 422)
                 log(f"addon {a['name']} added by {user}")
                 return self.send_json(a, 201)
+            if parts == ["layout"] and method == "GET":
+                return self.send_json(layout.data)
+            if parts == ["layout"] and method == "PATCH":
+                if not isinstance(req, dict):
+                    return self.send_json({"error": "bad request"}, 400)
+                saved = layout.update(req)
+                log(f"home page layout changed by {user}")
+                return self.send_json(saved)
             if parts[:1] == ["addons"] and len(parts) == 2 and method == "DELETE":
                 if not addons.delete(parts[1]):
                     return self.send_json({"error": "no such addon"}, 404)
@@ -1667,6 +1706,8 @@ def make_handler(lib, users, progress, name, cols, reqs, addons, omdb_key=None, 
                 return self.admin("GET", path, b"")
             if path == "/api/addons":
                 return self.send_json(addons.items)
+            if path == "/api/layout":
+                return self.send_json(layout.data)
             if path == "/api/sessions":
                 user = self.user()
                 if not user:
@@ -1768,8 +1809,18 @@ def main():
     cols = Collections(data)
     reqs = Requests(data)
     addons = Addons(data)
+    layout = Layout(data)
     handler = make_handler(
-        Library(root, cols), users, progress, name, cols, reqs, addons, a.omdb_key, a.bot_token
+        Library(root, cols),
+        users,
+        progress,
+        name,
+        cols,
+        reqs,
+        addons,
+        layout,
+        a.omdb_key,
+        a.bot_token,
     )
     srv = ThreadingHTTPServer((a.host, a.port), handler)
     log(
