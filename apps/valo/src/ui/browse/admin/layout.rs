@@ -160,6 +160,8 @@ impl State {
                 keys.extend(super::super::HOME_ROWS[4..].iter().map(|k| k.to_string()));
                 let order = l.ordered(&keys);
                 let mut shift = None;
+                // where each row sits, for dropping a dragged one
+                let mut rows: Vec<(usize, egui::Rect)> = Vec::new();
                 for (i, key) in order.iter().enumerate() {
                     let (name, about) = match HOME_ROWS.iter().find(|r| r.0 == key) {
                         Some(r) => (r.1, Some(r.2)),
@@ -168,7 +170,8 @@ impl State {
                             None => continue,
                         },
                     };
-                    ui.horizontal(|ui| {
+                    let row = ui.horizontal(|ui| {
+                        grip(ui, i);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
                             ui.add_enabled_ui(i + 1 < order.len(), |ui| {
@@ -186,10 +189,15 @@ impl State {
                             });
                         });
                     });
+                    rows.push((i, row.response.rect));
                 }
-                if let Some((a, b)) = shift {
+                if let Some(m) = drop_target(ui, &rows, order.len()) {
+                    shift = Some(m);
+                }
+                if let Some((a, b)) = shift.filter(|(a, b)| a != b) {
                     let mut order = order;
-                    order.swap(a, b);
+                    let k = order.remove(a);
+                    order.insert(b, k);
                     // keep the places of rows we can't see now, like an addon that didn't load
                     order.extend(l.home_order.iter().filter(|k| !keys.contains(k)).cloned());
                     l.home_order = order;
@@ -269,8 +277,8 @@ impl State {
                     for line in [
                         "Unticked rows don't show on anyone's home page. The pages for \
                          Movies, TV shows and Streaming still list everything.",
-                        "The arrows move a row up or down. The banner and genre tiles \
-                         always stay at the top.",
+                        "Drag a row by its handle, or use the arrows, to move it. The \
+                         banner and genre tiles always stay at the top.",
                         "Rows with nothing in them never show, like Continue watching for \
                          someone who hasn't started anything.",
                         "Everyone gets the new home page the next time their library loads.",
@@ -307,6 +315,52 @@ fn set(l: &mut ServerLayout, key: &str, on: bool) {
     if !on {
         l.home_hidden.push(key.to_owned());
     }
+}
+
+/// The row being dragged, by its place in the order.
+struct Dragged(usize);
+
+/// A row's drag handle: two columns of dots.
+fn grip(ui: &mut Ui, i: usize) {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(16.0, 24.0), egui::Sense::drag());
+    resp.dnd_set_drag_payload(Dragged(i));
+    let active = resp.hovered() || resp.dragged();
+    let col = if active { crate::ui::TEXT() } else { MUTED() };
+    for dx in [-3.0, 3.0] {
+        for dy in [-5.0, 0.0, 5.0] {
+            ui.painter()
+                .circle_filled(r.center() + egui::vec2(dx, dy), 1.5, col);
+        }
+    }
+    if resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else {
+        resp.on_hover_text("Drag to move");
+    }
+}
+
+/// While a row is dragged, draws where it would land; on release, the move
+/// as (from, to) places in the order.
+fn drop_target(ui: &Ui, rows: &[(usize, egui::Rect)], len: usize) -> Option<(usize, usize)> {
+    let from = egui::DragAndDrop::payload::<Dragged>(ui.ctx())?.0;
+    let pos = ui.ctx().pointer_latest_pos()?;
+    let (first, last) = (rows.first()?.1, rows.last()?.1);
+    let area = first.union(last).expand2(egui::vec2(40.0, 30.0));
+    if from >= len || !area.contains(pos) {
+        return None;
+    }
+    // drop before the first row whose middle is below the pointer
+    let (before, y) = match rows.iter().find(|(_, r)| pos.y < r.center().y) {
+        Some((i, r)) => (*i, r.top()),
+        None => (len, last.bottom()),
+    };
+    ui.painter()
+        .hline(first.x_range(), y, egui::Stroke::new(2.0_f32, TEAL()));
+    if !ui.input(|i| i.pointer.any_released()) {
+        return None;
+    }
+    egui::DragAndDrop::clear_payload(ui.ctx());
+    Some((from, if before > from { before - 1 } else { before }))
 }
 
 /// A row's checkbox, with a line about it.
