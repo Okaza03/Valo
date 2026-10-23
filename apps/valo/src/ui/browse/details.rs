@@ -11,7 +11,7 @@ use eframe::egui::{
 use std::hash::{BuildHasher, RandomState};
 
 use super::{Browse, Click, Probe, Tab, View, GAP, SIDE};
-use crate::api::{CastMember, Episode, FileInfo, Item, Library};
+use crate::api::{featurette, CastMember, Episode, FileInfo, Item, Library};
 use crate::config::Progress;
 use crate::images::Images;
 use crate::ui::chrome::{self, Icon};
@@ -160,7 +160,7 @@ fn merge(server: Option<&FileInfo>, probed: Option<&FileInfo>) -> Option<FileInf
 }
 
 fn sxe(season: u32, ep: u32) -> String {
-    format!("S{season:02}E{ep:02}")
+    featurette(season, ep).unwrap_or_else(|| format!("S{season:02}E{ep:02}"))
 }
 
 // ------------------------------------------------------------- layout
@@ -1216,7 +1216,7 @@ impl Browse {
                     );
                 }
                 meta.extend(years(item));
-                let n = item.seasons.len();
+                let n = item.season_count();
                 meta.push(format!("{n} Season{}", if n == 1 { "" } else { "s" }));
                 ui.label(
                     RichText::new(meta.join("   ·   "))
@@ -1248,7 +1248,7 @@ impl Browse {
                     if item.seasons.len() > 1 {
                         let mut pick = self.season;
                         egui::ComboBox::from_id_salt("season_pick")
-                            .selected_text(format!("Season {:02}", item.seasons[pick].number))
+                            .selected_text(item.seasons[pick].label())
                             .width(120.0)
                             .show_ui(ui, |ui| {
                                 for (i, s) in item.seasons.iter().enumerate() {
@@ -1518,7 +1518,7 @@ impl Browse {
                     if let Some(y) = years(item) {
                         ui.label(RichText::new(y).size(12.0).color(MUTED()));
                     }
-                    let n = item.seasons.len();
+                    let n = item.season_count();
                     ui.label(
                         RichText::new(format!("{n} season{}", if n == 1 { "" } else { "s" }))
                             .size(12.0)
@@ -1687,10 +1687,13 @@ impl Browse {
         placed(ui, text_rect, "ep_hero", 1.0, |ui| {
             caps(
                 ui,
-                &format!(
-                    "{}  ·  S{:02}  ·  E{:02}",
-                    series.title, season.number, ep.number
-                ),
+                &match featurette(season.number, ep.number) {
+                    Some(f) => format!("{}  ·  {f}", series.title),
+                    None => format!(
+                        "{}  ·  S{:02}  ·  E{:02}",
+                        series.title, season.number, ep.number
+                    ),
+                },
                 TEXT().gamma_multiply(0.7),
             );
             ui.add_space(8.0);

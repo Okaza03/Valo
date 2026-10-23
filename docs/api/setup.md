@@ -40,9 +40,11 @@ Videos/
         ├── poster.jpg
         ├── fanart.jpg
         ├── info.json
-        └── Season 1/
-            ├── The.Office.S01E01.Pilot.mkv
-            └── The.Office.S01E01.Pilot.jpg   (episode thumbnail, or <name>-thumb.jpg)
+        ├── Season 1/
+        │   ├── The.Office.S01E01.Pilot.mkv
+        │   └── The.Office.S01E01.Pilot.jpg   (episode thumbnail, or <name>-thumb.jpg)
+        └── Featurettes/                      (shown as a "Featurettes" season, after the others)
+            └── Bloopers.mkv                  (any file name; titled after it)
 ```
 
 Everything else comes from `info.json`. Every key is optional:

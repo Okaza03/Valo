@@ -12,7 +12,7 @@ use super::details::{
     TEAL,
 };
 use super::{makers, Browse, Click, Filter, View, GAP};
-use crate::api::{Item, Kind, Library};
+use crate::api::{featurette, Item, Kind, Library};
 use crate::config::{Entry, Progress};
 use crate::images::Images;
 use crate::ui::chrome;
@@ -581,8 +581,10 @@ impl Browse {
                     s,
                     Some(ep.id.clone()),
                     Some(format!(
-                        "S{:02}E{:02} · {}",
-                        season.number, ep.number, ep.title
+                        "{} · {}",
+                        featurette(season.number, ep.number)
+                            .unwrap_or_else(|| format!("S{:02}E{:02}", season.number, ep.number)),
+                        ep.title
                     )),
                     e,
                 ));

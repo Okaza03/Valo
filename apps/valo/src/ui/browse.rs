@@ -26,7 +26,9 @@ use super::{
 };
 use super::{ACCENT, BG, ERROR, MUTED, SURFACE, SURFACE_HI, TEXT};
 use crate::addons::Lookup;
-use crate::api::{Client, Item, Kind, Library, Me, Missing, Mode, ServerLayout, Unauthorized};
+use crate::api::{
+    featurette, Client, Item, Kind, Library, Me, Missing, Mode, ServerLayout, Unauthorized,
+};
 use crate::config::{Config, Entry, Hidden, Known, Progress, Watchlist};
 use crate::images::Images;
 use crate::player::Source;
@@ -1059,7 +1061,10 @@ impl Browse {
                         (None, false) => "Play",
                     };
                     (
-                        format!("{verb} S{:02} E{:02}", s.number, ep.number),
+                        match featurette(s.number, ep.number) {
+                            Some(f) => format!("{verb} {f}"),
+                            None => format!("{verb} S{:02} E{:02}", s.number, ep.number),
+                        },
                         n.started,
                     )
                 }
@@ -1138,11 +1143,13 @@ impl Browse {
                 if let Some(n) = self.next_up(s, progress) {
                     let season = &s.seasons[n.si];
                     let ep = &season.episodes[n.ei];
+                    let code = featurette(season.number, ep.number)
+                        .unwrap_or_else(|| format!("S{} E{}", season.number, ep.number));
                     out.push(Card {
                         item: s.id.clone(),
                         episode: Some(ep.id.clone()),
                         title: s.title.clone(),
-                        sub: Some(format!("S{} E{} · {}", season.number, ep.number, ep.title)),
+                        sub: Some(format!("{code} · {}", ep.title)),
                         art: ep
                             .still
                             .clone()
@@ -1150,7 +1157,7 @@ impl Browse {
                             .or(s.backdrop.clone())
                             .or(s.poster.clone()),
                         wide_art: None,
-                        meta: Some(format!("{} · S{} E{}", s.title, season.number, ep.number)),
+                        meta: Some(format!("{} · {code}", s.title)),
                         progress: Some(n.resume.map_or(0.0, Entry::fraction)),
                         removable: true,
                     });
@@ -1597,8 +1604,11 @@ impl Browse {
                         queue.push(PlayItem {
                             title: item.title.clone(),
                             subtitle: format!(
-                                "S{:02}E{:02} · {}",
-                                season.number, e.number, e.title
+                                "{} · {}",
+                                featurette(season.number, e.number).unwrap_or_else(|| {
+                                    format!("S{:02}E{:02}", season.number, e.number)
+                                }),
+                                e.title
                             ),
                             episode: true,
                             source: Source::Url {
@@ -1704,7 +1714,7 @@ fn meta_line(item: &Item) -> String {
             }
         }
         Kind::Series => {
-            let n = item.seasons.len();
+            let n = item.season_count();
             let eps: usize = item.seasons.iter().map(|s| s.episodes.len()).sum();
             parts.push(format!("{n} season{}", if n == 1 { "" } else { "s" }));
             parts.push(format!("{eps} episode{}", if eps == 1 { "" } else { "s" }));
@@ -1738,7 +1748,7 @@ fn short_meta(i: &Item) -> String {
     match i.kind {
         Kind::Movie => parts.extend(i.duration.filter(|d| *d > 0.0).map(fmt_runtime)),
         Kind::Series => {
-            let n = i.seasons.len();
+            let n = i.season_count();
             parts.push(format!("{n} season{}", if n == 1 { "" } else { "s" }));
         }
     }

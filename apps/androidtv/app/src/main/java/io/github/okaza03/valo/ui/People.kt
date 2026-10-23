@@ -309,7 +309,7 @@ fun ProfileScreen(model: AppModel, lib: Library) {
             if (e.watched) epsDone++
             val (n, t) = perShow[s.id] ?: (0 to 0.0)
             perShow[s.id] = (n + if (e.watched) 1 else 0) to (t + secs(e))
-            recent += Watch(s, ep.id, "S%02dE%02d · %s".format(season.number, ep.number, ep.title), ep.still ?: s.backdrop ?: s.poster, e)
+            recent += Watch(s, ep.id, "${season.code(ep.number, "S%02dE%02d")} · ${ep.title}", ep.still ?: s.backdrop ?: s.poster, e)
             s
         }
         if (e.inProgress) inProgress++

@@ -66,7 +66,7 @@ Same as a movie, minus `stream`, `subtitles`, `director`, `budget`, `revenue` an
 
 | Field      | Type                  |                                |
 | ---------- | --------------------- | ------------------------------ |
-| `number`   | int                   | `0` is shown as _Specials_     |
+| `number`   | int                   | `0` is shown as _Specials_, `999` as _Featurettes_ (episodes as "Featurette 2"; see [Featurettes](featurettes.md)) |
 | `title`    | string                | Optional. Replaces "Season N". |
 | `episodes` | [Episode](#episode)[] |                                |
 

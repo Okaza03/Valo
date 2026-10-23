@@ -92,7 +92,7 @@ private fun rows(model: AppModel, lib: Library): List<HomeRow> {
                     } else {
                         val ep = next.episode
                         HomeCard(
-                            "cont/${item.id}", item, item.title, "S${next.season.number} E${ep.number} · ${ep.title}",
+                            "cont/${item.id}", item, item.title, "${next.season.code(ep.number)} · ${ep.title}",
                             ep.still ?: item.thumb ?: item.backdrop ?: item.poster, next.resume?.fraction ?: 0f,
                             Screen.Player(item.id, ep.id), removable = true,
                         )

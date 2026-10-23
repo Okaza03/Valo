@@ -611,7 +611,7 @@ fun metaLine(item: Item): String = buildList {
     when (item.kind) {
         Kind.Movie -> item.duration?.takeIf { it > 0 }?.let { add(fmtRuntime(it)) }
         Kind.Series -> {
-            val n = item.seasons.size
+            val n = item.seasonCount
             add("$n season${if (n == 1) "" else "s"}")
         }
     }

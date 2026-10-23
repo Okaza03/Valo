@@ -8,6 +8,7 @@ Expected layout (anything else is ignored):
 
     Movies/Inception (2010)/Inception.mkv   (+ poster.jpg, fanart.jpg, info.json)
     Series/The Office/Season 1/The.Office.S01E01.Pilot.mkv   (+ poster.jpg, fanart.jpg, info.json)
+    Series/The Office/Featurettes/Bloopers.mkv   (any name: a "Featurettes" season)
 
 Subtitles (.srt, .vtt, .ass, .ssa) go in a Subs folder in the movie's or the
 series' folder (or a season folder): Subs/English.srt for a movie; for an
@@ -99,6 +100,8 @@ VIDEO = {
 IMAGE = (".jpg", ".jpeg", ".png", ".webp")
 MOVIE_DIRS = {"movies", "films"}
 SERIES_DIRS = {"series", "tv", "tv shows", "shows"}
+# the season a show's Featurettes folder becomes: after every real season
+FEATURETTES = 999
 EPISODE = re.compile(
     r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,3})(.*)$|(?:^|\D)(\d{1,2})x(\d{2,3})(.*)$"
 )
@@ -386,15 +389,24 @@ class Library:
                     if f.suffix.lower() not in VIDEO:
                         continue
                     m = EPISODE.search(f.stem)
-                    if not m:
+                    if any(
+                        p.name.lower() == "featurettes"
+                        for p in f.parents
+                        if show in p.parents
+                    ):
+                        # numbered in name order, titled after the file
+                        s = FEATURETTES
+                        e, rest = len(seasons.get(s, [])) + 1, f.stem
+                    elif m:
+                        s, e, rest = (
+                            (m.group(1), m.group(2), m.group(3))
+                            if m.group(1)
+                            else (m.group(4), m.group(5), m.group(6))
+                        )
+                        s, e = int(s), int(e)
+                    else:
                         self.skipped.append(str(f.relative_to(self.root)))
                         continue
-                    s, e, rest = (
-                        (m.group(1), m.group(2), m.group(3))
-                        if m.group(1)
-                        else (m.group(4), m.group(5), m.group(6))
-                    )
-                    s, e = int(s), int(e)
                     meta = eps_info.get(f"S{s:02d}E{e:02d}", {})
                     still = find_art(f.parent, [f.stem, f"{f.stem}-thumb"])
                     seasons.setdefault(s, []).append(
@@ -444,6 +456,7 @@ class Library:
                         "thumb": thumb and self.url("art", thumb),
                         "seasons": [
                             {"number": n, "episodes": eps}
+                            | ({"title": "Featurettes"} if n == FEATURETTES else {})
                             for n, eps in sorted(seasons.items())
                         ],
                         **extras(self, info, show),

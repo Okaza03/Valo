@@ -7,7 +7,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use super::details::poster_tile;
 use super::{Browse, Click, View, GAP};
-use crate::api::{Item, Kind, Library};
+use crate::api::{Item, Kind, Library, FEATURETTES};
 use crate::images::Images;
 use crate::ui::settings::{dialog, header};
 use crate::ui::{primary_button, MUTED};
@@ -47,12 +47,16 @@ fn and_list(parts: &[String]) -> String {
     }
 }
 
-/// "Season 2", "Seasons 1–3", "Seasons 1, 3 and 5", "Season 1 and Specials"
+/// "Season 2", "Seasons 1–3", "Seasons 1, 3 and 5", "Season 1 and Specials",
+/// "Season 1, Specials and Featurettes"
 fn seasons_label(nums: &[u32]) -> String {
-    let mut n: Vec<u32> = nums.iter().copied().filter(|&n| n > 0).collect();
+    let mut n: Vec<u32> = nums
+        .iter()
+        .copied()
+        .filter(|&n| n > 0 && n != FEATURETTES)
+        .collect();
     n.sort_unstable();
     n.dedup();
-    let specials = nums.contains(&0);
     let numbered = match n.as_slice() {
         [] => None,
         [one] => Some(format!("Season {one}")),
@@ -62,11 +66,12 @@ fn seasons_label(nums: &[u32]) -> String {
             and_list(&n.iter().map(u32::to_string).collect::<Vec<_>>())
         )),
     };
-    match (numbered, specials) {
-        (Some(s), true) => format!("{s} and Specials"),
-        (Some(s), false) => s,
-        (None, _) => "Specials".into(),
-    }
+    let parts: Vec<String> = numbered
+        .into_iter()
+        .chain(nums.contains(&0).then(|| "Specials".into()))
+        .chain(nums.contains(&FEATURETTES).then(|| "Featurettes".into()))
+        .collect();
+    and_list(&parts)
 }
 
 /// "2 new movies, 1 new series, 3 new seasons and 1 title removed"
@@ -302,5 +307,10 @@ mod tests {
         assert_eq!(seasons_label(&[1, 3, 5]), "Seasons 1, 3 and 5");
         assert_eq!(seasons_label(&[0, 1]), "Season 1 and Specials");
         assert_eq!(seasons_label(&[0]), "Specials");
+        assert_eq!(seasons_label(&[999]), "Featurettes");
+        assert_eq!(
+            seasons_label(&[0, 1, 2, 999]),
+            "Seasons 1–2, Specials and Featurettes"
+        );
     }
 }

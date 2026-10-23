@@ -355,7 +355,7 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
                 if (episode != null) {
                     val season = item.seasons.find { s -> s.episodes.any { it.id == episode.id } }
                     val what = listOfNotNull(
-                        season?.let { "S${it.number} E${episode.number}" },
+                        season?.code(episode.number),
                         episode.title.takeIf { it.isNotEmpty() },
                     ).joinToString("  ·  ")
                     Text(what, color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

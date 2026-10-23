@@ -26,6 +26,7 @@ import io.github.okaza03.valo.AppModel
 import io.github.okaza03.valo.Kind
 import io.github.okaza03.valo.Library
 import io.github.okaza03.valo.Screen
+import io.github.okaza03.valo.Season
 import io.github.okaza03.valo.Updates
 
 class Note(val title: String, val text: String)
@@ -109,20 +110,22 @@ private fun summary(movies: Int, series: Int, seasons: Int, removed: Int) = andL
     ),
 )
 
-/** "Season 2", "Seasons 1–3", "Seasons 1, 3 and 5", "Season 1 and Specials" */
+/** "Season 2", "Seasons 1–3", "Seasons 1, 3 and 5", "Season 1 and Specials", "Season 1, Specials and Featurettes" */
 private fun seasonsLabel(nums: List<Int>): String {
-    val n = nums.filter { it > 0 }.distinct().sorted()
+    val n = nums.filter { it > 0 && it != Season.FEATURETTES }.distinct().sorted()
     val numbered = when {
         n.isEmpty() -> null
         n.size == 1 -> "Season ${n[0]}"
         n.last() - n.first() == n.size - 1 -> "Seasons ${n.first()}–${n.last()}"
         else -> "Seasons " + andList(n.map { it.toString() })
     }
-    return when {
-        numbered == null -> "Specials"
-        0 in nums -> "$numbered and Specials"
-        else -> numbered
-    }
+    return andList(
+        listOfNotNull(
+            numbered,
+            "Specials".takeIf { 0 in nums },
+            "Featurettes".takeIf { Season.FEATURETTES in nums },
+        ),
+    )
 }
 
 @Composable

@@ -48,6 +48,7 @@ import io.github.okaza03.valo.Item
 import io.github.okaza03.valo.Kind
 import io.github.okaza03.valo.Library
 import io.github.okaza03.valo.Screen
+import io.github.okaza03.valo.Season
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -128,7 +129,7 @@ fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
                             }
                             next != null -> {
                                 val ep = next.episode
-                                val what = "S${next.season.number} E${ep.number}"
+                                val what = next.season.code(ep.number)
                                 TvButton(
                                     when {
                                         next.resume != null -> "Resume $what"
@@ -206,7 +207,7 @@ fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
                         }
                         // the focused episode's story, like the desktop app's episode page
                         val shown = focusedEp?.takeIf { f -> s.episodes.any { it.id == f.id } }
-                        if (shown != null) EpisodeInfo(item, s.number, n, shown)
+                        if (shown != null) EpisodeInfo(item, s, n, shown)
                     }
                 }
             }
@@ -275,10 +276,10 @@ fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
 
 /** Under the episodes: the focused one's title, details and story. */
 @Composable
-private fun EpisodeInfo(series: Item, season: Int, count: Int, ep: Episode) {
+private fun EpisodeInfo(series: Item, season: Season, count: Int, ep: Episode) {
     Column(Modifier.padding(start = EDGE, end = EDGE, top = 16.dp).fillMaxWidth(0.6f)) {
         val meta = buildList {
-            add("S%02d E%02d of %d".format(season, ep.number, count))
+            add("${season.code(ep.number, "S%02d E%02d")} of $count")
             ep.duration?.takeIf { it > 0 }?.let { add(fmtRuntime(it)) }
             ep.aired?.let { add("Aired ${dateLong(it)}") }
             ep.score?.let { add("★ %.1f".format(it)) }

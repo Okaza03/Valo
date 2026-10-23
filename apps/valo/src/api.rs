@@ -234,16 +234,23 @@ pub struct Season {
     pub episodes: Vec<Episode>,
 }
 
+/// The season number of a show's Featurettes: after every real season, so
+/// playing a series still starts at its first episode.
+pub const FEATURETTES: u32 = 999;
+
 impl Season {
     pub fn label(&self) -> String {
-        self.title.clone().unwrap_or_else(|| {
-            if self.number == 0 {
-                "Specials".into()
-            } else {
-                format!("Season {}", self.number)
-            }
+        self.title.clone().unwrap_or_else(|| match self.number {
+            0 => "Specials".into(),
+            FEATURETTES => "Featurettes".into(),
+            n => format!("Season {n}"),
         })
     }
+}
+
+/// "Featurette 2" in place of an episode code ("S01E02") for a featurette.
+pub fn featurette(season: u32, ep: u32) -> Option<String> {
+    (season == FEATURETTES).then(|| format!("Featurette {ep}"))
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -323,6 +330,14 @@ pub fn title_key(i: &Item) -> (String, u32, u32, String) {
 }
 
 impl Item {
+    /// How many seasons a series has, its Featurettes not counted.
+    pub fn season_count(&self) -> usize {
+        self.seasons
+            .iter()
+            .filter(|s| s.number != FEATURETTES)
+            .count()
+    }
+
     /// Absolute URLs and tagged ids, as the rest of the app expects them.
     fn finish(&mut self, base: &str, kind: Kind) {
         let fix = |u: &mut Option<String>| {
@@ -2109,6 +2124,9 @@ fn is_season_dir(name: &str) -> Option<u32> {
     if l == "specials" {
         return Some(0);
     }
+    if l == "featurettes" {
+        return Some(FEATURETTES);
+    }
     let n = l.strip_prefix("season").or_else(|| l.strip_prefix('s'))?;
     n.trim_matches(|c: char| c == ' ' || c == '_' || c == '.')
         .parse()
@@ -2281,10 +2299,15 @@ fn classify(
         } else {
             show_name
         };
-        let season_no = ep_s
-            .or_else(|| season_dir.and_then(|i| is_season_dir(&v.dirs[i])))
-            .unwrap_or(1);
-        let ep_title = clean_title(after).0;
+        let dir_season = season_dir.and_then(|i| is_season_dir(&v.dirs[i]));
+        let featurette = dir_season == Some(FEATURETTES);
+        let season_no = if featurette {
+            FEATURETTES
+        } else {
+            ep_s.or(dir_season).unwrap_or(1)
+        };
+        // a featurette is titled after its file, whatever it's called
+        let ep_title = clean_title(if featurette { &v.stem } else { after }).0;
 
         let key = show_name.to_lowercase();
         let show = shows.entry(key.clone()).or_insert_with(|| {
@@ -2314,7 +2337,7 @@ fn classify(
         let still_name = v.stem.to_lowercase();
         season.episodes.push(Episode {
             id: v.url.clone(),
-            number: ep_e.unwrap_or(0),
+            number: if featurette { 0 } else { ep_e.unwrap_or(0) },
             title: ep_title,
             still: pick_image(
                 images.get(&v.dir),
@@ -2599,6 +2622,7 @@ mod tests {
                 f("2.Fast.2.Furious.2003.2160p.mkv"),
                 f("TV/The Office/Season 2/The.Office.S02E01.The.Dundies.mkv"),
                 f("TV/The Office/Season 1/The.Office.S01E01.Pilot.mkv"),
+                f("TV/The Office/Featurettes/Bloopers.mkv"),
                 f("Cartoons/Bluey/Bluey.S01E02.mkv"),
             ],
             &HashMap::from([(
@@ -2618,7 +2642,14 @@ mod tests {
         );
         let office = lib.series.iter().find(|s| s.title == "The Office").unwrap();
         assert_eq!(office.poster.as_deref(), Some("p.jpg"));
-        assert_eq!(office.seasons.len(), 2);
+        assert_eq!(office.seasons.len(), 3);
+        let extras = office
+            .seasons
+            .iter()
+            .find(|s| s.number == FEATURETTES)
+            .unwrap();
+        assert_eq!(extras.label(), "Featurettes");
+        assert_eq!(extras.episodes[0].title, "Bloopers");
         assert!(lib.series.iter().any(|s| s.title == "Bluey"));
     }
 }

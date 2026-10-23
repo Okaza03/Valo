@@ -154,7 +154,7 @@ impl Browse {
                         }
                         Kind::Series => {
                             bits.extend(years(item));
-                            let n = item.seasons.len();
+                            let n = item.season_count();
                             bits.push(format!("{n} season{}", if n == 1 { "" } else { "s" }));
                         }
                     }

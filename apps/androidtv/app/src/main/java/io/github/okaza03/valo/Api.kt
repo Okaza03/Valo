@@ -86,7 +86,20 @@ data class Episode(
 
 @Serializable
 data class Season(val number: Int = 0, val title: String? = null, val episodes: List<Episode> = emptyList()) {
-    val label get() = title ?: if (number == 0) "Specials" else "Season $number"
+    val label get() = title ?: when (number) {
+        0 -> "Specials"
+        FEATURETTES -> "Featurettes"
+        else -> "Season $number"
+    }
+
+    /** An episode's code, "S1 E2" (or [format]), or "Featurette 2" for a featurette. */
+    fun code(ep: Int, format: String = "S%d E%d") =
+        if (number == FEATURETTES) "Featurette $ep" else format.format(number, ep)
+
+    companion object {
+        /** The season number of a show's Featurettes: after every real season. */
+        const val FEATURETTES = 999
+    }
 }
 
 @Serializable
@@ -139,6 +152,9 @@ data class Item(
     @kotlinx.serialization.Transient val addon: AddonInfo? = null,
 ) {
     val episodes get() = seasons.flatMap { it.episodes }
+
+    /** How many seasons a series has, its Featurettes not counted. */
+    val seasonCount get() = seasons.count { it.number != Season.FEATURETTES }
 
     /** The film series it belongs to, which keeps its titles together A to Z. */
     val collection: String?
