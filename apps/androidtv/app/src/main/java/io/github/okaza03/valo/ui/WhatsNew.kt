@@ -58,6 +58,9 @@ private val NOTES: List<Pair<String, List<Note>>> = listOf(
         Note("Your home page, your way", "Your server's admin can choose which rows show on Home, and in what order."),
         Note("Change your password", "When your server's admin asks you for a new password, Valo asks each time it opens until you change it."),
     ),
+    "0.8.11" to listOf(
+        Note("Removed titles", "New arrivals also lists movies and series taken off the server, and the library reloads when you come back to Valo, so they don't linger."),
+    ),
 )
 
 /** The notes for versions after `seen`, up to this build; a fallback when none were written. */
@@ -97,11 +100,12 @@ private fun andList(parts: List<String>) =
     if (parts.size < 2) parts.joinToString("") else parts.dropLast(1).joinToString(", ") + " and " + parts.last()
 
 /** "2 new movies, 1 new series and 3 new seasons" */
-private fun summary(movies: Int, series: Int, seasons: Int) = andList(
+private fun summary(movies: Int, series: Int, seasons: Int, removed: Int) = andList(
     listOfNotNull(
         when (movies) { 0 -> null; 1 -> "1 new movie"; else -> "$movies new movies" },
         when (series) { 0 -> null; 1 -> "1 new series"; else -> "$series new series" },
         when (seasons) { 0 -> null; 1 -> "1 new season"; else -> "$seasons new seasons" },
+        when (removed) { 0 -> null; 1 -> "1 title removed"; else -> "$removed titles removed" },
     ),
 )
 
@@ -124,8 +128,10 @@ private fun seasonsLabel(nums: List<Int>): String {
 @Composable
 fun Arrivals(model: AppModel, lib: Library) {
     val items = model.arrivals.mapNotNull(lib::find)
-    LaunchedEffect(items.isEmpty()) { if (items.isEmpty()) model.closeArrivals() }
-    if (items.isEmpty()) return
+    val gone = model.departures.values.sortedBy { it.lowercase() }
+    val empty = items.isEmpty() && gone.isEmpty()
+    LaunchedEffect(empty) { if (empty) model.closeArrivals() }
+    if (empty) return
     val close = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { close.requestFocus() } }
     Modal(820.dp, model::closeArrivals, footer = {
@@ -140,11 +146,13 @@ fun Arrivals(model: AppModel, lib: Library) {
             val series = items.count { it.kind == Kind.Series && it.id !in model.newSeasons }
             val seasons = model.newSeasons.values.sumOf { it.size }
             Column(Modifier.padding(horizontal = 32.dp)) {
-                MonoText(summary(movies, series, seasons), 12.sp, MUTED)
-                Text("New on ${model.client?.name ?: "your server"}", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = TEXT)
+                MonoText(summary(movies, series, seasons, gone.size), 12.sp, MUTED)
+                val server = model.client?.name ?: "your server"
+                val title = if (items.isEmpty()) "Removed from $server" else "New on $server"
+                Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = TEXT)
             }
             Spacer(Modifier.height(10.dp))
-            LazyRow(
+            if (items.isNotEmpty()) LazyRow(
                 contentPadding = PaddingValues(horizontal = 32.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -167,6 +175,15 @@ fun Arrivals(model: AppModel, lib: Library) {
                         },
                     )
                 }
+            }
+            if (gone.isNotEmpty()) Column(Modifier.padding(horizontal = 32.dp)) {
+                if (items.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("No longer on the server", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = TEXT)
+                    Spacer(Modifier.height(4.dp))
+                }
+                gone.take(SHOWN).forEach { Text(it, fontSize = 15.sp, color = MUTED) }
+                if (gone.size > SHOWN) Text("And ${gone.size - SHOWN} more.", fontSize = 15.sp, color = MUTED)
             }
         }
     }

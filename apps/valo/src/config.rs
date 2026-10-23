@@ -328,6 +328,9 @@ impl Watchlist {
 #[serde(default)]
 pub struct Known {
     seen: HashMap<String, HashSet<String>>,
+    /// Each title's name ("Inception (2010)") by id, so one that's taken
+    /// off the server can still be named.
+    names: HashMap<String, HashMap<String, String>>,
 }
 
 impl Known {
@@ -342,8 +345,30 @@ impl Known {
 
     /// Everything in the library now is known; titles since removed are forgotten.
     pub fn set(&mut self, prefix: &str, ids: HashSet<String>) {
+        if let Some(names) = self.names.get_mut(prefix) {
+            names.retain(|id, _| ids.contains(id));
+        }
         self.seen.insert(prefix.to_owned(), ids);
         save("known.json", self);
+    }
+
+    pub fn name(&self, prefix: &str, id: &str) -> Option<&str> {
+        self.names.get(prefix)?.get(id).map(String::as_str)
+    }
+
+    /// Remember the titles' names; ones no longer listed are kept until [`Known::set`].
+    pub fn name_all(&mut self, prefix: &str, names: impl IntoIterator<Item = (String, String)>) {
+        let known = self.names.entry(prefix.to_owned()).or_default();
+        let mut changed = false;
+        for (id, name) in names {
+            if known.get(&id) != Some(&name) {
+                known.insert(id, name);
+                changed = true;
+            }
+        }
+        if changed {
+            save("known.json", self);
+        }
     }
 }
 

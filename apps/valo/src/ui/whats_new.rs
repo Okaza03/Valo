@@ -158,6 +158,14 @@ const NOTES: &[(&str, &[Note])] = &[
                    what order.",
         }],
     ),
+    (
+        "0.8.11",
+        &[Note {
+            title: "Removed titles",
+            text: "New arrivals also lists movies and series taken off the server, and \
+                   the library reloads when you come back to Valo, so they don't linger.",
+        }],
+    ),
 ];
 
 /// The notes for versions after `seen`, up to `current`, newest first.

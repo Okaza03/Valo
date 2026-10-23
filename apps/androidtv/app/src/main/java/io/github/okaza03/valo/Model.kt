@@ -124,6 +124,11 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     /** Seasons added to series the user already knew, by series id. */
     var newSeasons: Map<String, List<Int>> by mutableStateOf(emptyMap())
         private set
+    /** Titles taken off the server since, as id to name, waiting to be announced. */
+    var departures: Map<String, String> by mutableStateOf(emptyMap())
+        private set
+    /** When the library last loaded, to look again once the app comes back. */
+    private var loadedAt = 0L
 
     var devices: Devices by mutableStateOf(Devices.Loading)
         private set
@@ -276,6 +281,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             busy = false
             res.onSuccess {
                 val first = library == null
+                loadedAt = System.currentTimeMillis()
                 noteArrivals(it)
                 library = discover.onLibrary(it)
                 if (first) {
@@ -395,12 +401,13 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     // -------------------------------------------------------------- arrivals
 
-    /** A library (re)loaded: queue what's new since last time. The first load of a library only remembers it. */
+    /** A library (re)loaded: queue what's new and what's gone since last time. The first load of a library only remembers it. */
     private fun noteArrivals(lib: Library) {
         val now = knownIds(lib)
         val old = lists.known(prefix())
         if (old == null) {
             lists.setKnown(prefix(), now)
+            lists.nameAll(prefix(), lib.all.associate { it.id to name(it) })
             return
         }
         // series remembered before seasons were: their seasons all count as known
@@ -420,7 +427,19 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         }
         arrivals = queue.filter { it in now }
         newSeasons = seasons.filterKeys { it in arrivals }
+        // titles (not seasons) remembered but no longer on the server
+        val gone = departures.toMutableMap()
+        for (id in old) {
+            if ("#S" in id || id in now || id in gone) continue
+            val n = lists.name(prefix(), id) ?: library?.find(id)?.let { name(it) } ?: continue
+            gone[id] = n
+        }
+        departures = gone.filterKeys { it !in now }
+        lists.nameAll(prefix(), lib.all.associate { it.id to name(it) })
     }
+
+    /** "Inception (2010)": how a title is named once it's gone. */
+    private fun name(i: Item) = i.year?.let { "${i.title} ($it)" } ?: i.title
 
     /** A series' season as remembered next to the title ids: "<id>#S<n>". */
     private fun seasonKey(id: String, n: Int) = "$id#S$n"
@@ -434,6 +453,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         library?.let { l -> lists.setKnown(prefix(), knownIds(l)) }
         arrivals = emptyList()
         newSeasons = emptyMap()
+        departures = emptyMap()
     }
 
     // --------------------------------------------------------------- devices
@@ -535,6 +555,9 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** Back in Valo: carry on with an update that was waiting for permission. */
     fun resumed() {
+        // back from the background: titles may have been added or removed since
+        val stale = System.currentTimeMillis() - loadedAt > 60_000
+        if (library != null && stale && !busy && screen !is Screen.Player) loadLibrary()
         val apk = waitingApk ?: return
         if (Updates.mayInstall(getApplication())) install(apk) else waitingApk = null
     }

@@ -180,7 +180,11 @@ pub struct Browse {
     arrivals: Vec<String>,
     /// Seasons added to series the user already knew, by series id.
     new_seasons: HashMap<String, Vec<u32>>,
+    /// Titles taken off the server since, as (id, name), waiting to be announced.
+    departures: Vec<(String, String)>,
     arrivals_open: bool,
+    /// The window had focus last frame.
+    focused: bool,
 }
 
 impl Browse {
@@ -221,7 +225,9 @@ impl Browse {
             known: Known::load(),
             arrivals: Vec::new(),
             new_seasons: HashMap::new(),
+            departures: Vec::new(),
             arrivals_open: false,
+            focused: true,
         };
         if b.client.token.is_some() {
             let c = b.client.clone();
@@ -375,6 +381,18 @@ impl Browse {
         {
             self.reload(ctx);
         }
+        // back in the window after a while: titles may have been added or removed since
+        let focused = ctx.input(|i| i.focused);
+        if focused
+            && !self.focused
+            && self.loading.is_none()
+            && self
+                .loaded_at
+                .is_some_and(|t| t.elapsed() > Duration::from_secs(60))
+        {
+            self.reload(ctx);
+        }
+        self.focused = focused;
 
         let typing = ctx.memory(|m| m.focused().is_some());
         if !typing

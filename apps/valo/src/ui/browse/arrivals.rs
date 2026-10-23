@@ -1,5 +1,6 @@
 //! "New on the server": movies, series and seasons added since the user
-//! last saw the library, announced on the browse pages (never over the player).
+//! last saw the library, and titles taken off it, announced on the browse
+//! pages (never over the player).
 use std::collections::HashSet;
 
 use eframe::egui::{self, RichText, Ui};
@@ -27,6 +28,14 @@ fn ids(lib: &Library) -> HashSet<String> {
             std::iter::once(i.id.clone()).chain(seasons)
         })
         .collect()
+}
+
+/// "Inception (2010)": how a title is named once it's gone.
+fn name(item: &Item) -> String {
+    match item.year {
+        Some(y) => format!("{} ({y})", item.title),
+        None => item.title.clone(),
+    }
 }
 
 /// "1, 2 and 3"
@@ -60,8 +69,8 @@ fn seasons_label(nums: &[u32]) -> String {
     }
 }
 
-/// "2 new movies, 1 new series and 3 new seasons"
-fn summary(movies: usize, series: usize, seasons: usize) -> String {
+/// "2 new movies, 1 new series, 3 new seasons and 1 title removed"
+fn summary(movies: usize, series: usize, seasons: usize, removed: usize) -> String {
     let part = |n: usize, one: &str, many: &str| match n {
         0 => None,
         1 => Some(format!("1 new {one}")),
@@ -71,6 +80,11 @@ fn summary(movies: usize, series: usize, seasons: usize) -> String {
         part(movies, "movie", "movies"),
         part(series, "series", "series"),
         part(seasons, "season", "seasons"),
+        match removed {
+            0 => None,
+            1 => Some("1 title removed".into()),
+            n => Some(format!("{n} titles removed")),
+        },
     ]
     .into_iter()
     .flatten()
@@ -100,8 +114,8 @@ fn subtitle(item: &Item, new_seasons: Option<&Vec<u32>>) -> String {
 }
 
 impl Browse {
-    /// A library (re)loaded: queue what's new since last time. The first
-    /// load of a library only remembers it.
+    /// A library (re)loaded: queue what's new and what's gone since last
+    /// time. The first load of a library only remembers it.
     pub(super) fn note_arrivals(&mut self, lib: &Library) {
         let now = ids(lib);
         let prefix = self.prefix();
@@ -143,8 +157,28 @@ impl Browse {
                 self.arrivals.retain(|id| now.contains(id));
                 let arrivals = &self.arrivals;
                 self.new_seasons.retain(|id, _| arrivals.contains(id));
+                // titles (not seasons) remembered but no longer on the server
+                for id in old
+                    .iter()
+                    .filter(|k| !k.contains("#S") && !now.contains(*k))
+                {
+                    if self.departures.iter().any(|(d, _)| d == id) {
+                        continue;
+                    }
+                    let gone = self
+                        .known
+                        .name(&prefix, id)
+                        .map(str::to_owned)
+                        .or_else(|| self.lib.as_ref()?.find(id).map(name));
+                    if let Some(n) = gone {
+                        self.departures.push((id.clone(), n));
+                    }
+                }
+                self.departures.retain(|(id, _)| !now.contains(id));
             }
         }
+        self.known
+            .name_all(&prefix, lib.all().map(|i| (i.id.clone(), name(i))));
     }
 
     /// Show the queued arrivals once the user is on Home, Movies or TV Shows.
@@ -157,7 +191,7 @@ impl Browse {
     ) -> Option<Click> {
         let browsing =
             matches!(self.view, View::Home | View::Movies | View::Series) && self.search.is_empty();
-        if self.arrivals.is_empty() || !allowed || !browsing {
+        if (self.arrivals.is_empty() && self.departures.is_empty()) || !allowed || !browsing {
             return None;
         }
         if !self.arrivals_open {
@@ -173,12 +207,20 @@ impl Browse {
             .filter(|i| i.kind == Kind::Series && !self.new_seasons.contains_key(&i.id))
             .count();
         let seasons: usize = self.new_seasons.values().map(Vec::len).sum();
+        let mut gone: Vec<&str> = self.departures.iter().map(|(_, n)| n.as_str()).collect();
+        gone.sort_unstable_by_key(|n| n.to_lowercase());
+        let server = &self.client.info.name;
+        let title = if items.is_empty() {
+            format!("Removed from {server}")
+        } else {
+            format!("New on {server}")
+        };
         let mut open = None;
         let (done, close) = dialog(ctx, "new-arrivals", 640.0, |ui: &mut Ui| {
             header(
                 ui,
-                &format!("New on {}", self.client.info.name),
-                &summary(movies, new_series, seasons),
+                &title,
+                &summary(movies, new_series, seasons, gone.len()),
             );
             ui.add_space(8.0);
             let w = ui.available_width();
@@ -206,14 +248,29 @@ impl Browse {
                 ui.label(RichText::new(format!("And {more} more.")).color(MUTED()));
                 ui.add_space(12.0);
             }
+            if !gone.is_empty() {
+                if !items.is_empty() {
+                    ui.label(RichText::new("No longer on the server").strong());
+                    ui.add_space(4.0);
+                }
+                for n in gone.iter().take(SHOWN) {
+                    ui.label(RichText::new(*n).color(MUTED()));
+                }
+                if gone.len() > SHOWN {
+                    let more = gone.len() - SHOWN;
+                    ui.label(RichText::new(format!("And {more} more.")).color(MUTED()));
+                }
+                ui.add_space(12.0);
+            }
             let b = ui.add_sized([ui.available_width(), 40.0], |ui: &mut Ui| {
                 primary_button(ui, "Close", true)
             });
             b.clicked()
         });
-        if done || close || open.is_some() || items.is_empty() {
+        if done || close || open.is_some() || (items.is_empty() && gone.is_empty()) {
             self.arrivals.clear();
             self.new_seasons.clear();
+            self.departures.clear();
             self.arrivals_open = false;
         }
         open.map(Click::Open)
@@ -226,14 +283,16 @@ mod tests {
 
     #[test]
     fn summaries() {
-        assert_eq!(summary(2, 1, 0), "2 new movies and 1 new series");
-        assert_eq!(summary(1, 0, 0), "1 new movie");
-        assert_eq!(summary(0, 3, 0), "3 new series");
+        assert_eq!(summary(2, 1, 0, 0), "2 new movies and 1 new series");
+        assert_eq!(summary(1, 0, 0, 0), "1 new movie");
+        assert_eq!(summary(0, 3, 0, 0), "3 new series");
         assert_eq!(
-            summary(2, 1, 3),
+            summary(2, 1, 3, 0),
             "2 new movies, 1 new series and 3 new seasons"
         );
-        assert_eq!(summary(0, 0, 1), "1 new season");
+        assert_eq!(summary(0, 0, 1, 0), "1 new season");
+        assert_eq!(summary(1, 0, 0, 1), "1 new movie and 1 title removed");
+        assert_eq!(summary(0, 0, 0, 2), "2 titles removed");
     }
 
     #[test]

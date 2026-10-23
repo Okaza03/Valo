@@ -121,9 +121,9 @@ impl State {
             let (what, _) = self.syncing.take().unwrap();
             match r {
                 Ok(rep) => {
-                    if rep.applied || rep.running {
-                        cx.reload_library = true;
-                    }
+                    // even a dry run: the server may have rescanned on its own,
+                    // so titles it reports removed shouldn't linger here
+                    cx.reload_library = true;
                     self.sync_error = None;
                     self.report = Some((what, rep));
                 }

@@ -131,6 +131,8 @@ class Lists(private val file: File) {
         val watchlist: List<String> = emptyList(),
         val hidden: Map<String, Long> = emptyMap(),
         val known: Map<String, Set<String>> = emptyMap(),
+        /** Each title's name ("Inception (2010)") by id, so one taken off the server can still be named. */
+        val names: Map<String, Map<String, String>> = emptyMap(),
     )
 
     /** Newest first. */
@@ -138,12 +140,14 @@ class Lists(private val file: File) {
     /** When each was taken off Continue watching. */
     private val hidden = HashMap<String, Long>()
     private val known = HashMap<String, Set<String>>()
+    private val names = HashMap<String, Map<String, String>>()
 
     init {
         runCatching { json.decodeFromString<Saved>(file.readText()) }.onSuccess {
             watchlist.addAll(it.watchlist)
             hidden.putAll(it.hidden)
             known.putAll(it.known)
+            names.putAll(it.names)
         }
     }
 
@@ -170,13 +174,24 @@ class Lists(private val file: File) {
 
     fun setKnown(prefix: String, ids: Set<String>) {
         known[prefix] = ids
+        names[prefix]?.let { n -> names[prefix] = n.filterKeys { it in ids } }
+        save()
+    }
+
+    fun name(prefix: String, id: String): String? = names[prefix]?.get(id)
+
+    /** Remember the titles' names; ones no longer listed are kept until [setKnown]. */
+    fun nameAll(prefix: String, add: Map<String, String>) {
+        val old = names[prefix].orEmpty()
+        if (add.all { (id, n) -> old[id] == n }) return
+        names[prefix] = old + add
         save()
     }
 
     private fun save() {
         runCatching {
             val tmp = File(file.path + ".tmp")
-            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(watchlist.toList(), hidden.toMap(), known.toMap())))
+            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(watchlist.toList(), hidden.toMap(), known.toMap(), names.toMap())))
             tmp.renameTo(file)
         }
     }

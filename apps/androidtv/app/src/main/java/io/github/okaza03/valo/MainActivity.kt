@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
                     val lib = model.library
                     val browsing = model.screen == Screen.Home || model.screen is Screen.Grid
                     if (lib != null && notes == null && !model.askPassword && !model.splash && browsing &&
-                        model.query.isBlank() && model.arrivals.isNotEmpty()
+                        model.query.isBlank() && (model.arrivals.isNotEmpty() || model.departures.isNotEmpty())
                     ) {
                         Arrivals(model, lib)
                     }
