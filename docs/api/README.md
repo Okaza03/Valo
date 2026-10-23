@@ -11,6 +11,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | Add sign-in (`/api/info`, `/api/login`, `/api/logout`, `/api/me`) | [Sign-in](auth.md)                    |
 | Build the library JSON (movies, series, episodes, cast, …)   | [The library](library.md)                  |
 | Sync resume points and watched marks between devices         | [Watch progress](progress.md)              |
+| Sync My list and Continue watching between devices           | [My list and Continue watching](lists.md)  |
 | Serve video files and artwork                                | [Streams and images](streams.md)           |
 | Manage users and rescan from the app's Admin page            | [Admin API](admin.md)                      |
 | Fill the Admin dashboard: status, syncs, live log            | [Dashboard](admin-dashboard.md)            |
@@ -38,6 +39,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | `GET /api/sessions`, `DELETE /api/sessions/<id>` | optional            | [Sign-in](auth.md#get-apisessions-optional) |
 | `GET /api/library`                      | required                     | [The library](library.md)             |
 | `GET /api/progress`, `POST /api/progress` | optional                   | [Watch progress](progress.md)         |
+| `GET`/`POST /api/mylist`, `/api/hidden`   | optional                   | [My list and Continue watching](lists.md) |
 | Stream URLs (named by the library)      | required                     | [Streams and images](streams.md)      |
 | `/api/admin/users`, `/api/admin/rescan` | optional                     | [Admin API](admin.md)                 |
 | `/api/admin/status`, `/sync/…`, `/logs` | optional                     | [Dashboard](admin-dashboard.md)       |

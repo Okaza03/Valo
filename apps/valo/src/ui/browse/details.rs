@@ -76,6 +76,21 @@ pub(super) fn date_long(s: &str) -> String {
     )
 }
 
+/// Unix seconds -> "31 Oct 2002" (UTC).
+pub(super) fn date_unix(t: i64) -> String {
+    // days to a civil date: Howard Hinnant's days_from_civil, backwards
+    let z = t.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{d} {} {y}", MONTHS[m as usize - 1])
+}
+
 /// "Oct 31, 2002"
 fn date_short(s: &str) -> String {
     ymd(s).map_or_else(
@@ -1970,6 +1985,9 @@ mod tests {
         assert_eq!(date_long("2002-10-31"), "31 Oct 2002");
         assert_eq!(date_short("2021-11-06"), "Nov 6, 2021");
         assert_eq!(date_long("soon"), "soon");
+        assert_eq!(date_unix(0), "1 Jan 1970");
+        assert_eq!(date_unix(1_792_101_466), "15 Oct 2026");
+        assert_eq!(date_unix(951_782_400), "29 Feb 2000");
         assert_eq!(money(8_000_000), "$8,000,000");
         assert_eq!(money(82_784_517), "$82,784,517");
         assert_eq!(money(999), "$999");

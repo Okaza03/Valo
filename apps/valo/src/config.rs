@@ -292,11 +292,23 @@ impl Progress {
 #[serde(default)]
 pub struct Watchlist {
     items: Vec<String>,
+    /// When each key was last added or taken off. Taken-off ones stay here,
+    /// so a removal made elsewhere can't be undone by an older add.
+    changed: HashMap<String, i64>,
+    /// Keys changed here that the server hasn't been told about yet.
+    unsent: HashSet<String>,
 }
 
 impl Watchlist {
     pub fn load() -> Self {
-        load("watchlist.json")
+        let mut w: Self = load("watchlist.json");
+        // saved before My list synced: send them once
+        for k in &w.items {
+            if !w.changed.contains_key(k) {
+                w.unsent.insert(k.clone());
+            }
+        }
+        w
     }
 
     pub fn contains(&self, key: &str) -> bool {
@@ -304,13 +316,22 @@ impl Watchlist {
     }
 
     pub fn toggle(&mut self, key: &str) {
-        match self.items.iter().position(|k| k == key) {
-            Some(i) => {
-                self.items.remove(i);
-            }
-            None => self.items.insert(0, key.to_owned()),
-        }
+        let on = !self.contains(key);
+        self.set(key, on, now_unix());
+        self.unsent.insert(key.to_owned());
         save("watchlist.json", self);
+    }
+
+    fn set(&mut self, key: &str, on: bool, at: i64) {
+        self.items.retain(|k| k != key);
+        if on {
+            // newest first; titles from before syncing count as oldest
+            let at_of = |k: &String| self.changed.get(k).copied().unwrap_or(0);
+            let i = self.items.iter().position(|k| at_of(k) <= at);
+            self.items
+                .insert(i.unwrap_or(self.items.len()), key.to_owned());
+        }
+        self.changed.insert(key.to_owned(), at);
     }
 
     /// Item ids saved for the server whose keys start with `prefix`.
@@ -318,6 +339,48 @@ impl Watchlist {
         self.items
             .iter()
             .filter_map(move |k| k.strip_prefix(prefix))
+    }
+
+    /// Take the server's adds and removals that are newer than ours: (id,
+    /// on the list, when). Returns whether anything changed.
+    pub fn merge(&mut self, prefix: &str, remote: Vec<(String, bool, i64)>) -> bool {
+        let mut changed = false;
+        for (id, on, at) in remote {
+            let key = format!("{prefix}{id}");
+            if self.changed.get(&key).is_some_and(|&t| t >= at) {
+                continue;
+            }
+            self.unsent.remove(&key);
+            self.set(&key, on, at);
+            changed = true;
+        }
+        if changed {
+            save("watchlist.json", self);
+        }
+        changed
+    }
+
+    /// Changes for one server still to be sent: (id, on the list).
+    pub fn unsent(&self, prefix: &str) -> Vec<(String, bool)> {
+        self.unsent
+            .iter()
+            .filter_map(|k| Some((k.strip_prefix(prefix)?.to_owned(), self.contains(k))))
+            .collect()
+    }
+
+    /// The server has `id` as `on`, since `at` (its clock) if it said.
+    pub fn sent(&mut self, prefix: &str, id: &str, on: bool, at: Option<i64>) {
+        let key = format!("{prefix}{id}");
+        // changed again while this was on its way: that goes next
+        if self.contains(&key) != on {
+            return;
+        }
+        self.unsent.remove(&key);
+        let t = at
+            .or_else(|| self.changed.get(&key).copied())
+            .unwrap_or_else(now_unix);
+        self.changed.insert(key, t);
+        save("watchlist.json", self);
     }
 }
 
@@ -377,6 +440,8 @@ impl Known {
 #[serde(default)]
 pub struct Hidden {
     items: HashMap<String, i64>,
+    /// Keys hidden here that the server hasn't been told about yet.
+    unsent: HashSet<String>,
 }
 
 impl Hidden {
@@ -386,6 +451,43 @@ impl Hidden {
 
     pub fn hide(&mut self, key: &str) {
         self.items.insert(key.to_owned(), now_unix());
+        self.unsent.insert(key.to_owned());
+        save("hidden.json", self);
+    }
+
+    /// Take the server's removals (id, when) that are newer than ours.
+    /// Returns whether anything changed.
+    pub fn merge(&mut self, prefix: &str, remote: Vec<(String, i64)>) -> bool {
+        let mut changed = false;
+        for (id, at) in remote {
+            let key = format!("{prefix}{id}");
+            if self.items.get(&key).is_some_and(|&t| t >= at) {
+                continue;
+            }
+            self.items.insert(key, at);
+            changed = true;
+        }
+        if changed {
+            save("hidden.json", self);
+        }
+        changed
+    }
+
+    /// Ids hidden for one server that still have to be sent.
+    pub fn unsent(&self, prefix: &str) -> Vec<String> {
+        self.unsent
+            .iter()
+            .filter_map(|k| Some(k.strip_prefix(prefix)?.to_owned()))
+            .collect()
+    }
+
+    /// The server has `id` hidden, since `at` (its clock) if it said.
+    pub fn sent(&mut self, prefix: &str, id: &str, at: Option<i64>) {
+        let key = format!("{prefix}{id}");
+        self.unsent.remove(&key);
+        if let Some(t) = at {
+            self.items.insert(key, t);
+        }
         save("hidden.json", self);
     }
 

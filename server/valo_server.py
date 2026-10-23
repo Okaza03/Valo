@@ -24,7 +24,9 @@ network, status, budget, revenue, score, score_source, reviews. A series can add
 next to the video is used as title artwork.
 
 With sign-in on, each user's watch progress is kept in .valo/progress.json
-and served from /api/progress, so it follows them between devices, and
+and served from /api/progress, their My list and what they took off Continue
+watching in .valo/lists.json (/api/mylist, /api/hidden), so these follow them
+between devices, and
 /api/sessions lists the devices they're signed in on. Admins
 (--add-user NAME --admin) get the app's Admin page through /api/admin/...:
 users, a dashboard with syncs and the live log, analytics from watch
@@ -584,10 +586,42 @@ class Requests:
     def find(self, id):
         return next((r for r in self.items if r["id"] == id), None)
 
+    # asked for and not answered yet, or on its way: nobody can ask again
+    OPEN = ("pending", "approved")
+
+    def open_for(self, req):
+        """An open request for the same title as `req`, whoever made it."""
+        imdb = req.get("imdb_id")
+        title = str(req.get("title", "")).strip().lower()
+        year, kind = req.get("year"), req.get("kind")
+        for r in reversed(self.items):
+            if r["status"] not in self.OPEN:
+                continue
+            if imdb and r.get("imdb_id"):
+                if r["imdb_id"] == imdb:
+                    return r
+            elif (
+                r["title"].lower() == title
+                and (not year or not r.get("year") or r["year"] == year)
+                and (not kind or not r.get("kind") or r["kind"] == kind)
+            ):
+                return r
+        return None
+
+    @staticmethod
+    def public(r):
+        """Someone else's request, as a user sees it: who asked and when, not their Discord id or note."""
+        return {k: v for k, v in r.items() if k not in ("requester_id", "note", "message_id", "notified")}
+
     def add(self, req, by=None):
+        """The new request, or (False, the open one) when the title is already asked for."""
         title = str(req.get("title", "")).strip()
         if not title:
             return None
+        with self.lock:
+            dup = self.open_for(req)
+        if dup:
+            return False, dup
         now = int(time.time())
         r = {
             "id": secrets.token_hex(4),
@@ -610,7 +644,7 @@ class Requests:
         with self.lock:
             self.items.append(r)
             self.save()
-        return r
+        return True, r
 
     def update(self, id, status, note):
         with self.lock:
@@ -1194,6 +1228,75 @@ class Progress:
         return self.entry(key, e)
 
 
+class Lists:
+    """lists.json: each user's My list and what they took off Continue watching.
+
+    {"user": {"mylist": {"movie:<id>": {"on": true, "updated": T}},
+              "hidden": {"series:<id>": T}}}
+    Keys are the app's ("addon:movie:tt…" for an addon's title). My list keeps
+    removals ("on": false), so they reach the user's other devices.
+    """
+
+    def __init__(self, folder):
+        self.path = folder / "lists.json"
+        self.data = read_info(self.path)
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def key(body):
+        """The key for a POSTed {"type", "id"} or {"type", "addon_id"}; None if it's not one."""
+        kind = body.get("type")
+        if kind not in ("movie", "series"):
+            return None
+        if body.get("addon_id") not in (None, ""):
+            return f"addon:{kind}:{body['addon_id']}"
+        if body.get("id") in (None, "") or isinstance(body["id"], (bool, list, dict)):
+            return None
+        return f"{kind}:{body['id']}"
+
+    @staticmethod
+    def wire(key, **rest):
+        kind, id = key.split(":", 1)
+        if kind == "addon":
+            kind, id = id.split(":", 1)
+            return {"type": kind, "addon_id": id, **rest}
+        return {"type": kind, "id": id, **rest}
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.data, indent=2))
+        self.path.chmod(0o600)
+
+    def forget(self, user):
+        with self.lock:
+            if self.data.pop(user, None) is not None:
+                self.save()
+
+    def mylist(self, user):
+        mine = self.data.get(user, {}).get("mylist", {})
+        out = [self.wire(k, on=e["on"], updated=e["updated"]) for k, e in mine.items()]
+        return sorted(out, key=lambda e: -e["updated"])
+
+    def set_mylist(self, user, key, on):
+        with self.lock:
+            e = {"on": bool(on), "updated": int(time.time())}
+            self.data.setdefault(user, {}).setdefault("mylist", {})[key] = e
+            self.save()
+        return self.wire(key, **e)
+
+    def hidden(self, user):
+        mine = self.data.get(user, {}).get("hidden", {})
+        out = [self.wire(k, updated=t) for k, t in mine.items()]
+        return sorted(out, key=lambda e: -e["updated"])
+
+    def hide(self, user, key):
+        with self.lock:
+            t = int(time.time())
+            self.data.setdefault(user, {}).setdefault("hidden", {})[key] = t
+            self.save()
+        return self.wire(key, updated=t)
+
+
 def library_ids(lib, kind):
     data = lib.get()
     if kind == "movie":
@@ -1207,7 +1310,7 @@ def library_ids(lib, kind):
 
 
 def make_handler(
-    lib, users, progress, name, cols, reqs, addons, layout, omdb_key=None, bot_token=None
+    lib, users, progress, name, cols, reqs, addons, layout, omdb_key=None, bot_token=None, lists=None
 ):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -1266,17 +1369,23 @@ def make_handler(
                 req = self.json_body(body)
                 if req is None:
                     return self.send_json({"error": "bad request"}, 400)
-                r = reqs.add(req, by=user)
-                if not r:
+                added = reqs.add(req, by=user)
+                if not added:
                     return self.send_json({"error": "a title is required"}, 422)
+                new, r = added
+                if not new:
+                    # already asked for: that request, so the app shows who asked
+                    mine = bot or r["requested_by"] == user
+                    return self.send_json(r if mine else Requests.public(r))
                 log(f"request: {r['title']} by {r['requested_by'] or 'someone'} via {r['source']}")
                 return self.send_json(r, 201)
             if not parts and method == "GET":
                 since = int(self.query().get("updated_after") or 0)
-                mine = [r for r in reqs.items if r["updated"] > since]
+                changed = [r for r in reqs.items if r["updated"] > since]
                 if not bot:
-                    mine = [r for r in mine if r["requested_by"] == user]
-                return self.send_json(mine)
+                    # everyone's, so nobody asks for a title twice; other people's without their details
+                    changed = [r if r["requested_by"] == user else Requests.public(r) for r in changed]
+                return self.send_json(changed)
             if len(parts) == 1 and method == "PATCH" and bot:
                 # the bot reports back: did the requester get the message, which message is it
                 req = self.json_body(body) or {}
@@ -1590,6 +1699,7 @@ def make_handler(
                     )
                 users.delete(name)
                 progress.forget(name)
+                lists.forget(name)
                 return self.send_json({})
             return self.send_json({"error": "method not allowed"}, 405)
 
@@ -1691,6 +1801,19 @@ def make_handler(
                 return self.send_json(
                     progress.record(user, kind, id, position, duration)
                 )
+            if path in ("/api/mylist", "/api/hidden"):
+                user = self.user()
+                if not user:
+                    return self.send_json({"error": "sign in required"}, 401)
+                req = self.json_body(body)
+                key = Lists.key(req) if req else None
+                if not key or (path == "/api/hidden" and key.startswith("addon:")):
+                    return self.send_json({"error": "bad request"}, 422)
+                if path == "/api/hidden":
+                    return self.send_json(lists.hide(user, key))
+                if not isinstance(req.get("on"), bool):
+                    return self.send_json({"error": "bad request"}, 422)
+                return self.send_json(lists.set_mylist(user, key, req["on"]))
             self.send_json({"error": "not found"}, 404)
 
         def do_HEAD(self):
@@ -1735,6 +1858,13 @@ def make_handler(
                 if not user:
                     return self.send_json({"error": "sign in required"}, 401)
                 return self.send_json(progress.list(user))
+            if path in ("/api/mylist", "/api/hidden"):
+                user = self.user()
+                if not user:
+                    return self.send_json({"error": "sign in required"}, 401)
+                if path == "/api/mylist":
+                    return self.send_json(lists.mylist(user))
+                return self.send_json(lists.hidden(user))
             for prefix in ("/media/", "/art/"):
                 if path.startswith(prefix):
                     f = (lib.root / unquote(path[len(prefix) :])).resolve()
@@ -1838,6 +1968,7 @@ def main():
         layout,
         a.omdb_key,
         a.bot_token,
+        Lists(data),
     )
     srv = ThreadingHTTPServer((a.host, a.port), handler)
     log(

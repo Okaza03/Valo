@@ -164,6 +164,8 @@ pub struct Browse {
     loaded_at: Option<Instant>,
     tab: Tab,
     watchlist: Watchlist,
+    /// My list and Continue watching removals, kept in step with the server.
+    lists: crate::sync::ListSync,
     hidden: Hidden,
     /// Orders Featured and "You might also like": random, but the same all session.
     shuffle: RandomState,
@@ -219,6 +221,7 @@ impl Browse {
             loaded_at: None,
             tab: Tab::Episodes,
             watchlist: Watchlist::load(),
+            lists: crate::sync::ListSync::default(),
             hidden: Hidden::load(),
             shuffle: RandomState::new(),
             probes: HashMap::new(),
@@ -249,6 +252,7 @@ impl Browse {
         self.loading = Some(Task::spawn(ctx, move || c.library()));
         self.discover.reload(ctx, &self.client);
         self.reload_layout(ctx);
+        self.lists.pull_now();
         self.error = None;
         self.missing = None;
     }
@@ -334,6 +338,13 @@ impl Browse {
         popups: bool,
     ) -> Action {
         let mut action = Action::None;
+        self.lists.tick(
+            ctx,
+            &self.client,
+            self.user.as_deref(),
+            &mut self.watchlist,
+            &mut self.hidden,
+        );
         let prefix = self.prefix();
         self.seen = progress
             .recent(&prefix)

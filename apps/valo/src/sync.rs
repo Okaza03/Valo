@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use eframe::egui;
 
-use crate::api::{Client, Watched};
-use crate::config::{Entry, Progress};
+use crate::api::{Client, Listed, Watched};
+use crate::config::{Entry, Hidden, Progress, Watchlist};
 use crate::util::Task;
 
 /// Look for changes made elsewhere this often (not during playback).
@@ -166,6 +166,147 @@ impl Sync {
     }
 }
 
+/// My list's changes and the titles taken off Continue watching, as the
+/// server has them; `None` if it doesn't keep them.
+type ListsPulled = Result<Option<(Vec<Listed>, Vec<Listed>)>>;
+
+/// One change to send: a My list add (`true`) or removal, or a title taken
+/// off Continue watching.
+#[derive(Clone)]
+enum Change {
+    MyList(String, bool),
+    Hidden(String),
+}
+type ListsPushed = Vec<(Change, Result<Option<Listed>>)>;
+
+/// Keeps My list and what was taken off Continue watching in step with the
+/// server (`/api/mylist`, `/api/hidden`), the way [`Sync`] does progress.
+#[derive(Default)]
+pub struct ListSync {
+    session: Option<(String, Option<String>)>,
+    off: bool,
+    pull: Option<(String, Task<ListsPulled>)>,
+    push: Option<(String, Task<ListsPushed>)>,
+    last_pull: Option<Instant>,
+    last_push: Option<Instant>,
+}
+
+/// Don't retry a failed send more often than this.
+const LIST_RETRY: Duration = Duration::from_secs(10);
+
+fn send_lists(client: &Client, changes: Vec<Change>) -> ListsPushed {
+    changes
+        .into_iter()
+        .map(|c| {
+            let (path, id) = match &c {
+                Change::MyList(id, _) => ("mylist", id),
+                Change::Hidden(id) => ("hidden", id),
+            };
+            let res = match Listed::body(id) {
+                Some(mut body) => {
+                    if let Change::MyList(_, on) = c {
+                        body["on"] = on.into();
+                    }
+                    client.save_listed(path, &body)
+                }
+                None => Ok(None), // a local file: nothing the server knows
+            };
+            (c, res)
+        })
+        .collect()
+}
+
+impl ListSync {
+    /// Look for changes elsewhere on the next tick.
+    pub fn pull_now(&mut self) {
+        self.last_pull = None;
+    }
+
+    /// Call every frame while connected to `client` as `user`.
+    pub fn tick(
+        &mut self,
+        ctx: &egui::Context,
+        client: &Client,
+        user: Option<&str>,
+        mylist: &mut Watchlist,
+        hidden: &mut Hidden,
+    ) {
+        let session = Some((client.base.clone(), client.token.clone()));
+        if self.session != session {
+            *self = Self {
+                session,
+                ..Self::default()
+            };
+        }
+        if let Some(res) = self.pull.as_mut().and_then(|(_, t)| t.poll()) {
+            let (prefix, _) = self.pull.take().unwrap();
+            match res {
+                Ok(Some((list, gone))) => {
+                    let list = list
+                        .iter()
+                        .filter_map(|l| Some((l.key()?, l.on, l.updated)))
+                        .collect();
+                    mylist.merge(&prefix, list);
+                    hidden.merge(
+                        &prefix,
+                        gone.iter()
+                            .filter_map(|l| Some((l.key()?, l.updated)))
+                            .collect(),
+                    );
+                }
+                Ok(None) => self.off = true,
+                Err(e) => eprintln!("list sync: {e:#}"),
+            }
+        }
+        if let Some(pushed) = self.push.as_mut().and_then(|(_, t)| t.poll()) {
+            let (prefix, _) = self.push.take().unwrap();
+            for (c, res) in pushed {
+                let at = match res {
+                    Ok(saved) => saved.map(|l| l.updated).filter(|&t| t > 0),
+                    Err(e) => {
+                        eprintln!("list sync: {e:#}");
+                        continue;
+                    }
+                };
+                match c {
+                    Change::MyList(id, on) => mylist.sent(&prefix, &id, on, at),
+                    Change::Hidden(id) => hidden.sent(&prefix, &id, at),
+                }
+            }
+        }
+        if self.off {
+            return;
+        }
+        let prefix = prefix(client, user);
+        let due = |t: Option<Instant>, every| t.is_none_or(|t: Instant| t.elapsed() >= every);
+        if self.pull.is_none() && self.push.is_none() && due(self.last_pull, PULL_EVERY) {
+            self.last_pull = Some(Instant::now());
+            let c = client.clone();
+            self.pull = Some((
+                prefix.clone(),
+                Task::spawn(ctx, move || {
+                    let Some(list) = c.lists("mylist")? else {
+                        return Ok(None);
+                    };
+                    Ok(Some((list, c.lists("hidden")?.unwrap_or_default())))
+                }),
+            ));
+        }
+        let changes: Vec<Change> = mylist
+            .unsent(&prefix)
+            .into_iter()
+            .map(|(id, on)| Change::MyList(id, on))
+            .chain(hidden.unsent(&prefix).into_iter().map(Change::Hidden))
+            .collect();
+        if self.push.is_none() && !changes.is_empty() && due(self.last_push, LIST_RETRY) {
+            self.last_push = Some(Instant::now());
+            let c = client.clone();
+            self.push = Some((prefix, Task::spawn(ctx, move || send_lists(&c, changes))));
+        }
+        ctx.request_repaint_after(PULL_EVERY);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +326,27 @@ mod tests {
         let out = Watched::from_key("movie:m:Inception (2010)/x.mkv", 1.0, 2.0).unwrap();
         assert_eq!(out.id, serde_json::json!("m:Inception (2010)/x.mkv"));
         assert!(Watched::from_key("series:7", 1.0, 2.0).is_none());
+    }
+
+    #[test]
+    fn list_ids_round_trip() {
+        let l: Listed =
+            serde_json::from_str(r#"{"type":"series","id":7,"on":true,"updated":5}"#).unwrap();
+        assert_eq!(l.key().as_deref(), Some("series:7"));
+        assert_eq!(
+            Listed::body("series:7").unwrap(),
+            serde_json::json!({"type": "series", "id": 7})
+        );
+        let l: Listed = serde_json::from_str(
+            r#"{"type":"movie","addon_id":"tt1375666","on":false,"updated":5}"#,
+        )
+        .unwrap();
+        assert_eq!(l.key().as_deref(), Some("addon:movie:tt1375666"));
+        assert_eq!(
+            Listed::body("addon:movie:tt1375666").unwrap(),
+            serde_json::json!({"type": "movie", "addon_id": "tt1375666"})
+        );
+        assert!(Listed::body("episode:3").is_none());
     }
 
     #[test]

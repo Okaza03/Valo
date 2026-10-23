@@ -501,6 +501,62 @@ impl Watched {
     }
 }
 
+/// A My list change (`/api/mylist`) or a title taken off Continue watching
+/// (`/api/hidden`), as the server sends and takes them.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Listed {
+    /// "movie" or "series"
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The library's id for it; a number or a string.
+    pub id: Value,
+    /// An addon's id for a title that isn't on the server ("tt1375666").
+    pub addon_id: Option<String>,
+    /// On My list (`false`: taken off). Not used for `/api/hidden`.
+    #[serde(deserialize_with = "null_as_default")]
+    pub on: bool,
+    /// Unix time of the change.
+    #[serde(deserialize_with = "null_as_default")]
+    pub updated: i64,
+}
+
+impl Listed {
+    /// The id the rest of the app uses: "movie:42", or "addon:movie:tt1375666"
+    /// (see [`crate::addons::remote_id`]).
+    pub fn key(&self) -> Option<String> {
+        if !matches!(self.kind.as_str(), "movie" | "series") {
+            return None;
+        }
+        if let Some(a) = self.addon_id.as_ref().filter(|a| !a.is_empty()) {
+            return Some(crate::addons::remote_id(&self.kind, a));
+        }
+        let id = match &self.id {
+            Value::String(s) if !s.is_empty() => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => return None,
+        };
+        Some(format!("{}:{id}", self.kind))
+    }
+
+    /// The body for a POST: `{"type", "id"}` or `{"type", "addon_id"}`; `None`
+    /// for an id that isn't a title's.
+    pub fn body(key: &str) -> Option<Value> {
+        if let Some((kind, id)) = crate::addons::split_remote(key) {
+            return Some(serde_json::json!({ "type": kind, "addon_id": id }));
+        }
+        let (kind, id) = key.split_once(':')?;
+        if !matches!(kind, "movie" | "series") {
+            return None;
+        }
+        let id = match id.parse::<u64>() {
+            Ok(n) if n.to_string() == id => Value::from(n),
+            _ => Value::from(id),
+        };
+        Some(serde_json::json!({ "type": kind, "id": id }))
+    }
+}
+
 // ----------------------------------------------------------------- client
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1515,6 +1571,44 @@ impl Client {
             Ok(r) => Ok(r.into_json().ok()),
             Err(ureq::Error::Status(404 | 422, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't save watch progress")),
+        }
+    }
+
+    /// The user's My list changes (`GET /api/mylist`) or what they took off
+    /// Continue watching (`GET /api/hidden`); `path` is "mylist" or "hidden".
+    /// `None`: the server doesn't keep them.
+    pub fn lists(&self, path: &str) -> Result<Option<Vec<Listed>>> {
+        if self.info.mode != Mode::Api {
+            return Ok(None);
+        }
+        match self
+            .get(&format!("{}/api/{path}", self.base))
+            .set("Accept", "application/json")
+            .call()
+        {
+            Ok(r) => Ok(Some(
+                r.into_json()
+                    .context("the server sent a list this app doesn't understand")?,
+            )),
+            Err(ureq::Error::Status(401 | 404 | 405 | 501, _)) => Ok(None),
+            Err(e) => Err(status_err(e, "can't load your lists")),
+        }
+    }
+
+    /// Save one change (`POST /api/mylist` or `/api/hidden`). The server
+    /// answers with what it stored, or `Ok(None)` when it turns it down.
+    pub fn save_listed(&self, path: &str, body: &Value) -> Result<Option<Listed>> {
+        let mut r = self
+            .agent
+            .post(&format!("{}/api/{path}", self.base))
+            .set("Accept", "application/json");
+        if let Some(h) = self.auth_header() {
+            r = r.set("Authorization", &h);
+        }
+        match r.send_json(body) {
+            Ok(r) => Ok(r.into_json().ok()),
+            Err(ureq::Error::Status(404 | 405 | 422 | 501, _)) => Ok(None),
+            Err(e) => Err(status_err(e, "can't save your lists")),
         }
     }
 

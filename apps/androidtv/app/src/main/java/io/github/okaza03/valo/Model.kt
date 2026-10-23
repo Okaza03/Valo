@@ -168,6 +168,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     // sync state for the current session
     private var syncOff = false
+    /** The server doesn't keep My list and Continue watching removals. */
+    private var listsOff = false
     private var lastPull = 0L
     private val wake = Channel<Unit>(Channel.CONFLATED)
 
@@ -385,6 +387,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun toggleList(id: String) {
         lists.toggle(prefix() + id)
         listsVersion++
+        pushNow()
     }
 
     /** My list, newest first. */
@@ -397,6 +400,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun hide(id: String) {
         lists.hide(prefix() + id)
         listsVersion++
+        pushNow()
     }
 
     // -------------------------------------------------------------- arrivals
@@ -672,6 +676,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     private fun resetSync() {
         syncOff = false
+        listsOff = false
         lastPull = 0
     }
 
@@ -688,13 +693,15 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         while (true) {
             withTimeoutOrNull(PUSH_EVERY_MS) { wake.receive() }
             val c = client ?: continue
-            if (syncOff || library == null) continue
+            if (library == null) continue
             val prefix = prefix(c)
-            withContext(Dispatchers.IO) { push(c, prefix) }
+            if (!listsOff) pushLists(c, prefix)
+            if (!syncOff) withContext(Dispatchers.IO) { push(c, prefix) }
             val playing = screen is Screen.Player
             if (!playing && System.currentTimeMillis() - lastPull >= PULL_EVERY_MS) {
                 lastPull = System.currentTimeMillis()
-                withContext(Dispatchers.IO) { pull(c, prefix) }
+                if (!syncOff) withContext(Dispatchers.IO) { pull(c, prefix) }
+                if (!listsOff) pullLists(c, prefix)
             }
         }
     }
@@ -710,6 +717,40 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             progress.sent(prefix, id, e, saved?.updated?.takeIf { it > 0 })
         }
         progress.flush()
+    }
+
+    /** Send My list changes and Continue watching removals. Lists is only touched on the main thread. */
+    private suspend fun pushLists(c: Client, prefix: String) {
+        val changes = withContext(Dispatchers.Main) {
+            lists.unsentList(prefix).map { (id, on) -> id to on } + lists.unsentHidden(prefix).map { it to null }
+        }
+        for ((id, on) in changes) {
+            val saved = try {
+                withContext(Dispatchers.IO) { c.saveListed(id, on) }
+            } catch (err: Exception) {
+                return // offline: try again later
+            }
+            val at = saved?.updated?.takeIf { it > 0 }
+            withContext(Dispatchers.Main) {
+                if (on == null) lists.sentHidden(prefix, id, at) else lists.sentList(prefix, id, on, at)
+            }
+        }
+    }
+
+    private suspend fun pullLists(c: Client, prefix: String) {
+        val (mine, gone) = try {
+            withContext(Dispatchers.IO) { c.lists("mylist")?.let { it to (c.lists("hidden") ?: emptyList()) } }
+        } catch (err: Exception) {
+            return
+        } ?: run {
+            listsOff = true
+            return
+        }
+        withContext(Dispatchers.Main) {
+            val a = lists.mergeList(prefix, mine.mapNotNull { l -> l.key()?.let { Triple(it, l.on, l.updated) } })
+            val b = lists.mergeHidden(prefix, gone.mapNotNull { l -> l.key()?.let { it to l.updated } })
+            if (a || b) listsVersion++
+        }
     }
 
     private suspend fun pull(c: Client, prefix: String) {

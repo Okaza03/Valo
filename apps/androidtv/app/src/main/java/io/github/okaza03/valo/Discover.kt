@@ -242,15 +242,22 @@ class Discover(private val scope: CoroutineScope, private val model: AppModel) {
         }
     }
 
-    /** The user's request for this title, if they made one. */
+    /**
+     * The request that stands for this title: anyone's that isn't denied
+     * (nobody asks twice), else the user's own denied one. Someone else's
+     * denied request doesn't count: the user can ask again.
+     */
     fun requestFor(item: Item): MediaRequest? {
         val list = (requests as? Requests.Loaded)?.list ?: return null
         val imdb = Addons.imdbId(item.imdbId)
-        return list.lastOrNull { r ->
+        val me = model.prefs.user
+        val matches = list.filter { r ->
             val rid = Addons.imdbId(r.imdbId)
             if (rid != null && imdb != null) rid == imdb
             else r.title.equals(item.title, ignoreCase = true) && (r.year == null || r.year == item.year)
-        }
+        }.asReversed()
+        return matches.firstOrNull { it.status != "denied" }
+            ?: matches.firstOrNull { me != null && it.requestedBy.equals(me, ignoreCase = true) }
     }
 
     fun request(item: Item) {

@@ -747,6 +747,10 @@ fun dateLong(s: String): String {
     }
 }
 
+/** "Oct 23, 2026" from unix seconds. */
+fun dateUnix(t: Long): String =
+    java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.US).format(java.util.Date(t * 1000))
+
 /** "$160,000,000" */
 fun money(n: Long): String = "$" + "%,d".format(java.util.Locale.US, n)
 

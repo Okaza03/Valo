@@ -133,6 +133,11 @@ class Lists(private val file: File) {
         val known: Map<String, Set<String>> = emptyMap(),
         /** Each title's name ("Inception (2010)") by id, so one taken off the server can still be named. */
         val names: Map<String, Map<String, String>> = emptyMap(),
+        /** When each My list key was last added or taken off; taken-off ones stay, so an older add can't undo them. */
+        val changed: Map<String, Long> = emptyMap(),
+        /** Changes the server hasn't been told about yet. */
+        val unsentList: Set<String> = emptySet(),
+        val unsentHidden: Set<String> = emptySet(),
     )
 
     /** Newest first. */
@@ -141,6 +146,9 @@ class Lists(private val file: File) {
     private val hidden = HashMap<String, Long>()
     private val known = HashMap<String, Set<String>>()
     private val names = HashMap<String, Map<String, String>>()
+    private val changed = HashMap<String, Long>()
+    private val unsentList = HashSet<String>()
+    private val unsentHidden = HashSet<String>()
 
     init {
         runCatching { json.decodeFromString<Saved>(file.readText()) }.onSuccess {
@@ -148,13 +156,79 @@ class Lists(private val file: File) {
             hidden.putAll(it.hidden)
             known.putAll(it.known)
             names.putAll(it.names)
+            changed.putAll(it.changed)
+            unsentList.addAll(it.unsentList)
+            unsentHidden.addAll(it.unsentHidden)
         }
+        // saved before My list synced: send them once
+        watchlist.filter { it !in changed }.forEach { unsentList += it }
     }
 
     fun onList(key: String) = key in watchlist
 
     fun toggle(key: String) {
-        if (!watchlist.remove(key)) watchlist.add(0, key)
+        setListed(key, key !in watchlist, System.currentTimeMillis() / 1000)
+        unsentList += key
+        save()
+    }
+
+    private fun setListed(key: String, on: Boolean, at: Long) {
+        watchlist.remove(key)
+        if (on) {
+            // newest first; titles from before syncing count as oldest
+            val i = watchlist.indexOfFirst { (changed[it] ?: 0) <= at }
+            watchlist.add(if (i < 0) watchlist.size else i, key)
+        }
+        changed[key] = at
+    }
+
+    /** Take the server's adds and removals (id, on the list, when) that are newer than ours. Returns whether anything changed. */
+    fun mergeList(prefix: String, remote: List<Triple<String, Boolean, Long>>): Boolean {
+        var any = false
+        for ((id, on, at) in remote) {
+            val key = prefix + id
+            if ((changed[key] ?: -1) >= at) continue
+            unsentList -= key
+            setListed(key, on, at)
+            any = true
+        }
+        if (any) save()
+        return any
+    }
+
+    /** My list changes for one server still to be sent: (id, on the list). */
+    fun unsentList(prefix: String): List<Pair<String, Boolean>> =
+        unsentList.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) to (it in watchlist) }
+
+    /** The server has `id` as `on`, since `at` (its clock) if it said. */
+    fun sentList(prefix: String, id: String, on: Boolean, at: Long?) {
+        val key = prefix + id
+        // changed again while this was on its way: that goes next
+        if ((key in watchlist) != on) return
+        unsentList -= key
+        changed[key] = at ?: changed[key] ?: (System.currentTimeMillis() / 1000)
+        save()
+    }
+
+    /** Take the server's Continue watching removals (id, when) that are newer than ours. */
+    fun mergeHidden(prefix: String, remote: List<Pair<String, Long>>): Boolean {
+        var any = false
+        for ((id, at) in remote) {
+            val key = prefix + id
+            if ((hidden[key] ?: -1) >= at) continue
+            hidden[key] = at
+            any = true
+        }
+        if (any) save()
+        return any
+    }
+
+    fun unsentHidden(prefix: String): List<String> = unsentHidden.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }
+
+    fun sentHidden(prefix: String, id: String, at: Long?) {
+        val key = prefix + id
+        unsentHidden -= key
+        if (at != null) hidden[key] = at
         save()
     }
 
@@ -163,6 +237,7 @@ class Lists(private val file: File) {
 
     fun hide(key: String) {
         hidden[key] = System.currentTimeMillis() / 1000
+        unsentHidden += key
         save()
     }
 
@@ -191,7 +266,10 @@ class Lists(private val file: File) {
     private fun save() {
         runCatching {
             val tmp = File(file.path + ".tmp")
-            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(watchlist.toList(), hidden.toMap(), known.toMap(), names.toMap())))
+            tmp.writeText(json.encodeToString(Saved.serializer(), Saved(
+                watchlist.toList(), hidden.toMap(), known.toMap(), names.toMap(),
+                changed.toMap(), unsentList.toSet(), unsentHidden.toSet(),
+            )))
             tmp.renameTo(file)
         }
     }

@@ -206,12 +206,18 @@ private fun RequestRow(model: AppModel, item: Item, first: FocusRequester) {
     LaunchedEffect(req != null) { if (req != null) first.focusSoon() }
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         val signedIn = model.client?.token != null
-        val (color, text) = when (req?.status) {
-            null -> MUTED to "Not on the server"
-            "approved" -> TEAL to "Requested · approved, on its way"
-            "available" -> OK to "Requested · now available"
-            "denied" -> ERROR to "Requested · denied"
-            else -> WARN to "Requested · waiting for the admin"
+        val (color, status) = when (req?.status) {
+            null -> MUTED to null
+            "approved" -> TEAL to "approved, on its way"
+            "available" -> OK to "now available"
+            "denied" -> ERROR to "denied"
+            else -> WARN to "waiting for the admin"
+        }
+        val text = if (req == null) "Not on the server" else buildString {
+            append("Requested")
+            req.requestedBy?.takeIf { it.isNotBlank() }?.let { append(" by $it") }
+            req.created?.let { append(" on ${dateUnix(it)}") }
+            append(" · $status")
         }
         val requests = d.requests
         val canAsk = req == null && signedIn && requests !is Requests.Failed

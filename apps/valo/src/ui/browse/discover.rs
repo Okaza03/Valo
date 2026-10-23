@@ -385,18 +385,36 @@ impl State {
         (ids, more)
     }
 
-    /// The user's request for this title, if they made one.
-    fn request_for(&self, item: &Item) -> Option<&MediaRequest> {
+    /// The request that stands for this title: anyone's that isn't denied
+    /// (nobody asks twice), else the user's own denied one. Someone else's
+    /// denied request doesn't count: the user can ask again.
+    fn request_for(&self, item: &Item, me: Option<&str>) -> Option<&MediaRequest> {
         let Some(Ok(list)) = &self.requests else {
             return None;
         };
         let title = item.title.to_lowercase();
-        list.iter()
+        let mine = |r: &MediaRequest| {
+            r.requested_by
+                .as_deref()
+                .is_some_and(|by| me.is_some_and(|me| by.eq_ignore_ascii_case(me)))
+        };
+        let matches = list
+            .iter()
             .rev()
-            .find(|r| match (&r.imdb_id, &item.imdb_id) {
+            .filter(|r| match (&r.imdb_id, &item.imdb_id) {
                 (Some(a), Some(b)) => a == b,
                 _ => r.title.to_lowercase() == title && (r.year.is_none() || r.year == item.year),
-            })
+            });
+        let mut denied = None;
+        for r in matches {
+            if r.status != "denied" {
+                return Some(r);
+            }
+            if denied.is_none() && mine(r) {
+                denied = Some(r);
+            }
+        }
+        denied
     }
 }
 
@@ -993,16 +1011,27 @@ impl Browse {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
-                match st.request_for(item) {
+                match st.request_for(item, self.user.as_deref()) {
                     Some(req) => {
-                        let (col, text) = match req.status.as_str() {
-                            "approved" => (TEAL(), "Requested · approved, on its way"),
-                            "available" => (OK(), "Requested · now available"),
-                            "denied" => (ERROR(), "Requested · denied"),
-                            _ => (WARN(), "Requested · waiting for the admin"),
+                        let (col, status) = match req.status.as_str() {
+                            "approved" => (TEAL(), "approved, on its way"),
+                            "available" => (OK(), "now available"),
+                            "denied" => (ERROR(), "denied"),
+                            _ => (WARN(), "waiting for the admin"),
                         };
+                        let mut text = "Requested".to_owned();
+                        if let Some(by) = req.requested_by.as_ref().filter(|b| !b.is_empty()) {
+                            text += &format!(" by {by}");
+                        }
+                        if let Some(t) = req.created {
+                            text += &format!(" on {}", super::details::date_unix(t));
+                        }
                         ui.painter().circle_filled(r.center(), 3.5, col);
-                        ui.label(RichText::new(text).size(13.0).color(col));
+                        ui.label(
+                            RichText::new(format!("{text} · {status}"))
+                                .size(13.0)
+                                .color(col),
+                        );
                         if let Some(n) = req.note.as_ref().filter(|n| !n.trim().is_empty()) {
                             ui.label(RichText::new(format!("“{n}”")).italics().color(MUTED()));
                         }

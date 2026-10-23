@@ -268,6 +268,28 @@ data class Watched(
     }
 }
 
+/** A My list change (`/api/mylist`) or a title taken off Continue watching (`/api/hidden`). */
+@Serializable
+data class Listed(
+    /** "movie" or "series" */
+    @SerialName("type") val kind: String = "",
+    /** The library's id for it; a number or a string. */
+    val id: JsonElement? = null,
+    /** An addon's id for a title that isn't on the server ("tt1375666"). */
+    @SerialName("addon_id") val addonId: String? = null,
+    /** On My list (false: taken off). Not used for `/api/hidden`. */
+    val on: Boolean = false,
+    val updated: Long = 0,
+) {
+    /** The id the rest of the app uses: "movie:42", or "addon:movie:tt1375666". */
+    fun key(): String? {
+        if (kind != "movie" && kind != "series") return null
+        if (!addonId.isNullOrEmpty()) return Addons.remoteId(kind, addonId)
+        val raw = (id as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
+        return "$kind:$raw"
+    }
+}
+
 /** `GET /api/me`. */
 @Serializable
 data class Me(val admin: Boolean = false, @SerialName("must_change_password") val mustChangePassword: Boolean = false)
@@ -301,6 +323,10 @@ data class MediaRequest(
     val title: String = "",
     val year: Int? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
+    /** Their Discord (or Valo) name. */
+    @SerialName("requested_by") val requestedBy: String? = null,
+    /** Unix seconds. */
+    val created: Long? = null,
     /** "pending", "approved", "available" or "denied" */
     val status: String = "pending",
     /** The admin's answer. */
@@ -480,6 +506,46 @@ class Client(val base: String, val info: ServerInfo, @Volatile var token: String
                 r.code == 404 || r.code == 422 -> null
                 !r.isSuccessful -> r.fail("Can't save watch progress")
                 else -> runCatching { json.decodeFromString<Watched>(r.body.string()) }.getOrNull()
+            }
+        }
+    }
+
+    /** My list changes (`path` "mylist") or Continue watching removals ("hidden"); null when the server doesn't keep them. */
+    fun lists(path: String): List<Listed>? = call(request("/api/$path").build(), "Can't load your lists") { r ->
+        when {
+            r.code in listOf(401, 404, 405, 501) -> null
+            !r.isSuccessful -> r.fail("Can't load your lists")
+            else -> json.decodeFromString<List<Listed>>(r.body.string())
+        }
+    }
+
+    /**
+     * Send one change for `key` ("movie:42", "addon:movie:tt1375666"): `on`
+     * for My list, null to take it off Continue watching. Returns what the
+     * server stored, or null when it turns it down; throws to try again later.
+     */
+    fun saveListed(key: String, on: Boolean?): Listed? {
+        val path = if (on == null) "hidden" else "mylist"
+        val remote = Addons.splitRemote(key)
+        val kind = remote?.first ?: key.substringBefore(':')
+        if (kind != "movie" && kind != "series") return null
+        val body = buildJsonObject {
+            put("type", kind)
+            if (remote != null) {
+                put("addon_id", remote.second)
+            } else {
+                val raw = key.substringAfter(':')
+                val id = raw.toULongOrNull()?.takeIf { it.toString() == raw }
+                if (id != null) put("id", id.toLong()) else put("id", raw)
+            }
+            if (on != null) put("on", on)
+        }
+        val req = request("/api/$path").post(body.toString().toRequestBody(JSON)).build()
+        return call(req, "Can't save your lists") { r ->
+            when {
+                r.code in listOf(404, 405, 422, 501) -> null
+                !r.isSuccessful -> r.fail("Can't save your lists")
+                else -> runCatching { json.decodeFromString<Listed>(r.body.string()) }.getOrNull()
             }
         }
     }
