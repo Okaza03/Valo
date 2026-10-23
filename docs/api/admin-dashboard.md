@@ -86,6 +86,70 @@ The app waits up to 10 minutes for an answer. For anything slower, start the wor
 
 `/api/admin/rescan` from the [Admin API](admin.md#post-apiadminrescan) shows up as a fourth button, _Rescan library_.
 
+### Removing titles
+
+An admin deletes a movie's or a series' folder, then runs _Sync movies_ or _Sync series_. Afterwards the title must be gone for good: not in the library, not in the database, and its folder must not come back. The apps then tell every user it's no longer available on their own; the server only has to stop listing it.
+
+**1. Remove first, fetch details last.** In one sync, in this order:
+
+1. Scan the folders. A title is _on disk_ only while its folder holds at least one video file. A folder left with just `poster.jpg`, `fanart.jpg` or `info.json` counts as gone.
+2. Delete what isn't on disk anymore: a movie whose video file is gone; an episode whose file is gone; then a season with no episodes left and a series with no seasons left. Delete their rows (or soft-delete them so they're never listed again), with their artwork records, subtitles, collection entries and pending detail fetches.
+3. Add what's new.
+4. Fetch details and artwork **only for titles that are still in the database and on disk after step 2**. Never for something just removed, and never from a list of titles read before step 2.
+
+**2. Never create a title's folder.** The folder belongs to the admin's files. When the server saves a poster, fanart, thumb or logo into it, it writes only if the folder already exists, and skips the image (with a log line) if it doesn't. No `mkdir -p`, no `Storage::put` into a missing folder: that's what brings a deleted series back as a folder of images. The same goes for writing `info.json`. Better still, keep downloaded artwork in the server's own storage (a cache folder or the database) rather than next to the videos; then a deleted folder can't be refilled at all.
+
+**3. Don't let other jobs bring it back.** Queued jobs (detail fetches, artwork downloads, thumbnail generation) can run after the sync has removed the title. Each job loads the title again when it starts and stops if the title is gone or its folder is missing. A scheduled metadata refresh does the same.
+
+**4. Stop listing it.** [`GET /api/library`](library.md) and `/api/admin/movies`/`series` mustn't return the title once it's removed. Don't cache the library for longer than a minute or so, and clear that cache at the end of every applied sync.
+
+**5. Keep ids stable.** The apps tell titles apart by `id`. A sync must not delete and re-add titles that are still there under new ids, or every user sees them as removed and added again. Match existing rows by their path (or another stable key) and update them in place.
+
+**6. Answer with what was removed.** List the removed files (or titles) in `removed`, with `"applied": true`, and log `sync series: 0 new, 1 removed`. The app reloads the library at once when it gets the answer.
+
+**What users see.** The apps remember which titles each user has already seen, with their names. When a library loads without one of them, New arrivals shows it under _No longer on the server_ (or as _Removed from &lt;server&gt;_ if nothing new came with it), as soon as the user is back on Home, Movies or TV Shows. The apps reload the library after an admin sync, when someone comes back to the app after a minute or more, and, on desktop, every few minutes if the user turned that on in Settings. The server doesn't need anything else for this. Delete the removed title's watch progress along with it.
+
+#### Laravel sketch
+
+```php
+public function syncSeries(bool $apply = true): SyncReport
+{
+    $onDisk = $this->scanner->series();            // [path => [episode paths]], only folders with video files
+    $report = new SyncReport();
+
+    DB::transaction(function () use ($onDisk, $report) {
+        // 1. gone: episodes, then empty seasons, then empty series
+        Episode::whereNotIn('path', Arr::flatten($onDisk))->each(function (Episode $e) use ($report) {
+            $report->removed[] = $e->path;
+            $e->delete();
+        });
+        Season::doesntHave('episodes')->delete();
+        Series::doesntHave('seasons')->get()->each(function (Series $s) {
+            $s->artwork()->delete();
+            $s->collections()->detach();
+            $s->delete();
+        });
+        // 2. new: match by path so existing ids never change
+        foreach ($onDisk as $path => $episodes) {
+            $series = Series::firstOrCreate(['path' => $path], ['title' => Title::fromFolder($path)]);
+            // … add the missing seasons and episodes, $report->added[] = …
+        }
+    });
+
+    // 3. details last, and only for what's still there
+    Series::whereNull('details_fetched_at')->whereIn('path', array_keys($onDisk))
+        ->each(fn (Series $s) => FetchDetails::dispatch($s->id));
+    Cache::forget('library');
+    return $report;
+}
+
+// in FetchDetails::handle(), and anywhere artwork is saved
+$series = Series::find($this->id);
+if (!$series || !is_dir($series->path)) {
+    return;                                         // removed meanwhile: never recreate the folder
+}
+```
+
 ## `GET /api/admin/logs`
 
 The live log. The app asks every 3 seconds while the Dashboard is open, with the last `id` it has:
