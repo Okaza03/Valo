@@ -101,6 +101,12 @@ fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
                     Text(metaLine(item), color = MUTED, fontSize = 16.sp)
                     Spacer(Modifier.height(12.dp))
                     Text(item.overview, color = TEXT, fontSize = 16.sp, maxLines = 5, overflow = TextOverflow.Ellipsis)
+                    if (item.makers.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        PeopleLinks(if (item.kind == Kind.Movie) "Director" else "Created by", item.makers.distinct()) {
+                            model.push(Screen.Person(it))
+                        }
+                    }
                     credits(item).forEach { (label, text) ->
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -366,9 +372,8 @@ private fun people(item: Item): List<Triple<String, String?, String?>> {
     return (makers + cast).distinctBy { it.first to it.third }
 }
 
+/** The header's other credits; directors and creators go above them as links. */
 private fun credits(item: Item): List<Pair<String, String>> = buildList {
-    item.director?.let { add("Director" to it) }
-    if (item.creators.isNotEmpty()) add("Created by" to item.creators.joinToString(", "))
     if (item.cast.isNotEmpty()) add("Starring" to item.cast.take(5).joinToString(", ") { it.name })
     item.network?.let { add("Network" to it) }
 }

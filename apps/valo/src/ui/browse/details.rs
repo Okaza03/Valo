@@ -354,12 +354,22 @@ pub(super) fn link(
 
 /// A small outlined tag: "1080p", "TV-14".
 pub(super) fn tag(ui: &mut Ui, text: &str) {
+    tag_with(ui, text, Sense::hover());
+}
+
+/// A [`tag`] that can be clicked.
+pub(super) fn tag_link(ui: &mut Ui, text: &str) -> Response {
+    tag_with(ui, text, Sense::click()).on_hover_cursor(CursorIcon::PointingHand)
+}
+
+fn tag_with(ui: &mut Ui, text: &str, sense: Sense) -> Response {
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), FontId::proportional(11.5), TEXT());
-    let (r, _) = ui.allocate_exact_size(galley.size() + vec2(12.0, 6.0), Sense::hover());
+    let (r, resp) = ui.allocate_exact_size(galley.size() + vec2(12.0, 6.0), sense);
     let p = ui.painter();
-    p.rect_filled(r, 3.0, Color32::from_black_alpha(80));
+    let shade = if resp.hovered() { 160 } else { 80 };
+    p.rect_filled(r, 3.0, Color32::from_black_alpha(shade));
     p.rect_stroke(
         r,
         3.0,
@@ -367,6 +377,7 @@ pub(super) fn tag(ui: &mut Ui, text: &str) {
         egui::StrokeKind::Inside,
     );
     p.galley(r.min + vec2(6.0, 3.0), galley, TEXT());
+    resp
 }
 
 pub(super) fn dot(ui: &mut Ui) {
@@ -487,7 +498,7 @@ pub(super) fn cast_grid(
 }
 
 /// Names as links to their person pages, separated by commas.
-fn people_links(ui: &mut Ui, names: &[&str], size: f32) -> Option<Click> {
+pub(super) fn people_links(ui: &mut Ui, names: &[&str], size: f32) -> Option<Click> {
     let mut click = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -503,6 +514,69 @@ fn people_links(ui: &mut Ui, names: &[&str], size: f32) -> Option<Click> {
             }
         }
     });
+    click
+}
+
+/// "A, B" as names, for a server that sends several directors in one string.
+pub(super) fn split_names(s: &str) -> Vec<&str> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+/// A [`kv_rows`] row whose value is names that open each person's page.
+/// `line`: a hairline under it, as when more rows follow.
+fn kv_people_row(ui: &mut Ui, key: &str, names: &[&str], line: bool) -> Option<Click> {
+    let mut click = None;
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(key).size(14.0).color(MUTED()));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            // laid out from the right: last name first
+            for (i, n) in names.iter().enumerate().rev() {
+                if link(ui, n, 14.0, TEXT(), None)
+                    .on_hover_text("See their movies and shows")
+                    .clicked()
+                {
+                    click = Some(Click::Nav(View::Person((*n).to_owned())));
+                }
+                if i > 0 {
+                    ui.label(RichText::new(", ").size(14.0).color(MUTED()));
+                }
+            }
+        });
+    });
+    ui.add_space(10.0);
+    if line {
+        let r = ui.available_rect_before_wrap();
+        ui.painter()
+            .hline(r.x_range(), r.top(), Stroke::new(1.0f32, LINE()));
+    }
+    click
+}
+
+/// An [`info_rows`] row whose value is names that open each person's page.
+pub(super) fn info_people_row(
+    ui: &mut Ui,
+    key: &str,
+    names: &[&str],
+    label_w: f32,
+) -> Option<Click> {
+    let mut click = None;
+    ui.horizontal_top(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(label_w, 18.0), Sense::hover());
+        ui.painter().text(
+            r.left_center(),
+            Align2::LEFT_CENTER,
+            key,
+            FontId::proportional(14.0),
+            MUTED(),
+        );
+        click = people_links(ui, names, 14.0);
+    });
+    ui.add_space(12.0);
     click
 }
 
@@ -826,13 +900,23 @@ impl Browse {
                         top,
                         [dark, dark, Color32::TRANSPARENT, Color32::TRANSPARENT],
                     );
-                    p.text(
+                    let at = p.text(
                         pr.min + vec2(20.0, 22.0),
                         Align2::LEFT_TOP,
                         format!("A FILM BY {}", d.to_uppercase()),
                         FontId::new(11.5, FontFamily::Name("bold".into())),
                         GOLD(),
                     );
+                    // the first director's page; the header lists them all
+                    let by = ui
+                        .interact(at.expand(4.0), ui.id().with("film_by"), Sense::click())
+                        .on_hover_cursor(CursorIcon::PointingHand)
+                        .on_hover_text("See their movies and shows");
+                    if by.clicked() {
+                        if let Some(n) = split_names(d).first() {
+                            click = Some(Click::Nav(View::Person((*n).to_owned())));
+                        }
+                    }
                 }
                 let low = Rect::from_min_max(pos2(pr.left(), pr.bottom() - 120.0), pr.max);
                 let dark = Color32::from_black_alpha(200);
@@ -1037,8 +1121,8 @@ impl Browse {
                 }
                 if narrow {
                     ui.add_space(12.0);
-                    if self.movie_side(ui, item, file.as_ref(), runtime) {
-                        click = Some(Click::Nav(View::Admin));
+                    if let Some(c) = self.movie_side(ui, item, file.as_ref(), runtime) {
+                        click = Some(c);
                     }
                 }
             });
@@ -1047,8 +1131,8 @@ impl Browse {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.x = sp;
                     ui.set_width(rw);
-                    if self.movie_side(ui, item, file.as_ref(), runtime) {
-                        click = Some(Click::Nav(View::Admin));
+                    if let Some(c) = self.movie_side(ui, item, file.as_ref(), runtime) {
+                        click = Some(c);
                     }
                 });
             }
@@ -1057,18 +1141,17 @@ impl Browse {
     }
 
     /// File/metadata and critics panels next to the movie's cast. True when
-    /// the Admin button was clicked.
+    /// where to go: the Admin page, or a director's.
     fn movie_side(
         &self,
         ui: &mut Ui,
         item: &Item,
         f: Option<&FileInfo>,
         runtime: Option<f64>,
-    ) -> bool {
-        let mut admin = false;
+    ) -> Option<Click> {
+        let mut click = None;
         let opt = |v: Option<String>, col: Color32, size: f32| v.map(|v| (v, col, size));
         let candidates = [
-            ("Director", opt(item.director.clone(), TEXT(), 14.0)),
             (
                 "Released",
                 opt(item.released.as_deref().map(date_long), TEXT(), 14.0),
@@ -1144,6 +1227,14 @@ impl Browse {
         panel(ui, |ui| {
             caps(ui, "File · Metadata", TEAL());
             ui.add_space(6.0);
+            let directors = item
+                .director
+                .as_deref()
+                .map(split_names)
+                .unwrap_or_default();
+            if !directors.is_empty() {
+                click = kv_people_row(ui, "Director", &directors, !rows.is_empty());
+            }
             kv_rows(ui, &rows);
             if self.client.admin {
                 ui.add_space(12.0);
@@ -1153,7 +1244,7 @@ impl Browse {
                     .corner_radius(8)
                     .min_size(vec2(ui.available_width(), 34.0));
                 if ui.add(b).clicked() {
-                    admin = true;
+                    click = Some(Click::Nav(View::Admin));
                 }
             }
         });
@@ -1187,7 +1278,7 @@ impl Browse {
                 }
             });
         }
-        admin
+        click
     }
 
     pub(super) fn series_page(
@@ -1515,6 +1606,7 @@ impl Browse {
     }
 
     fn series_details_tab(&self, ui: &mut Ui, item: &Item, images: &mut Images) -> Option<Click> {
+        let mut click = None;
         let w = ui.available_width();
         let narrow = w < 900.0;
         let cw = if narrow {
@@ -1522,7 +1614,7 @@ impl Browse {
         } else {
             ((w - 24.0) / 2.0).min(440.0)
         };
-        let about = |ui: &mut Ui| {
+        let mut about = |ui: &mut Ui| {
             panel(ui, |ui| {
                 ui.label(bold(&item.title, 19.0));
                 ui.add_space(6.0);
@@ -1566,14 +1658,16 @@ impl Browse {
                 panel(ui, |ui| {
                     ui.label(bold("Creators and Cast", 17.0));
                     ui.add_space(16.0);
-                    let mut rows = Vec::new();
                     if !item.creators.is_empty() {
-                        rows.push(("Creators", item.creators.join(", ")));
+                        let creators: Vec<&str> =
+                            item.creators.iter().map(String::as_str).collect();
+                        if let Some(c) = info_people_row(ui, "Creators", &creators, 96.0) {
+                            click = Some(c);
+                        }
                     }
                     if !names.is_empty() {
-                        rows.push(("Cast", names.join(", ")));
+                        info_rows(ui, &[("Cast", names.join(", "))], 96.0);
                     }
-                    info_rows(ui, &rows, 96.0);
                 });
             }
         };
@@ -1617,7 +1711,7 @@ impl Browse {
             });
         }
         if item.cast.is_empty() {
-            return None;
+            return click;
         }
         ui.add_space(30.0);
         caps(ui, "Cast", TEAL());
@@ -1625,7 +1719,7 @@ impl Browse {
         ui.label(bold("Series cast", 22.0));
         ui.add_space(16.0);
         let n = item.cast.len().min(20);
-        cast_grid(ui, &item.cast[..n], images, 150.0, 46.0)
+        cast_grid(ui, &item.cast[..n], images, 150.0, 46.0).or(click)
     }
 
     #[allow(clippy::too_many_arguments)]

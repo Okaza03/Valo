@@ -365,6 +365,32 @@ fun TvButton(
     }
 }
 
+/** "Director  Name  Name": each name a small button that opens that person's page. */
+@Composable
+fun PeopleLinks(label: String, names: List<String>, onOpen: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = MUTED, fontSize = 14.sp, modifier = Modifier.padding(end = 4.dp))
+        names.forEach { n ->
+            Button(
+                onClick = { onOpen(n) },
+                modifier = Modifier.height(28.dp),
+                shape = ButtonDefaults.shape(RoundedCornerShape(2.dp)),
+                scale = focusScale(),
+                glow = focusGlow(),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                colors = ButtonDefaults.colors(
+                    containerColor = Color.Transparent,
+                    contentColor = TEXT,
+                    focusedContainerColor = Color.White,
+                    focusedContentColor = INK,
+                ),
+            ) {
+                Text(n, fontSize = 14.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
 /** A top-bar tab: plain text, or a white block when selected (chrome::tab). */
 @Composable
 fun Tab(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, count: Int? = null) {

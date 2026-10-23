@@ -109,9 +109,14 @@ fun RemoteScreen(model: AppModel, lib: Library, item: Item) {
                         item.score?.let { add("★ %.1f".format(it) + (item.scoreSource?.let { s -> " $s" } ?: "")) }
                         item.year?.let { y -> add(if (item.endYear != null && item.endYear != y) "$y–${item.endYear}" else "$y") }
                         item.duration?.let { add(fmtRuntime(it)) }
-                        item.director?.let { add(it) }
                     }
                     if (meta.isNotEmpty()) Text(meta.joinToString("  ·  "), color = MUTED, fontSize = 16.sp)
+                    if (item.makers.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        PeopleLinks(if (item.kind == Kind.Movie) "Director" else "Created by", item.makers.distinct()) {
+                            model.push(Screen.Person(it))
+                        }
+                    }
                     if (item.overview.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
                         Text(item.overview, color = TEXT, fontSize = 16.sp, maxLines = 5, overflow = TextOverflow.Ellipsis)

@@ -11,10 +11,11 @@ use anyhow::Result;
 use eframe::egui::{self, pos2, vec2, Rect, RichText, Sense, Stroke, Ui};
 
 use super::details::{
-    backdrop, caps, cast_grid, column, date_long, dot, fill_button, info_rows, panel, placed,
-    play_colors, poster_tile, similar, tag, title_art, GOLD, NARROW, TEAL,
+    backdrop, caps, cast_grid, column, date_long, dot, fill_button, info_people_row, info_rows,
+    panel, placed, play_colors, poster_tile, similar, split_names, tag_link, title_art, GOLD,
+    NARROW, TEAL,
 };
-use super::{grid, Browse, Card, Click, GAP, SIDE};
+use super::{grid, Browse, Card, Click, View, GAP, SIDE};
 use crate::addons::{self, imdb_id, kind_name, split_remote, title_key, Row};
 use crate::api::{Addon, Client, Episode, Item, Kind, Library, MediaRequest, NoAdminApi};
 use crate::config::Progress;
@@ -1004,7 +1005,15 @@ impl Browse {
                 }
                 if let Some(d) = &item.director {
                     sep(ui);
-                    tag(ui, d);
+                    let names = split_names(d);
+                    for n in &names {
+                        if tag_link(ui, n)
+                            .on_hover_text("See their movies and shows")
+                            .clicked()
+                        {
+                            click = Some(Click::Nav(View::Person((*n).to_owned())));
+                        }
+                    }
                 }
             });
             ui.add_space(22.0);
@@ -1084,7 +1093,9 @@ impl Browse {
                 }
                 if narrow {
                     ui.add_space(12.0);
-                    remote_side(ui, item, self.discover.busy());
+                    if let Some(c) = remote_side(ui, item, self.discover.busy()) {
+                        click = Some(c);
+                    }
                 }
             });
             if !narrow {
@@ -1092,7 +1103,9 @@ impl Browse {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.x = sp;
                     ui.set_width(rw);
-                    remote_side(ui, item, self.discover.busy());
+                    if let Some(c) = remote_side(ui, item, self.discover.busy()) {
+                        click = Some(c);
+                    }
                 });
             }
         });
@@ -1232,22 +1245,32 @@ fn episode_row(ui: &mut Ui, season: u32, e: &Episode, images: &mut Images, w: f3
 }
 
 /// The details panel: who made it, when, where, and links out.
-fn remote_side(ui: &mut Ui, item: &Item, loading: bool) {
+/// Returns the person whose name was clicked, as where to go.
+fn remote_side(ui: &mut Ui, item: &Item, loading: bool) -> Option<Click> {
+    let mut click = None;
     let extra = item.addon.clone().unwrap_or_default();
     let people = |v: &[String]| (!v.is_empty()).then(|| v.join(", "));
-    let candidates = [
-        (
-            if item.kind == Kind::Series {
-                "Created by"
-            } else {
-                "Director"
-            },
-            if item.kind == Kind::Series {
-                people(&item.creators).or(item.director.clone())
-            } else {
-                item.director.clone()
-            },
+    let (maker_key, makers): (&str, Vec<&str>) = match item.kind {
+        Kind::Series if !item.creators.is_empty() => (
+            "Created by",
+            item.creators.iter().map(String::as_str).collect(),
         ),
+        Kind::Series => (
+            "Created by",
+            item.director
+                .as_deref()
+                .map(split_names)
+                .unwrap_or_default(),
+        ),
+        Kind::Movie => (
+            "Director",
+            item.director
+                .as_deref()
+                .map(split_names)
+                .unwrap_or_default(),
+        ),
+    };
+    let candidates = [
         (
             "Writers",
             (item.kind == Kind::Movie)
@@ -1293,8 +1316,11 @@ fn remote_side(ui: &mut Ui, item: &Item, loading: bool) {
     panel(ui, |ui| {
         caps(ui, "Details", TEAL());
         ui.add_space(14.0);
-        if rows.is_empty() {
+        if rows.is_empty() && makers.is_empty() {
             ui.label(RichText::new("No details for this title.").color(MUTED()));
+        }
+        if !makers.is_empty() {
+            click = info_people_row(ui, maker_key, &makers, 110.0);
         }
         info_rows(ui, &rows, 110.0);
         ui.horizontal_wrapped(|ui| {
@@ -1320,6 +1346,7 @@ fn remote_side(ui: &mut Ui, item: &Item, loading: bool) {
         };
         ui.label(mono(from, 10.0).color(MUTED()));
     });
+    click
 }
 
 #[cfg(test)]
