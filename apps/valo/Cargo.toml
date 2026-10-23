@@ -7,7 +7,7 @@ description = "A small, fast video player and media library client"
 
 [dependencies]
 eframe = "0.31"
-cpal = "0.15"
+cpal = "0.18"
 rfd = "0.17"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

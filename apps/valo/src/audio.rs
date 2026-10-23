@@ -101,7 +101,7 @@ impl AudioShared {
         self.consumed.fetch_add(frames, Relaxed);
         // the first frame of `out` is heard at `playback`; the rest after it
         let ts = info.timestamp();
-        if let Some(d) = ts.playback.duration_since(&ts.callback) {
+        if let Some(d) = ts.playback.checked_duration_since(ts.callback) {
             let ahead = (d.as_secs_f64() * self.rate as f64) as u64;
             self.latency.store(ahead + (out.len() / ch) as u64, Relaxed);
         }
@@ -134,12 +134,12 @@ impl AudioOut {
         let cfg = dev.default_output_config()?;
         let fmt = cfg.sample_format();
         let sc: cpal::StreamConfig = cfg.into();
-        let (rate, ch) = (sc.sample_rate.0, sc.channels as usize);
+        let (rate, ch) = (sc.sample_rate, sc.channels as usize);
         let shared = Arc::new(AudioShared::new(true, rate));
         let stream = match fmt {
-            SampleFormat::F32 => build::<f32>(&dev, &sc, shared.clone(), ch)?,
-            SampleFormat::I16 => build::<i16>(&dev, &sc, shared.clone(), ch)?,
-            SampleFormat::U16 => build::<u16>(&dev, &sc, shared.clone(), ch)?,
+            SampleFormat::F32 => build::<f32>(&dev, sc, shared.clone(), ch)?,
+            SampleFormat::I16 => build::<i16>(&dev, sc, shared.clone(), ch)?,
+            SampleFormat::U16 => build::<u16>(&dev, sc, shared.clone(), ch)?,
             other => bail!("unsupported sample format {other:?}"),
         };
         stream.play()?;
@@ -152,7 +152,7 @@ impl AudioOut {
 
 fn build<T>(
     dev: &cpal::Device,
-    cfg: &cpal::StreamConfig,
+    cfg: cpal::StreamConfig,
     sh: Arc<AudioShared>,
     ch: usize,
 ) -> Result<cpal::Stream>
