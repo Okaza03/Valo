@@ -535,6 +535,7 @@ private fun GridCard(model: AppModel, i: Item, sub: String?, onFocus: (String) -
         ArtCard(
             art = i.poster, title = i.title, sub = sub, width = POSTER_W, ratio = 2f / 3f,
             progress = if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
+            watched = model.watched(i),
             onClick = { model.push(Screen.Details(i.id)) },
             onLongClick = menu,
             onFocus = { onFocus(i.id) },

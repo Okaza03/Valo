@@ -161,7 +161,12 @@ pub(super) fn ago(t: i64) -> String {
 }
 
 /// A grid of poster tiles, `sub` under each title.
-fn credit_grid(ui: &mut Ui, credits: &[Credit], images: &mut Images) -> Option<Click> {
+fn credit_grid(
+    ui: &mut Ui,
+    credits: &[Credit],
+    watched: &dyn Fn(&Item) -> bool,
+    images: &mut Images,
+) -> Option<Click> {
     let mut click = None;
     let w = ui.available_width();
     let cols = ((w + GAP) / (160.0 + GAP)).floor().clamp(1.0, 6.0);
@@ -176,7 +181,7 @@ fn credit_grid(ui: &mut Ui, credits: &[Credit], images: &mut Images) -> Option<C
                     (Some(ch), None) => Some(format!("as {ch}")),
                     (None, y) => y,
                 };
-                if poster_tile(ui, c.item, sub.as_deref(), tw, images) {
+                if poster_tile(ui, c.item, sub.as_deref(), tw, watched(c.item), images) {
                     click = Some(Click::Open(c.item.id.clone()));
                 }
             }
@@ -502,7 +507,7 @@ impl Browse {
                         continue;
                     }
                     section_title(ui, kicker, title, list.len());
-                    if let Some(c) = credit_grid(ui, list, images) {
+                    if let Some(c) = credit_grid(ui, list, &|i| self.watched(i), images) {
                         main_click = Some(c);
                     }
                     ui.add_space(24.0);

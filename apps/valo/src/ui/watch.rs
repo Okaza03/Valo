@@ -140,6 +140,9 @@ pub struct Watch {
     sub_delay: f64,
     /// When the delay last changed, to show it for a moment.
     delay_changed: Option<Instant>,
+    /// A click on the video waiting out the double-click window: it only
+    /// plays or pauses if no second click turns it into a fullscreen toggle.
+    click_at: Option<Instant>,
 }
 
 impl Watch {
@@ -167,6 +170,7 @@ impl Watch {
             sub_delay: 0.0,
             delay_changed: None,
             subs_chosen: false,
+            click_at: None,
         }
     }
 
@@ -1345,12 +1349,25 @@ impl Watch {
                 }
 
                 if resp.double_clicked() && !on_controls {
+                    self.click_at = None;
                     Self::toggle_fullscreen(ctx);
                 } else if resp.clicked() && !on_controls {
                     if self.menu.is_some() {
                         self.menu = None;
                     } else {
-                        do_toggle = true;
+                        self.click_at = Some(Instant::now());
+                    }
+                }
+                if let Some(at) = self.click_at {
+                    let wait = Duration::from_secs_f64(
+                        ctx.options(|o| o.input_options.max_double_click_delay),
+                    );
+                    match wait.checked_sub(at.elapsed()) {
+                        Some(left) if !left.is_zero() => ctx.request_repaint_after(left),
+                        _ => {
+                            self.click_at = None;
+                            do_toggle = true;
+                        }
                     }
                 }
             });

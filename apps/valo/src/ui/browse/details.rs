@@ -574,6 +574,7 @@ pub(super) fn poster_tile(
     item: &Item,
     sub: Option<&str>,
     w: f32,
+    watched: bool,
     images: &mut Images,
 ) -> bool {
     let art_h = w * 1.5;
@@ -586,6 +587,9 @@ pub(super) fn poster_tile(
     match item.poster.as_ref().and_then(|u| images.get(u)) {
         Some(t) => image_cover(p, art, &t, 6, Color32::WHITE),
         None => placeholder(p, art, &item.title, 6),
+    }
+    if watched {
+        crate::ui::watched_sash(p, art, 1.0);
     }
     if resp.hovered() {
         p.rect_stroke(
@@ -1007,7 +1011,8 @@ impl Browse {
                             ui.spacing_mut().item_spacing.x = GAP;
                             for i in row {
                                 let year = i.year.map(|y| y.to_string());
-                                if poster_tile(ui, i, year.as_deref(), tw, images) {
+                                if poster_tile(ui, i, year.as_deref(), tw, self.watched(i), images)
+                                {
                                     click = Some(Click::Open(i.id.clone()));
                                 }
                             }

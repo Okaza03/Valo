@@ -172,6 +172,7 @@ fun Arrivals(model: AppModel, lib: Library) {
                     }
                     ArtCard(
                         art = i.poster, title = i.title, sub = sub, width = 124.dp, ratio = 2f / 3f,
+                        watched = model.watched(i),
                         onClick = {
                             model.closeArrivals()
                             model.push(Screen.Details(i.id))

@@ -771,6 +771,41 @@ pub fn placeholder(p: &Painter, r: Rect, title: &str, radius: u8) {
     p.galley(pos, galley, Color32::WHITE);
 }
 
+/// A "WATCHED" sash across a poster's top right corner. `fade`: 0 hides it.
+pub fn watched_sash(p: &Painter, art: Rect, fade: f32) {
+    if fade <= 0.0 {
+        return;
+    }
+    let k = (art.width() / 150.0).clamp(0.8, 1.6);
+    // the band runs between two diagonals, `a` and `a + w` in from the corner
+    let (a, w) = (34.0 * k, 18.0 * k);
+    let (right, top) = (art.right(), art.top());
+    let p = p.with_clip_rect(art.intersect(p.clip_rect()));
+    p.add(egui::Shape::convex_polygon(
+        vec![
+            pos2(right - a - w, top),
+            pos2(right - a, top),
+            pos2(right, top + a),
+            pos2(right, top + a + w),
+        ],
+        ACCENT().gamma_multiply(fade),
+        Stroke::new(1.0f32, Color32::from_black_alpha((60.0 * fade) as u8)),
+    ));
+    let font = FontId::new(9.0 * k, FontFamily::Name("bold".into()));
+    let galley = p.layout_no_wrap("WATCHED".to_owned(), font, Color32::WHITE);
+    let c = (a + w / 2.0) / 2.0;
+    let center = pos2(right - c, top + c);
+    let angle = std::f32::consts::FRAC_PI_4;
+    let half = galley.size() / 2.0;
+    let (sin, cos) = angle.sin_cos();
+    let pos = center - vec2(half.x * cos - half.y * sin, half.x * sin + half.y * cos);
+    p.add(
+        egui::epaint::TextShape::new(pos, galley, Color32::WHITE)
+            .with_angle(angle)
+            .with_override_text_color(Color32::WHITE.gamma_multiply(fade)),
+    );
+}
+
 pub fn spinner_text(ui: &mut Ui, text: &str) {
     ui.horizontal(|ui| {
         ui.add(egui::Spinner::new().size(16.0).color(TEXT()));

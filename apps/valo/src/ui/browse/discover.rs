@@ -1147,7 +1147,7 @@ impl Browse {
                     ui.spacing_mut().item_spacing.x = GAP;
                     for i in row {
                         let year = i.year.map(|y| y.to_string());
-                        if poster_tile(ui, i, year.as_deref(), tw, images) {
+                        if poster_tile(ui, i, year.as_deref(), tw, self.watched(i), images) {
                             click = Some(Click::Open(i.id.clone()));
                         }
                     }

@@ -605,6 +605,9 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         return progress.recent(prefix())
     }
 
+    /** A movie that's been watched to the end: its poster gets the "WATCHED" sash. */
+    fun watched(item: Item) = item.kind == Kind.Movie && entry(item.id)?.watched == true
+
     fun entry(id: String): Entry? {
         // read so callers redraw when it changes
         progressVersion

@@ -407,6 +407,9 @@ impl Browse {
                             Some(t) => image_cover(p, pr, &t, 4, Color32::WHITE),
                             None => crate::ui::placeholder(p, pr, &item.title, 4),
                         }
+                        if self.watched(item) {
+                            crate::ui::watched_sash(p, pr, 1.0);
+                        }
                         if resp
                             .on_hover_cursor(CursorIcon::PointingHand)
                             .on_hover_text_at_pointer(&item.title)

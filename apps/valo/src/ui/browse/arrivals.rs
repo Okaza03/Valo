@@ -241,7 +241,7 @@ impl Browse {
                     ui.spacing_mut().item_spacing.x = GAP;
                     for item in row {
                         let sub = subtitle(item, self.new_seasons.get(&item.id));
-                        if poster_tile(ui, item, Some(&sub), tw, images) {
+                        if poster_tile(ui, item, Some(&sub), tw, self.watched(item), images) {
                             open = Some(item.id.clone());
                         }
                     }

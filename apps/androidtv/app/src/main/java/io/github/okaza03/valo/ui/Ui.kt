@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -39,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -227,6 +229,8 @@ fun ArtCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     progress: Float? = null,
+    /** A watched movie: a "WATCHED" sash across the top right corner. */
+    watched: Boolean = false,
     /** Wide cards that start playback show ▶ when focused. */
     plays: Boolean = false,
     onLongClick: (() -> Unit)? = null,
@@ -258,6 +262,7 @@ fun ArtCard(
                 } else {
                     Placeholder(title)
                 }
+                if (watched) WatchedSash()
                 if (progress != null && progress > 0f) {
                     ProgressBar(progress, Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(8.dp, 0.dp, 8.dp, 5.dp))
                 }
@@ -279,6 +284,20 @@ fun ArtCard(
         )
         if (sub != null) {
             Text(sub, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp, color = MUTED, modifier = Modifier.padding(start = 2.dp))
+        }
+    }
+}
+
+/** The desktop app's "WATCHED" sash: a band across the corner, clipped by the card. */
+@Composable
+private fun BoxScope.WatchedSash() {
+    // the band's middle sits 17dp in from both edges
+    Box(Modifier.align(Alignment.TopEnd).size(34.dp)) {
+        Box(
+            Modifier.align(Alignment.Center).requiredWidth(90.dp).height(14.dp).rotate(45f).background(ACCENT),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("WATCHED", color = Color.White, fontSize = 7.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, maxLines = 1)
         }
     }
 }

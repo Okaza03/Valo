@@ -51,6 +51,8 @@ private class HomeCard(
     val art: String?,
     val progress: Float?,
     val open: Screen,
+    /** A watched movie, with the "WATCHED" sash. */
+    val watched: Boolean = false,
     /** A Continue watching card, which can be taken off the row. */
     val removable: Boolean = false,
 )
@@ -73,6 +75,7 @@ private fun rows(model: AppModel, lib: Library): List<HomeRow> {
             i.poster,
             if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
             Screen.Details(i.id),
+            watched = model.watched(i),
         )
     })
     val layout = model.layout
@@ -237,6 +240,7 @@ private fun CardRow(
                         width = if (row.wide) 200.dp else 112.dp,
                         ratio = if (row.wide) 16f / 9f else 2f / 3f,
                         progress = card.progress,
+                        watched = card.watched,
                         plays = row.wide,
                         onClick = { onClick(card) },
                         onLongClick = open,

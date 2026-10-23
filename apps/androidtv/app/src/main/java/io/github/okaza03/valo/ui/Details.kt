@@ -309,6 +309,7 @@ fun PosterCard(model: AppModel, i: Item, sub: String? = i.year?.toString(), widt
         ArtCard(
             art = i.poster, title = i.title, sub = sub, width = width, ratio = 2f / 3f,
             progress = if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
+            watched = model.watched(i),
             onClick = { model.push(Screen.Details(i.id)) },
             onLongClick = menu,
             modifier = m,

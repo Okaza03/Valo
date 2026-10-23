@@ -8,7 +8,7 @@ mod layouts;
 mod password;
 mod people;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, RandomState};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -130,6 +130,8 @@ struct Card {
     /// "Movie · 2014 · 1h 26m", under the title on YouTube-style cards.
     meta: Option<String>,
     progress: Option<f32>,
+    /// A movie that's been watched: gets the "WATCHED" sash.
+    watched: bool,
     /// Has a "⋮" menu to remove it from Continue watching.
     removable: bool,
 }
@@ -138,6 +140,8 @@ pub struct Browse {
     client: Client,
     user: Option<String>,
     lib: Option<Arc<Library>>,
+    /// Ids of the titles watched to the end, gathered each frame.
+    seen: HashSet<String>,
     loading: Option<Task<Result<Library>>>,
     error: Option<String>,
     missing: Option<Missing>,
@@ -195,6 +199,7 @@ impl Browse {
             client,
             user,
             lib: None,
+            seen: HashSet::new(),
             loading: None,
             error: None,
             missing: None,
@@ -268,6 +273,11 @@ impl Browse {
         format!("{}{id}", self.prefix())
     }
 
+    /// A movie that's been watched to the end (see [`Browse::seen`]).
+    fn watched(&self, item: &Item) -> bool {
+        item.kind == Kind::Movie && self.seen.contains(&item.id)
+    }
+
     fn go(&mut self, v: View) {
         if v != self.view {
             if matches!(
@@ -324,6 +334,13 @@ impl Browse {
         popups: bool,
     ) -> Action {
         let mut action = Action::None;
+        let prefix = self.prefix();
+        self.seen = progress
+            .recent(&prefix)
+            .into_iter()
+            .filter(|(_, e)| e.watched())
+            .map(|(id, _)| id.to_owned())
+            .collect();
         if let Some(r) = self.me.as_mut().and_then(|t| t.poll()) {
             self.me = None;
             if let Some(me) = r {
@@ -1128,6 +1145,7 @@ impl Browse {
                         wide_art: None,
                         meta: Some(short_meta(m)),
                         progress: Some(e.fraction()),
+                        watched: false,
                         removable: true,
                     });
                 }
@@ -1159,6 +1177,7 @@ impl Browse {
                         wide_art: None,
                         meta: Some(format!("{} · {code}", s.title)),
                         progress: Some(n.resume.map_or(0.0, Entry::fraction)),
+                        watched: false,
                         removable: true,
                     });
                 }
@@ -1189,6 +1208,7 @@ impl Browse {
                             .map(Entry::fraction)
                     })
                     .flatten(),
+                watched: self.watched(i),
                 removable: false,
             })
             .collect()
@@ -1910,6 +1930,10 @@ fn card_at(
             2.0,
             theme::played(),
         );
+    }
+    // the bookmark takes the corner on hover
+    if c.watched {
+        crate::ui::watched_sash(p, art, 1.0 - t);
     }
     if t > 0.0 {
         if spec.hover_outline > 0.0 {
