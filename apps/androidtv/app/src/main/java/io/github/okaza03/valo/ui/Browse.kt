@@ -1,6 +1,7 @@
 // What the library pages share with the desktop app: the top bar (server
-// name, Home / Movies / TV Shows, search, updates, profile menu), the Movies
-// and TV Shows grids with their filters, and search results.
+// name, Home / Movies / TV Shows / Streaming, search, updates, profile menu),
+// the Movies and TV Shows grids with their filters, the Streaming page, and
+// search results (the server's titles, then the addons').
 package io.github.okaza03.valo.ui
 
 import android.app.Activity
@@ -30,6 +31,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,7 +88,14 @@ private fun TopBar(model: AppModel, current: Screen) {
         Box(Modifier.width(1.dp).height(28.dp).background(LINE))
         Spacer(Modifier.width(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((label, s) in listOf("Home" to Screen.Home, "Movies" to Screen.Grid(Kind.Movie), "TV Shows" to Screen.Grid(Kind.Series))) {
+            val tabs = buildList {
+                add("Home" to Screen.Home)
+                add("Movies" to Screen.Grid(Kind.Movie))
+                add("TV Shows" to Screen.Grid(Kind.Series))
+                // the addons' catalogs, when the admin added any
+                if (model.discover.sources().isNotEmpty()) add("Streaming" to Screen.Streaming)
+            }
+            for ((label, s) in tabs) {
                 Tab(label, !searching && current == s, { model.openTab(s) })
             }
         }
@@ -362,15 +374,100 @@ fun GridScreen(model: AppModel, lib: Library, kind: Kind) {
 @Composable
 private fun SearchResults(model: AppModel, lib: Library) {
     val hits = model.searchHits(lib)
+    // the addons' titles the server doesn't have, once they answer
+    val found = model.discover.results?.takeIf { it.first == model.query.trim() }
+    val more = found?.second.orEmpty().mapNotNull { model.discover.remote[it] }
     // focus stays in the search box while typing; only coming back from a title moves it
     PosterGrid(
-        model, hits, model.searchList, model.searchFocus, { model.searchFocus = it }, empty = "Nothing matches",
+        model, hits, model.searchList, model.searchFocus, { model.searchFocus = it },
+        empty = if (found?.third == true) "Searching…" else "Nothing matches",
         grab = model.searchFocus != null,
+        extra = more,
+        extraHeader = {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 18.dp, bottom = 4.dp)) {
+                MonoText("Not on the server", 13.sp, TEAL)
+                Spacer(Modifier.width(10.dp))
+                MonoText(if (found?.third == true) "${more.size}…" else more.size.toString(), 13.sp, MUTED)
+                Spacer(Modifier.width(16.dp))
+                Text("Open one to request it.", color = MUTED, fontSize = 13.sp)
+            }
+        },
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)) {
             MonoText("Results for “${model.query.trim()}”", 13.sp)
             Spacer(Modifier.width(10.dp))
             MonoText(hits.size.toString(), 13.sp, MUTED)
+        }
+    }
+}
+
+/** Everything on one streaming service (or other catalog), as a grid. */
+@Composable
+fun StreamingScreen(model: AppModel, lib: Library) {
+    val d = model.discover
+    val sources = d.sources()
+    val st = model.streaming
+    val pick = st.service?.takeIf { it in sources } ?: sources.firstOrNull()
+    val mine = d.shown.filter { it.source == pick }
+    fun ids(k: Kind) = mine.filter { it.kind == k }.flatMap { it.ids }.distinct()
+    val movies = ids(Kind.Movie)
+    val series = ids(Kind.Series)
+    if (st.kind != null && ids(st.kind!!).isEmpty()) st.kind = null
+    val items = when (st.kind) {
+        Kind.Movie -> movies
+        Kind.Series -> series
+        null -> movies + series
+    }.mapNotNull { d.find(lib, it) }
+    val scope = rememberCoroutineScope()
+
+    Box(Modifier.fillMaxSize().background(BG)) {
+        LibraryPage(model, lib, Screen.Streaming) {
+            if (pick == null) {
+                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Spacer(Modifier.height(120.dp))
+                    MonoText(if (d.loading) "Loading the catalogs" else "No catalogs yet", 13.sp, MUTED)
+                }
+                return@LibraryPage
+            }
+            run {
+                PosterGrid(
+                    model, items, st.list, st.focus, { st.focus = it }, empty = "Nothing here",
+                    sub = { i -> if (i.remote) listOfNotNull(i.year?.toString(), "not on server").joinToString(" · ") else i.year?.toString() },
+                ) {
+                    Column(Modifier.padding(top = 14.dp, bottom = 10.dp)) {
+                        MonoText("Streaming", 12.sp, TEAL)
+                        Spacer(Modifier.height(4.dp))
+                        Text(pick, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = TEXT)
+                        Text(
+                            "What's on it now. Titles on the server play; the rest you can request.",
+                            color = MUTED, fontSize = 15.sp,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        // a new service starts at the top; focus stays on its button
+                        Segmented(pick, sources.map { Triple(it, it, null) }, {
+                            st.service = it
+                            st.focus = null
+                            scope.launch { st.list.scrollToItem(0) }
+                        }, Modifier.horizontalScroll(rememberScrollState()))
+                        if (movies.isNotEmpty() && series.isNotEmpty()) {
+                            Spacer(Modifier.height(10.dp))
+                            Segmented(
+                                st.kind,
+                                listOf(
+                                    Triple(null, "All", movies.size + series.size),
+                                    Triple(Kind.Movie, "Movies", movies.size),
+                                    Triple(Kind.Series, "TV shows", series.size),
+                                ),
+                                {
+                                    st.kind = it
+                                    st.focus = null
+                                    scope.launch { st.list.scrollToItem(0) }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -389,14 +486,20 @@ private fun PosterGrid(
     empty: String,
     grab: Boolean = true,
     sub: (Item) -> String? = { it.year?.toString() },
+    /** More cards after `items`, under their own heading. */
+    extra: List<Item> = emptyList(),
+    extraHeader: @Composable () -> Unit = {},
     header: @Composable () -> Unit,
 ) {
-    val target = focusKey?.takeIf { k -> items.any { it.id == k } } ?: items.firstOrNull()?.id
+    val target = focusKey?.takeIf { k -> items.any { it.id == k } || extra.any { it.id == k } } ?: items.firstOrNull()?.id
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        val i = items.indexOfFirst { it.id == target }
-        if (i < 0 || !grab) return@LaunchedEffect
-        if (state.layoutInfo.visibleItemsInfo.none { it.key == target }) state.scrollToItem(i + 1)
+        // its place in the grid: after the header (and the empty note), and the extras' heading
+        val i = items.indexOfFirst { it.id == target }.takeIf { it >= 0 }?.let { it + 1 }
+            ?: extra.indexOfFirst { it.id == target }.takeIf { it >= 0 }?.let { it + items.size + if (items.isEmpty()) 3 else 2 }
+        if (i == null || !grab) return@LaunchedEffect
+        val key = if (i > items.size + 1) "extra/$target" else target
+        if (state.layoutInfo.visibleItemsInfo.none { it.key == key }) state.scrollToItem(i)
         requester.focusSoon()
     }
     LazyVerticalGrid(
@@ -411,22 +514,32 @@ private fun PosterGrid(
         if (items.isEmpty()) {
             item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
-                    MonoText(empty, 12.sp, MUTED)
+                    MonoText(if (extra.isEmpty()) empty else "Nothing on the server matches", 12.sp, MUTED)
                 }
             }
         }
-        items(items, key = { it.id }) { i ->
-            WithMenu({ listOf(listItem(model, i)) }) { m, menu ->
-                ArtCard(
-                    art = i.poster, title = i.title, sub = sub(i), width = POSTER_W, ratio = 2f / 3f,
-                    progress = if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
-                    onClick = { model.push(Screen.Details(i.id)) },
-                    onLongClick = menu,
-                    onFocus = { onFocus(i.id) },
-                    focusRequester = if (i.id == target) requester else null,
-                    modifier = m,
-                )
+        items(items, key = { it.id }) { i -> GridCard(model, i, sub(i), onFocus, if (i.id == target) requester else null) }
+        if (extra.isNotEmpty()) {
+            item(key = "extra", span = { GridItemSpan(maxLineSpan) }) { extraHeader() }
+            items(extra, key = { "extra/" + it.id }) { i ->
+                val what = listOfNotNull(i.year?.toString(), if (i.kind == Kind.Movie) "Movie" else "Series").joinToString(" · ")
+                GridCard(model, i, what, onFocus, if (i.id == target) requester else null)
             }
         }
+    }
+}
+
+@Composable
+private fun GridCard(model: AppModel, i: Item, sub: String?, onFocus: (String) -> Unit, requester: FocusRequester?) {
+    WithMenu({ listOf(listItem(model, i)) }) { m, menu ->
+        ArtCard(
+            art = i.poster, title = i.title, sub = sub, width = POSTER_W, ratio = 2f / 3f,
+            progress = if (i.kind == Kind.Movie) model.entry(i.id)?.takeIf { it.inProgress }?.fraction else null,
+            onClick = { model.push(Screen.Details(i.id)) },
+            onLongClick = menu,
+            onFocus = { onFocus(i.id) },
+            focusRequester = requester,
+            modifier = m,
+        )
     }
 }

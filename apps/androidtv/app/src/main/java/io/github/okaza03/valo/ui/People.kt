@@ -1,5 +1,6 @@
 // Person pages (a cast member, director or creator, built from what the
-// library knows about them) and the signed-in user's profile page, with
+// library knows about them, and everything they've been in from Wikidata)
+// and the signed-in user's profile page, with
 // watching stats and "Your devices" (the desktop app's browse/people.rs).
 package io.github.okaza03.valo.ui
 
@@ -24,7 +25,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +43,7 @@ import io.github.okaza03.valo.AppModel
 import io.github.okaza03.valo.Devices
 import io.github.okaza03.valo.Entry
 import io.github.okaza03.valo.Filter
+import io.github.okaza03.valo.Films
 import io.github.okaza03.valo.Item
 import io.github.okaza03.valo.Kind
 import io.github.okaza03.valo.Library
@@ -99,7 +103,10 @@ fun PersonScreen(model: AppModel, lib: Library, name: String) {
     val p = remember(lib, name) { Person(lib, name) }
     val titles = p.titles
     val first = remember { FocusRequester() }
-    LaunchedEffect(name) { first.focusSoon() }
+    LaunchedEffect(name) {
+        model.discover.loadFilms(name)
+        first.focusSoon()
+    }
     // their best-known part: the highest-scored title they acted in
     val known = (p.movies + p.shows).maxByOrNull { it.item.score ?: 0f }
     val costars = top(
@@ -116,7 +123,8 @@ fun PersonScreen(model: AppModel, lib: Library, name: String) {
             item {
                 Row(Modifier.padding(horizontal = EDGE), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(150.dp).clip(CircleShape)) {
-                        if (p.photo != null) Art(p.photo, Modifier.fillMaxSize()) else Avatar(name, 150.dp)
+                        val photo = p.photo ?: model.discover.personPhoto(name)
+                        if (photo != null) Art(photo, Modifier.fillMaxSize()) else Avatar(name, 150.dp)
                     }
                     Spacer(Modifier.width(32.dp))
                     Column(Modifier.fillMaxWidth(0.7f)) {
@@ -180,6 +188,7 @@ fun PersonScreen(model: AppModel, lib: Library, name: String) {
                     }
                 }
             }
+            filmography(model, lib, model.discover.filmography(name))
             if (titles.isNotEmpty()) {
                 item(key = "about") {
                     val genres = top(titles.flatMap { it.genres }, 4)
@@ -199,6 +208,65 @@ fun PersonScreen(model: AppModel, lib: Library, name: String) {
                         MonoText("About", 12.sp, TEAL)
                         InfoRows(rows)
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Which of a person's titles to show. */
+private enum class FilmFilter { All, OnServer, NotOnServer }
+
+/** Posters per line in the filmography. */
+private const val FILM_COLS = 6
+
+/** Everything a person has been in, and which of it is on the server. */
+private fun androidx.compose.foundation.lazy.LazyListScope.filmography(model: AppModel, lib: Library, films: Films) {
+    item(key = "films") {
+        Column(Modifier.padding(horizontal = EDGE)) {
+            MonoText("Everything they've been in", 12.sp, TEAL)
+            Spacer(Modifier.height(4.dp))
+            Text("Filmography", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TEXT)
+            Spacer(Modifier.height(8.dp))
+            when (films) {
+                Films.Loading -> MonoText("Looking them up…", 11.sp, MUTED)
+                is Films.Failed -> Text("Couldn't look them up: ${films.message}", color = MUTED, fontSize = 14.sp)
+                is Films.Done -> if (films.f.credits.isEmpty()) Text("Wikidata doesn't list any titles for them.", color = MUTED, fontSize = 14.sp)
+            }
+        }
+    }
+    val f = (films as? Films.Done)?.f?.takeIf { it.credits.isNotEmpty() } ?: return
+    item(key = "films/list") { FilmGrid(model, lib, f) }
+}
+
+@Composable
+private fun FilmGrid(model: AppModel, lib: Library, f: io.github.okaza03.valo.Filmography) {
+    val ids = remember(lib, f) { model.discover.credits(lib, f) }
+    var filter by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(FilmFilter.All) }
+    val on = ids.count { it.second }
+    val shown = ids.filter { (_, ours) ->
+        when (filter) {
+            FilmFilter.All -> true
+            FilmFilter.OnServer -> ours
+            FilmFilter.NotOnServer -> !ours
+        }
+    }.mapNotNull { (id, _) -> model.discover.find(lib, id) }
+    Column(Modifier.padding(horizontal = EDGE), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Segmented(
+            filter,
+            listOf(
+                Triple(FilmFilter.All, "All", ids.size),
+                Triple(FilmFilter.OnServer, "On the server", on),
+                Triple(FilmFilter.NotOnServer, "Not on the server", ids.size - on),
+            ),
+            { filter = it },
+        )
+        if (shown.isEmpty()) MonoText("Nothing here", 12.sp, MUTED)
+        for (line in shown.chunked(FILM_COLS)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                for (i in line) {
+                    val sub = listOfNotNull(i.year?.toString(), if (i.remote) "not on server" else null).joinToString(" · ")
+                    PosterCard(model, i, sub)
                 }
             }
         }

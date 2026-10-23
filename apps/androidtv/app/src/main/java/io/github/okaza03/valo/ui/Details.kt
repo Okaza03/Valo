@@ -54,7 +54,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
     val play = remember { FocusRequester() }
-    LaunchedEffect(item.id) { runCatching { play.requestFocus() } }
+    LaunchedEffect(item.id) {
+        // what the server's details are missing, from the addons; cast photos
+        model.discover.wantItem(item)
+        runCatching { play.requestFocus() }
+    }
     val next = if (item.kind == Kind.Series) model.nextUp(item) else null
     // start on the season of the episode that's up next
     var season by rememberSaveable(item.id) {
@@ -311,9 +315,10 @@ fun PosterCard(model: AppModel, i: Item, sub: String? = i.year?.toString(), widt
     }
 }
 
-/** "Add to My list" or "Remove from My list". */
+/** "Add to My list" or "Remove from My list"; a title that isn't on the server can only be opened (and requested there). */
 fun listItem(model: AppModel, i: Item) =
-    MenuItem(if (model.onList(i.id)) "Remove from My list" else "Add to My list") { model.toggleList(i.id) }
+    if (i.remote) MenuItem("Open ${i.title}") { model.push(Screen.Details(i.id)) }
+    else MenuItem(if (model.onList(i.id)) "Remove from My list" else "Add to My list") { model.toggleList(i.id) }
 
 /** Rows drawn in gold: about the file. */
 private val FILE_ROWS = setOf("Quality", "Container", "Audio", "Bitrate")

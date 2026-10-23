@@ -4,30 +4,20 @@
 // (browse/arrivals.rs).
 package io.github.okaza03.valo.ui
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,6 +49,15 @@ private val NOTES: List<Pair<String, List<Note>>> = listOf(
         Note("Your profile", "Profile in the top-right menu has your watching stats, recently watched, and every device you're signed in on."),
         Note("New arrivals", "Movies and series added to your server since you last looked are shown when you open Valo."),
     ),
+    "0.8.10" to listOf(
+        Note("Popups you can read", "What's new and New arrivals keep the remote to themselves, and long notes scroll with up and down."),
+        Note("Streaming and requests", "If your server's admin has added Stremio addons, Home has rows like Popular and Netflix, and the new Streaming page shows what's on each service. Titles that aren't on the server can be requested."),
+        Note("Search beyond the server", "Search also finds movies and series the server doesn't have, so you can open them and ask for them."),
+        Note("Everything they've been in", "A person's page lists all their movies and series, and which of them are on the server."),
+        Note("Subtitles, your way", "Hold OK while watching to pick subtitles, including ones from the addons, and to move them earlier or later when they're out of sync."),
+        Note("Your home page, your way", "Your server's admin can choose which rows show on Home, and in what order."),
+        Note("Change your password", "When your server's admin asks you for a new password, Valo asks each time it opens until you change it."),
+    ),
 )
 
 /** The notes for versions after `seen`, up to this build; a fallback when none were written. */
@@ -72,17 +71,12 @@ fun notesSince(seen: String): List<Note> {
 fun WhatsNew(notes: List<Note>, onClose: () -> Unit) {
     val ok = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { ok.requestFocus() } }
-    BackHandler(onBack = onClose)
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f)), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier
-                .width(620.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(BG)
-                .border(1.dp, LINE, RoundedCornerShape(4.dp))
-                .padding(32.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+    Modal(620.dp, onClose, footer = {
+        TvButton("Got it", onClose, Modifier.focusRequester(ok), primary = true)
+        Spacer(Modifier.height(10.dp))
+        Text("Full release notes: github.com/Okaza03/Valo/releases", fontSize = 13.sp, color = MUTED)
+    }) {
+        Column(Modifier.padding(horizontal = 32.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             MonoText("Valo ${Updates.VERSION}", 12.sp, MUTED)
             Text("What's new", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = TEXT)
             Spacer(Modifier.height(10.dp))
@@ -91,10 +85,6 @@ fun WhatsNew(notes: List<Note>, onClose: () -> Unit) {
                 Text(n.text, fontSize = 15.sp, color = MUTED)
                 Spacer(Modifier.height(8.dp))
             }
-            Spacer(Modifier.height(8.dp))
-            TvButton("Got it", onClose, Modifier.focusRequester(ok), primary = true)
-            Spacer(Modifier.height(4.dp))
-            Text("Full release notes: github.com/Okaza03/Valo/releases", fontSize = 13.sp, color = MUTED)
         }
     }
 }
@@ -138,17 +128,14 @@ fun Arrivals(model: AppModel, lib: Library) {
     if (items.isEmpty()) return
     val close = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { close.requestFocus() } }
-    BackHandler(onBack = model::closeArrivals)
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f)), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier
-                .width(820.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(BG)
-                .border(1.dp, LINE, RoundedCornerShape(4.dp))
-                .padding(vertical = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+    Modal(820.dp, model::closeArrivals, footer = {
+        if (items.size > SHOWN) {
+            Text("And ${items.size - SHOWN} more.", fontSize = 15.sp, color = MUTED)
+            Spacer(Modifier.height(8.dp))
+        }
+        TvButton("Close", model::closeArrivals, Modifier.focusRequester(close), primary = true)
+    }) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val movies = items.count { it.kind == Kind.Movie }
             val series = items.count { it.kind == Kind.Series && it.id !in model.newSeasons }
             val seasons = model.newSeasons.values.sumOf { it.size }
@@ -180,14 +167,6 @@ fun Arrivals(model: AppModel, lib: Library) {
                         },
                     )
                 }
-            }
-            Column(Modifier.padding(horizontal = 32.dp)) {
-                if (items.size > SHOWN) {
-                    Text("And ${items.size - SHOWN} more.", fontSize = 15.sp, color = MUTED)
-                    Spacer(Modifier.height(8.dp))
-                }
-                Spacer(Modifier.height(8.dp))
-                TvButton("Close", model::closeArrivals, Modifier.focusRequester(close), primary = true)
             }
         }
     }

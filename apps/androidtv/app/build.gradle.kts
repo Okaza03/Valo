@@ -75,6 +75,8 @@ dependencies {
 
     val media3 = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
+    // subtitle files are parsed and drawn by the app, so their timing can move
+    implementation("androidx.media3:media3-extractor:$media3")
     implementation("androidx.media3:media3-datasource-okhttp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
 

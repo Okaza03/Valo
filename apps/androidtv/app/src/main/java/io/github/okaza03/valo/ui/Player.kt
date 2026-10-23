@@ -1,10 +1,11 @@
 // Full-screen playback with Media3/ExoPlayer, which uses the TV's hardware
 // decoders. Remembers where you stopped and plays the next episode on its own.
 // The controls (ExoPlayer's own) show the title on top while they're up.
+// Holding OK opens the subtitles: the server's files, the addons' and the
+// video's own, and the files' timing (Subs.kt).
 package io.github.okaza03.valo.ui
 
 import androidx.annotation.OptIn
-import android.net.Uri
 import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -49,13 +52,23 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.Text
+import io.github.okaza03.valo.Addons
 import io.github.okaza03.valo.AppModel
+import io.github.okaza03.valo.SubTrack
 import io.github.okaza03.valo.Client
 import io.github.okaza03.valo.Item
 import io.github.okaza03.valo.Screen
 import io.github.okaza03.valo.Subtitle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 
 /** Save the position this often while playing. */
 private const val SAVE_EVERY_MS = 5_000L
@@ -68,7 +81,21 @@ private const val SAVE_EVERY_MS = 5_000L
  */
 object PlayerKeys {
     var view: PlayerView? = null
+    /** OK held down (or the remote's subtitles key): the subtitle panel. */
+    var onHold: (() -> Unit)? = null
 }
+
+/** What's on as subtitles. */
+private sealed interface SubPick {
+    data object Off : SubPick
+    /** A file, ours to draw. */
+    data class File(val sub: Subtitle) : SubPick
+    /** A track in the video, ExoPlayer's to draw. */
+    data class Embedded(val group: TrackGroup, val index: Int, val label: String, val language: String?) : SubPick
+}
+
+/** Subtitles from the addons, at most this many. */
+private const val ADDON_SUBS = 12
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -81,6 +108,18 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
     /** The controls are up. */
     var hud by remember(key) { mutableStateOf(false) }
     val next = episode?.let { model.episodeAfter(item, it.id) }
+
+    // subtitles: the server's files, the addons' (once they answer), the video's own tracks
+    val files = episode?.subtitles ?: item.subtitles
+    var fromAddons by remember(key) { mutableStateOf<List<Subtitle>>(emptyList()) }
+    var embedded by remember(key) { mutableStateOf<List<SubPick.Embedded>>(emptyList()) }
+    var picked by remember(key) { mutableStateOf<SubPick>(SubPick.Off) }
+    var track by remember(key) { mutableStateOf<SubTrack?>(null) }
+    var subError by remember(key) { mutableStateOf<String?>(null) }
+    /** Positive: the subtitles show later. Each file has its own. */
+    var delayMs by remember(key) { mutableLongStateOf(0L) }
+    var panel by remember(key) { mutableStateOf(false) }
+    var subView by remember { mutableStateOf<SubtitleView?>(null) }
 
     val player = remember(key) {
         val auth = model.client?.authFor(url)
@@ -103,10 +142,8 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setPreferredTextLanguage(model.prefs.subtitleLanguage)
                     .build()
-                val media = MediaItem.Builder()
-                    .setUri(url)
-                    .setSubtitleConfigurations((episode?.subtitles ?: item.subtitles).map(::subtitleConfig))
-                    .build()
+                // the files are drawn by us (see SubTrack); ExoPlayer only has the video's own tracks
+                val media = MediaItem.Builder().setUri(url).build()
                 setMediaItem(media, ((resume?.pos ?: 0.0) * 1000).toLong())
                 prepare()
                 playWhenReady = true
@@ -149,19 +186,18 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
                 if (next != null) model.swap(Screen.Player(item.id, next.id)) else model.back()
             }
 
-            // remember the language picked with the subtitle button, or that they were turned off
+            // the video's own subtitle tracks, and which of them ExoPlayer turned on
             override fun onTracksChanged(tracks: Tracks) {
-                val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-                val picked = text.flatMap { g -> (0 until g.length).filter(g::isTrackSelected).map(g::getTrackFormat) }
-                    .firstOrNull { it.selectionFlags and C.SELECTION_FLAG_FORCED == 0 }
-                val saved = model.prefs.subtitleLanguage
-                if (picked != null) {
-                    picked.language?.let { if (it != saved) model.prefs.subtitleLanguage = it }
-                } else if (saved != null && text.any { g ->
-                        (0 until g.length).any { g.getTrackFormat(it).language == saved }
+                embedded = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && !it.isAdaptiveSupported }.flatMap { g ->
+                    (0 until g.length).filter(g::isTrackSupported).map { i ->
+                        val f = g.getTrackFormat(i)
+                        SubPick.Embedded(g.mediaTrackGroup, i, f.label ?: f.language?.let(Addons::langName) ?: "Track ${i + 1}", f.language)
                     }
-                ) {
-                    model.prefs.subtitleLanguage = null
+                }
+                if (picked == SubPick.Off) {
+                    tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.firstNotNullOfOrNull { g ->
+                        (0 until g.length).firstOrNull(g::isTrackSelected)?.let { i -> embedded.find { it.group == g.mediaTrackGroup && it.index == i } }
+                    }?.let { picked = it }
                 }
             }
 
@@ -176,6 +212,69 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
             player.release()
             model.playerClosed()
         }
+    }
+
+    fun pick(p: SubPick, remember: Boolean = true) {
+        picked = p
+        subError = null
+        track = null
+        val params = player.trackSelectionParameters.buildUpon()
+        when (p) {
+            is SubPick.Embedded -> params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setOverrideForType(TrackSelectionOverride(p.group, p.index))
+            else -> params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).clearOverridesOfType(C.TRACK_TYPE_TEXT)
+        }
+        player.trackSelectionParameters = params.build()
+        if (remember) {
+            model.prefs.subtitleLanguage = when (p) {
+                SubPick.Off -> null
+                is SubPick.File -> p.sub.language.takeIf { it != "und" }
+                is SubPick.Embedded -> p.language
+            }
+        }
+    }
+
+    // the language picked last comes on by itself: a file of ours, else the video's own track, else the addons'
+    val lang = model.prefs.subtitleLanguage
+    LaunchedEffect(key) {
+        files.firstOrNull { !it.forced && it.language == lang && lang != null }?.let { pick(SubPick.File(it), remember = false) }
+        val imdb = Addons.imdbId(item.imdbId) ?: return@LaunchedEffect
+        val season = episode?.let { e -> item.seasons.find { s -> s.episodes.any { it.id == e.id } } }
+        val (kind, id) = if (episode != null && season != null) "series" to "$imdb:${season.number}:${episode.number}" else "movie" to imdb
+        val found = withContext(Dispatchers.IO) { runCatching { Addons.subtitles(model.discover.addons, kind, id) }.getOrDefault(emptyList()) }
+        // the language they use first
+        fromAddons = found.sortedBy { if (it.language == lang) 0 else 1 }.take(ADDON_SUBS)
+        if (picked == SubPick.Off && lang != null && files.none { it.language == lang }) {
+            fromAddons.firstOrNull { it.language == lang }?.let { pick(SubPick.File(it), remember = false) }
+        }
+    }
+
+    // a file's cues, loaded when it's picked
+    LaunchedEffect(picked) {
+        val f = (picked as? SubPick.File)?.sub ?: return@LaunchedEffect
+        withContext(Dispatchers.IO) { runCatching { SubTrack.load(model.client, f) } }
+            .onSuccess { track = it }
+            .onFailure { subError = it.message ?: "Can't load the subtitles" }
+    }
+
+    // drawn in step with the video, moved by the timing
+    LaunchedEffect(track, delayMs, subView) {
+        val v = subView ?: return@LaunchedEffect
+        val t = track
+        if (t == null) {
+            v.setCues(emptyList())
+            return@LaunchedEffect
+        }
+        while (true) {
+            v.setCues(t.at(player.currentPosition - delayMs))
+            delay(50)
+        }
+    }
+
+    // hold OK for the subtitle panel
+    DisposableEffect(key) {
+        PlayerKeys.onHold = { panel = true }
+        onDispose { PlayerKeys.onHold = null }
     }
 
     // pause when the TV's Home button sends the app to the background
@@ -207,7 +306,8 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
                 PlayerView(ctx).apply {
                     useController = true
                     controllerShowTimeoutMs = 4_000
-                    setShowSubtitleButton(true)
+                    // the subtitle panel (hold OK) has the server's and addons' files, and timing
+                    setShowSubtitleButton(false)
                     setShowNextButton(next != null)
                     setShowPreviousButton(false)
                     setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
@@ -230,6 +330,18 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
             modifier = Modifier.fillMaxSize(),
         )
         }
+        // our subtitles, above the controls' bar while it's up
+        AndroidView(
+            factory = { ctx ->
+                SubtitleView(ctx).apply {
+                    setUserDefaultStyle()
+                    setUserDefaultTextSize()
+                    subView = this
+                }
+            },
+            update = { it.setBottomPaddingFraction(if (hud) 0.22f else SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION) },
+            modifier = Modifier.fillMaxSize(),
+        )
         if (hud && error == null) {
             Column(
                 Modifier.fillMaxWidth()
@@ -248,7 +360,16 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
                     ).joinToString("  ·  ")
                     Text(what, color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                Spacer(Modifier.height(6.dp))
+                MonoText("Hold OK for subtitles", 11.sp, Color.White.copy(alpha = 0.6f))
             }
+        }
+        if (panel) {
+            SubtitlePanel(
+                files = files, fromAddons = fromAddons, embedded = embedded, picked = picked, delayMs = delayMs,
+                loading = picked is SubPick.File && track == null && subError == null, error = subError,
+                onPick = { pick(it) }, onDelay = { delayMs = it }, onClose = { panel = false },
+            )
         }
         error?.let {
             Column(Modifier.align(Alignment.Center).width(640.dp)) {
@@ -260,20 +381,74 @@ fun PlayerScreen(model: AppModel, item: Item, screen: Screen.Player) {
     }
 }
 
-/** A subtitle file from the library, for ExoPlayer (fetched with the stream's credentials). */
-private fun subtitleConfig(s: Subtitle): MediaItem.SubtitleConfiguration {
-    val format = s.format ?: s.url.substringBefore('?').substringAfterLast('.').lowercase()
-    return MediaItem.SubtitleConfiguration.Builder(Uri.parse(s.url))
-        .setMimeType(
-            when (format) {
-                "vtt" -> MimeTypes.TEXT_VTT
-                "ass", "ssa" -> MimeTypes.TEXT_SSA
-                else -> MimeTypes.APPLICATION_SUBRIP
-            },
+/** "On time", "0.3 s later", "1.5 s earlier" */
+private fun delayText(ms: Long) = when {
+    ms == 0L -> "On time"
+    ms > 0 -> "%.1f s later".format(ms / 1000.0)
+    else -> "%.1f s earlier".format(-ms / 1000.0)
+}
+
+/** Off, the files and the video's own tracks to pick from, and a file's timing. */
+@Composable
+private fun SubtitlePanel(
+    files: List<Subtitle>,
+    fromAddons: List<Subtitle>,
+    embedded: List<SubPick.Embedded>,
+    picked: SubPick,
+    delayMs: Long,
+    loading: Boolean,
+    error: String?,
+    onPick: (SubPick) -> Unit,
+    onDelay: (Long) -> Unit,
+    onClose: () -> Unit,
+) {
+    val current = remember { FocusRequester() }
+    LaunchedEffect(Unit) { current.focusSoon() }
+    fun label(s: Subtitle) = s.label ?: Addons.langName(s.language).let { if (s.forced) "$it (forced)" else it }
+
+    @Composable
+    fun Choice(text: String, p: SubPick) {
+        val on = p == picked
+        TvButton(
+            (if (on) "✓  " else "") + text, { onPick(p) },
+            Modifier.fillMaxWidth().then(if (on) Modifier.focusRequester(current) else Modifier), selected = on,
         )
-        .setLanguage(s.language.takeIf { it.isNotEmpty() && it != "und" })
-        .setLabel(s.label ?: s.language)
-        .setId(s.id.ifEmpty { s.url })
-        .setSelectionFlags(if (s.forced) C.SELECTION_FLAG_FORCED else 0)
-        .build()
+    }
+
+    Modal(560.dp, onClose, dim = 0.2f, footer = {
+        if (picked is SubPick.File) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MonoText("Timing", 11.sp, MUTED)
+                Spacer(Modifier.width(12.dp))
+                Text(delayText(delayMs), color = if (delayMs == 0L) TEXT else GOLD, fontSize = 15.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TvButton("−0.5 s", { onDelay(delayMs - 500) })
+                TvButton("−0.1 s", { onDelay(delayMs - 100) })
+                TvButton("+0.1 s", { onDelay(delayMs + 100) })
+                TvButton("+0.5 s", { onDelay(delayMs + 500) })
+                if (delayMs != 0L) TvButton("Reset", { onDelay(0) })
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("Minus shows them earlier, plus later.", color = MUTED, fontSize = 13.sp)
+            Spacer(Modifier.height(14.dp))
+        }
+        TvButton("Done", onClose, primary = true, modifier = if (picked == SubPick.Off && files.isEmpty()) Modifier.focusRequester(current) else Modifier)
+    }) {
+        Column(Modifier.padding(horizontal = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Subtitles", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = TEXT)
+            Spacer(Modifier.height(4.dp))
+            Choice("Off", SubPick.Off)
+            if (files.isNotEmpty()) MonoText("On the server", 11.sp, MUTED)
+            for (f in files) Choice(label(f), SubPick.File(f))
+            if (embedded.isNotEmpty()) MonoText("In the video", 11.sp, MUTED)
+            for (e in embedded) Choice(e.label, e)
+            if (fromAddons.isNotEmpty()) MonoText("From the addons", 11.sp, MUTED)
+            for (f in fromAddons) Choice(label(f), SubPick.File(f))
+            if (loading) Text("Loading the subtitles…", color = MUTED, fontSize = 13.sp)
+            error?.let { Text(it, color = ERROR, fontSize = 13.sp) }
+            if (picked is SubPick.Embedded) Text("The timing of subtitles in the video can't be moved.", color = MUTED, fontSize = 13.sp)
+        }
+    }
 }

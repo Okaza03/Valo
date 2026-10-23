@@ -130,7 +130,13 @@ data class Item(
     @SerialName("collection") val collectionRaw: JsonElement? = null,
     /** Its place in the collection, 0 first. */
     @SerialName("collection_index") val collectionIndex: Int? = null,
+    /** "tt1375666": how addons and requests know the title. */
+    @SerialName("imdb_id") val imdbId: String? = null,
+    /** A number or a string. */
+    @SerialName("tmdb_id") val tmdbId: JsonElement? = null,
     @kotlinx.serialization.Transient val kind: Kind = Kind.Movie,
+    /** From an addon (see Addons.kt): the addon's name, its trailer, … */
+    @kotlinx.serialization.Transient val addon: AddonInfo? = null,
 ) {
     val episodes get() = seasons.flatMap { it.episodes }
 
@@ -147,7 +153,19 @@ data class Item(
 
     /** Everyone who directed or created it ("A, B" directors are split). */
     val makers get() = (director?.split(',').orEmpty() + creators).map { it.trim() }.filter { it.isNotEmpty() }
+
+    /** An addon's title that isn't on the server (see [remoteId]). */
+    val remote get() = id.startsWith("addon:")
 }
+
+/** What an addon's details add, for a title that isn't on the server. */
+data class AddonInfo(
+    val writers: List<String> = emptyList(),
+    val country: String? = null,
+    val awards: String? = null,
+    /** The addon it came from: "Cinemeta". */
+    val source: String = "",
+)
 
 /**
  * Where an item goes A to Z: under its collection's name, in the collection's
@@ -234,6 +252,84 @@ data class Watched(
     }
 }
 
+/** `GET /api/me`. */
+@Serializable
+data class Me(val admin: Boolean = false, @SerialName("must_change_password") val mustChangePassword: Boolean = false)
+
+/** The home page as the server's admin set it up (`GET /api/layout`). */
+@Serializable
+data class ServerLayout(
+    /** Rows nobody sees: "recent", "genre:Drama", "catalog:<addon id>:movie:top", … */
+    @SerialName("home_hidden") val homeHidden: List<String> = emptyList(),
+    /** The rows top to bottom; empty for the usual order. */
+    @SerialName("home_order") val homeOrder: List<String> = emptyList(),
+) {
+    fun shows(key: String) = key !in homeHidden
+
+    /** `keys`, the rows in their usual order, in the admin's order. A row the admin never placed, like a new addon's, goes after the row it follows. */
+    fun ordered(keys: List<String>): List<String> {
+        val out = homeOrder.filter { it in keys }.distinct().toMutableList()
+        for ((i, k) in keys.withIndex()) {
+            if (k in out) continue
+            val at = keys.subList(0, i).asReversed().firstNotNullOfOrNull { p -> out.indexOf(p).takeIf { it >= 0 } }
+            out.add(if (at == null) 0 else at + 1, k)
+        }
+        return out
+    }
+}
+
+/** A title someone asked the admin for (`/api/requests`). */
+@Serializable
+data class MediaRequest(
+    val id: JsonElement? = null,
+    val title: String = "",
+    val year: Int? = null,
+    @SerialName("imdb_id") val imdbId: String? = null,
+    /** "pending", "approved", "available" or "denied" */
+    val status: String = "pending",
+    /** The admin's answer. */
+    val note: String? = null,
+)
+
+/** A Stremio addon the admin added (`GET /api/addons`). Never streams. */
+@Serializable
+data class Addon(
+    val id: JsonElement? = null,
+    val url: String = "",
+    val name: String = "",
+    /** "movie", "series"; empty: whatever its manifest says. */
+    val types: List<String> = emptyList(),
+    /** What it offers; empty: subtitles (older servers). */
+    val resources: List<AddonResource> = emptyList(),
+    val catalogs: List<AddonCatalog> = emptyList(),
+) {
+    val key get() = (id as? JsonPrimitive)?.contentOrNull ?: id?.toString().orEmpty()
+
+    /** It answers `resource` requests for this type and id. */
+    fun serves(resource: String, kind: String, id: String): Boolean {
+        if (resources.isEmpty()) return resource == "subtitles" && (types.isEmpty() || kind in types)
+        return resources.any { r ->
+            r.name == resource && (r.types.isEmpty() || kind in r.types) &&
+                (r.idPrefixes == null || r.idPrefixes.any { id.startsWith(it) })
+        }
+    }
+}
+
+@Serializable
+data class AddonResource(
+    /** "catalog", "meta" or "subtitles". */
+    val name: String = "",
+    val types: List<String> = emptyList(),
+    /** Ids it knows ("tt", "tmdb:"); null: any. */
+    @SerialName("id_prefixes") val idPrefixes: List<String>? = null,
+)
+
+@Serializable
+data class AddonCatalog(@SerialName("type") val kind: String = "", val id: String = "", val name: String = "")
+
+/** The server has no such endpoint (404 and the like). */
+class NoEndpoint(message: String) : IOException(message)
+
 @Serializable
 data class ServerInfo(val name: String? = null, val auth: Boolean = false)
 
@@ -297,7 +393,7 @@ class Client(val base: String, val info: ServerInfo, @Volatile var token: String
         try {
             http.newCall(req).execute().use(handle)
         } catch (e: IOException) {
-            throw if (e is Unauthorized || e is ServerError) e else ServerError("$what: ${e.message}")
+            throw if (e is Unauthorized || e is ServerError || e is NoEndpoint) e else ServerError("$what: ${e.message}")
         }
 
     private fun Response.fail(what: String): Nothing =
@@ -387,6 +483,70 @@ class Client(val base: String, val info: ServerInfo, @Volatile var token: String
         val req = Request.Builder().url(url).header("Accept", "application/json")
             .apply { token?.let { header("Authorization", "Bearer $it") } }.delete().build()
         call(req, "Can't sign that device out") { r -> if (!r.isSuccessful) r.fail("Can't sign that device out") }
+    }
+
+    /** Who the token belongs to; null when the server doesn't say. */
+    fun me(): Me? = call(request("/api/me").build(), "Can't load your account") { r ->
+        if (!r.isSuccessful) null else runCatching { json.decodeFromString<Me>(r.body.string()) }.getOrNull()
+    }
+
+    /** Change the signed-in user's own password; this session stays signed in. */
+    fun changePassword(current: String, new: String) {
+        val body = buildJsonObject { put("current_password", current); put("password", new) }
+        val req = request("/api/password").post(body.toString().toRequestBody(JSON)).build()
+        call(req, "Can't change the password") { r ->
+            when {
+                r.isSuccessful -> Unit
+                r.code == 401 -> throw Unauthorized()
+                r.code == 403 -> throw ServerError("Your current password isn't right")
+                r.code in listOf(404, 405, 501) -> throw ServerError("This server can't change passwords from the app")
+                else -> throw ServerError(
+                    runCatching { json.parseToJsonElement(r.body.string()).let { (it as JsonObject)["error"] as JsonPrimitive }.content }
+                        .getOrElse { "The server answered ${r.code}" },
+                )
+            }
+        }
+    }
+
+    /** The admin's home page; the usual one when the server has none. */
+    fun layout(): ServerLayout = call(request("/api/layout").build(), "Can't load the home page layout") { r ->
+        if (!r.isSuccessful) ServerLayout() else runCatching { json.decodeFromString<ServerLayout>(r.body.string()) }.getOrDefault(ServerLayout())
+    }
+
+    /** The admin's addons; none when the server has no addons. */
+    fun addons(): List<Addon> = call(request("/api/addons").build(), "Can't load the addons") { r ->
+        if (!r.isSuccessful) emptyList() else runCatching { json.decodeFromString<List<Addon>>(r.body.string()) }.getOrDefault(emptyList())
+    }
+
+    /** The user's own requests. Throws [NoEndpoint] when the server doesn't take requests. */
+    fun myRequests(): List<MediaRequest> = call(request("/api/requests").build(), "Can't load your requests") { r ->
+        when {
+            r.code in listOf(404, 405, 501) -> throw NoEndpoint("This server doesn't take requests.")
+            r.code == 401 -> throw Unauthorized()
+            !r.isSuccessful -> r.fail("Can't load your requests")
+            else -> runCatching { json.decodeFromString<List<MediaRequest>>(r.body.string()) }
+                .getOrElse { throw NoEndpoint("This server doesn't take requests.") }
+        }
+    }
+
+    /** Ask the admin for a title that isn't on the server. */
+    fun requestTitle(item: Item): MediaRequest {
+        val body = buildJsonObject {
+            put("title", item.title)
+            item.year?.let { put("year", it) }
+            put("kind", if (item.kind == Kind.Movie) "movie" else "series")
+            item.imdbId?.let { put("imdb_id", it) }
+            item.poster?.let { put("poster", it) }
+            put("source", "app")
+        }
+        val req = request("/api/requests").post(body.toString().toRequestBody(JSON)).build()
+        return call(req, "Couldn't send the request") { r ->
+            when {
+                r.code in listOf(404, 405, 501) -> throw NoEndpoint("This server doesn't take requests.")
+                !r.isSuccessful -> r.fail("Couldn't send the request")
+                else -> runCatching { json.decodeFromString<MediaRequest>(r.body.string()) }.getOrDefault(MediaRequest(title = item.title))
+            }
+        }
     }
 
     companion object {

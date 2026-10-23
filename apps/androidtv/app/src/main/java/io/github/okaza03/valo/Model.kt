@@ -34,6 +34,8 @@ sealed interface Screen {
     data class Person(val name: String) : Screen
     /** The signed-in user's watching stats and devices. */
     data object Profile : Screen
+    /** What's on Netflix, HBO Max, …: the addons' catalogs, one at a time. */
+    data object Streaming : Screen
 }
 
 enum class Filter { All, InProgress, Unwatched, Watched }
@@ -48,6 +50,22 @@ sealed interface Devices {
     data object Unsupported : Devices
     data class Failed(val message: String) : Devices
     data class Loaded(val list: List<DeviceSession>) : Devices
+}
+
+/** The Streaming page's choices and place. */
+class StreamingState {
+    /** "Netflix"; null: the first. */
+    var service by mutableStateOf<String?>(null)
+    /** Movies, series, or both (null). */
+    var kind by mutableStateOf<Kind?>(null)
+    var list = LazyGridState()
+    var focus: String? = null
+}
+
+/** The "Change your password" popup. */
+sealed interface PasswordState {
+    data class Editing(val busy: Boolean = false, val error: String? = null) : PasswordState
+    data object Changed : PasswordState
 }
 
 /** A grid page's choices and place, kept while you look at a title. */
@@ -110,6 +128,17 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     var devices: Devices by mutableStateOf(Devices.Loading)
         private set
 
+    /** The admin's home page: which rows show, in what order. */
+    var layout by mutableStateOf(ServerLayout())
+        private set
+    val discover = Discover(viewModelScope, this)
+
+    /** An admin asked this user to pick a new password: asked each time the app opens. */
+    var askPassword by mutableStateOf(false)
+        private set
+    var password: PasswordState by mutableStateOf(PasswordState.Editing())
+        private set
+
     /** Orders the home rows and "You might also like": random, but the same all session. */
     private val shuffle = kotlin.random.Random.nextLong()
 
@@ -118,6 +147,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     val homeRows = HashMap<String, LazyListState>()
     var homeFocus: String? = null
     val grids = mapOf(Kind.Movie to GridState(), Kind.Series to GridState())
+    val streaming = StreamingState()
 
     /** The top bar's search; results replace the page while it isn't empty. */
     var query by mutableStateOf("")
@@ -171,6 +201,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun search(q: String) {
         if (q != query) searchFocus = null
         query = q
+        discover.search(q)
     }
 
     /** Returns false when there's nothing to go back to. */
@@ -246,12 +277,15 @@ class AppModel(app: Application) : AndroidViewModel(app) {
             res.onSuccess {
                 val first = library == null
                 noteArrivals(it)
-                library = it
+                library = discover.onLibrary(it)
                 if (first) {
                     query = ""
                     replace(Screen.Home)
+                    checkAccount(c)
                 }
                 pullNow()
+                discover.reload(c)
+                launch { runCatching { withContext(Dispatchers.IO) { c.layout() } }.onSuccess { l -> layout = l } }
             }.onFailure {
                 when {
                     it is Unauthorized -> signedOut(it.message)
@@ -259,6 +293,46 @@ class AppModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    /** Details the addons filled in, or cast photos found. */
+    fun fillLibrary(f: (Library) -> Library) {
+        library = library?.let(f)
+    }
+
+    // -------------------------------------------------------------- password
+
+    private fun checkAccount(c: Client) {
+        if (c.token == null) return
+        viewModelScope.launch {
+            val me = runCatching { withContext(Dispatchers.IO) { c.me() } }.getOrNull()
+            if (me?.mustChangePassword == true) {
+                password = PasswordState.Editing()
+                askPassword = true
+            }
+        }
+    }
+
+    fun changePassword(current: String, new: String) {
+        val c = client ?: return
+        password = PasswordState.Editing(busy = true)
+        viewModelScope.launch {
+            val r = runCatching { withContext(Dispatchers.IO) { c.changePassword(current, new) } }
+            r.onSuccess { password = PasswordState.Changed }
+                .onFailure {
+                    if (it is Unauthorized) {
+                        askPassword = false
+                        signedOut(it.message)
+                    } else {
+                        password = PasswordState.Editing(error = it.message)
+                    }
+                }
+        }
+    }
+
+    /** Later, or Close once it's changed: asked again next time while the admin still wants it. */
+    fun closePassword() {
+        askPassword = false
     }
 
     /** Same rules as the desktop app's Movies/TV Shows filter. */
