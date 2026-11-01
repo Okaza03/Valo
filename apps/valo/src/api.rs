@@ -925,7 +925,7 @@ pub struct MediaRequest {
     pub notified: Option<bool>,
 }
 
-/// A Stremio addon the admin added (`GET /api/addons`): catalogs,
+/// A Stremio addon the admin turned on (`GET /api/addons`): catalogs,
 /// metadata and/or subtitles. Never streams.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
@@ -946,8 +946,6 @@ pub struct Addon {
     /// Lists of titles, shown as rows on the home page.
     #[serde(deserialize_with = "null_as_empty")]
     pub catalogs: Vec<AddonCatalog>,
-    /// It has a settings page (`<addon>/configure`).
-    pub configurable: bool,
     /// Unix seconds.
     pub added: Option<i64>,
     pub added_by: Option<String>,
@@ -1265,6 +1263,9 @@ pub const ADMIN_DOCS_COLLECTIONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-collections.md";
 pub const ADMIN_DOCS_ADDONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-addons.md";
+/// Where to ask for an addon to go on the list.
+pub const ADDON_REQUEST_URL: &str =
+    "https://github.com/Okaza03/Valo/issues/new?template=addon_request.yml";
 pub const ADMIN_DOCS_LAYOUT: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-layout.md";
 
@@ -2073,7 +2074,7 @@ impl Client {
         r.into_json().map_err(|_| anyhow!(NoAdminApi))
     }
 
-    /// Add an addon by its manifest URL; the server refuses stream addons.
+    /// Turn an addon on by its manifest URL; the server refuses stream addons.
     pub fn admin_add_addon(&self, url: &str) -> Result<Addon> {
         let r = self
             .admin("POST", "addons")
@@ -2082,6 +2083,7 @@ impl Client {
         Ok(r.into_json().unwrap_or_default())
     }
 
+    /// Turn an addon off.
     pub fn admin_delete_addon(&self, id: &str) -> Result<()> {
         self.admin("DELETE", &format!("addons/{}", encode_segment(id)))
             .call()

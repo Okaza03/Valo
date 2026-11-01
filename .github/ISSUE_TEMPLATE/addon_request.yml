@@ -1,0 +1,49 @@
+name: Addon request
+description: Ask for a Stremio addon to be added to the list in Valo's Admin page
+title: "Add addon: "
+labels: ["enhancement"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Addon name
+      placeholder: OpenSubtitles v3
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: Manifest URL
+      description: The link from the addon's install page. It ends in `/manifest.json`.
+      placeholder: https://…/manifest.json
+    validations:
+      required: true
+
+  - type: dropdown
+    id: offers
+    attributes:
+      label: What does it add?
+      multiple: true
+      options:
+        - Catalogs (rows on the home page)
+        - Metadata (missing details)
+        - Subtitles
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would you like it?
+
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Before you send this
+      description: Valo plays from your server, and everyone can see the links on the list.
+      options:
+        - label: It isn't a stream or torrent addon
+          required: true
+        - label: The link holds no API key or other private settings
+          required: true

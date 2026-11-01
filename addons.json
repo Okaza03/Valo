@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Cinemeta",
+    "url": "https://v3-cinemeta.strem.io/manifest.json",
+    "description": "Popular movies and series on the home page, and details for titles the server is missing them for."
+  },
+  {
+    "name": "Streaming Catalogs",
+    "url": "https://7a82163c306e-stremio-netflix-catalog-addon.baby-beamup.club/manifest.json",
+    "description": "What's on Netflix, HBO Max, Disney+, Prime Video and Apple TV+, for the Streaming page."
+  },
+  {
+    "name": "OpenSubtitles v3",
+    "url": "https://opensubtitles-v3.strem.io/manifest.json",
+    "description": "More subtitles in the player."
+  }
+]

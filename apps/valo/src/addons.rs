@@ -1,4 +1,4 @@
-//! Stremio addons the server's admin added (`GET /api/addons`): rows of
+//! Stremio addons the server's admin turned on (`GET /api/addons`): rows of
 //! titles for the home page (catalogs), details for titles (metadata) and
 //! subtitles, all looked up by IMDb id where it's our title. Streams are
 //! never asked for; the videos always come from our server.
@@ -21,6 +21,20 @@ const ROW_MAX: usize = 100;
 const SEARCH_MAX: usize = 30;
 /// How long a search waits for an addon; the others show meanwhile.
 const SEARCH_WAIT: Duration = Duration::from_secs(8);
+
+/// The addons admins can turn on. Only the project's maintainer adds to it;
+/// everyone else asks with an issue ([`crate::api::ADDON_REQUEST_URL`]).
+const LIST_URL: &str = "https://raw.githubusercontent.com/Okaza03/Valo/main/addons.json";
+
+/// An addon on the list.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Listed {
+    pub name: String,
+    /// Its manifest: `https://…/manifest.json`.
+    pub url: String,
+    pub description: String,
+}
 
 /// A movie or episode to find subtitles for.
 #[derive(Clone)]
@@ -143,33 +157,14 @@ fn agent() -> &'static ureq::Agent {
     })
 }
 
-/// An addon's settings page: `https://host/<settings>/configure`.
-pub fn configure_url(manifest: &str) -> String {
-    let u = manifest.trim();
-    let u = match u.strip_prefix("stremio://") {
-        Some(rest) => format!("https://{rest}"),
-        None => u.to_owned(),
-    };
-    let base = u.trim_end_matches('/').trim_end_matches("/manifest.json");
-    format!("{base}/configure")
-}
-
-/// Ask each addon's manifest whether it has a settings page, for
-/// servers that don't say.
-pub fn mark_configurable(addons: &mut [Addon]) {
-    let found = each(addons, |a| {
-        let m: Value = get(a, "manifest.json").ok()?;
-        let hint = |k: &str| {
-            m.pointer(&format!("/behaviorHints/{k}"))
-                .and_then(Value::as_bool)
-        };
-        Some(
-            hint("configurable").unwrap_or(false) || hint("configurationRequired").unwrap_or(false),
-        )
-    });
-    for (a, c) in addons.iter_mut().zip(found) {
-        a.configurable |= c.unwrap_or(false);
-    }
+/// The addons admins can turn on, read from the repo so one can be added
+/// without a release.
+pub fn list() -> Result<Vec<Listed>> {
+    Ok(agent()
+        .get(LIST_URL)
+        .timeout(Duration::from_secs(15))
+        .call()?
+        .into_json()?)
 }
 
 /// `f` for each item at once, results in order.
@@ -304,6 +299,20 @@ pub struct Row {
     pub service: bool,
     pub kind: Kind,
     pub items: Vec<Item>,
+}
+
+/// The page on a streaming service that finds `title`. Catalogs don't say
+/// where a title is on the service, so it's the service's own search.
+pub fn service_url(service: &str, title: &str) -> Option<String> {
+    let search = match service.to_lowercase().as_str() {
+        "netflix" => "https://www.netflix.com/search?q=",
+        "hbo max" | "max" => "https://www.hbomax.com/search?q=",
+        "disney+" => "https://www.disneyplus.com/search?q=",
+        "prime video" => "https://www.primevideo.com/search?phrase=",
+        "apple tv+" | "apple tv" => "https://tv.apple.com/search?term=",
+        _ => return None,
+    };
+    Some(format!("{search}{}", encode_segment(title.trim())))
 }
 
 /// How the admin's home page layout names a catalog's row:
@@ -994,16 +1003,32 @@ mod tests {
     }
 
     #[test]
-    fn configure_urls() {
+    fn the_list_is_valid() {
+        let list: Vec<Listed> = serde_json::from_str(include_str!("../../../addons.json")).unwrap();
+        assert!(!list.is_empty());
+        for (i, a) in list.iter().enumerate() {
+            assert!(!a.name.trim().is_empty(), "{}", a.url);
+            assert!(!a.description.trim().is_empty(), "{}", a.name);
+            assert!(
+                a.url.starts_with("https://") && a.url.ends_with("/manifest.json"),
+                "{}",
+                a.url
+            );
+            assert!(list[..i].iter().all(|b| b.url != a.url), "{}", a.url);
+        }
+    }
+
+    #[test]
+    fn service_links() {
         assert_eq!(
-            configure_url("https://a.b/eyJ9/manifest.json"),
-            "https://a.b/eyJ9/configure"
+            service_url("Prime Video", "Dune: Part Two").as_deref(),
+            Some("https://www.primevideo.com/search?phrase=Dune%3A%20Part%20Two")
         );
         assert_eq!(
-            configure_url("stremio://a.b/manifest.json"),
-            "https://a.b/configure"
+            service_url("netflix", "Up").as_deref(),
+            Some("https://www.netflix.com/search?q=Up")
         );
-        assert_eq!(configure_url("https://a.b/"), "https://a.b/configure");
+        assert_eq!(service_url("Some Service", "Up"), None);
     }
 
     #[test]

@@ -12,8 +12,8 @@ use eframe::egui::{self, pos2, vec2, Rect, RichText, Sense, Stroke, Ui};
 
 use super::details::{
     backdrop, caps, cast_grid, column, date_long, dot, fill_button, info_people_row, info_rows,
-    panel, placed, play_colors, poster_tile, similar, split_names, tag_link, title_art, GOLD,
-    NARROW, TEAL,
+    panel, placed, play_colors, poster_tile, service_links, similar, split_names, tag_link,
+    title_art, GOLD, NARROW, TEAL,
 };
 use super::{grid, Browse, Card, Click, View, GAP, SIDE};
 use crate::addons::{self, imdb_id, kind_name, split_remote, title_key, Row};
@@ -528,8 +528,8 @@ impl State {
         out
     }
 
-    /// "Netflix, Prime Video": the streaming services listing this title.
-    pub fn streaming_on(&self, id: &str) -> Option<String> {
+    /// The streaming services listing this title.
+    pub fn services(&self, id: &str) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
         for s in self
             .shown
@@ -540,7 +540,7 @@ impl State {
                 out.push(&s.source);
             }
         }
-        (!out.is_empty()).then(|| out.join(", "))
+        out
     }
 
     /// A person's filmography: loads it the first time it's asked for.
@@ -941,6 +941,7 @@ impl Browse {
             pos2(tx, rect.top() + 60.0),
             pos2(left + inner, rect.bottom() - 30.0),
         );
+        let linked = self.came_from_streaming();
         let st = &mut self.discover;
         let client = self.client.clone();
         placed(ui, text_rect, "remote_hero", 0.5, |ui| {
@@ -954,13 +955,18 @@ impl Browse {
             caps(ui, &kinds.join("   ·   "), TEXT().gamma_multiply(0.65));
             ui.add_space(8.0);
             title_art(ui, item, images, vec2(560.0, 96.0), 50.0);
-            if let Some(s) = st.streaming_on(&item.id) {
+            let services = st.services(&item.id);
+            if !services.is_empty() {
                 ui.add_space(8.0);
-                ui.label(
-                    RichText::new(format!("Streaming on {s}"))
-                        .size(15.0)
-                        .color(TEAL()),
-                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(RichText::new("Streaming on ").size(15.0).color(TEAL()));
+                    if linked {
+                        service_links(ui, &services, &item.title, 15.0, TEAL());
+                    } else {
+                        ui.label(RichText::new(services.join(", ")).size(15.0).color(TEAL()));
+                    }
+                });
             }
             ui.add_space(14.0);
             if !item.overview.is_empty() {

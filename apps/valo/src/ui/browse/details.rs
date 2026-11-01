@@ -517,6 +517,33 @@ pub(super) fn people_links(ui: &mut Ui, names: &[&str], size: f32) -> Option<Cli
     click
 }
 
+/// Streaming services as names that open `title` on each, in the browser.
+/// A service we have no link for stays plain text.
+pub(super) fn service_links(ui: &mut Ui, services: &[&str], title: &str, size: f32, col: Color32) {
+    for (i, s) in services.iter().enumerate() {
+        if i > 0 {
+            ui.label(RichText::new(", ").size(size).color(MUTED()));
+        }
+        service_link(ui, s, title, size, col);
+    }
+}
+
+fn service_link(ui: &mut Ui, service: &str, title: &str, size: f32, col: Color32) {
+    match crate::addons::service_url(service, title) {
+        Some(url) => {
+            if link(ui, service, size, col, None)
+                .on_hover_text(format!("Find it on {service}"))
+                .clicked()
+            {
+                chrome::open_url(&url);
+            }
+        }
+        None => {
+            ui.label(RichText::new(service).size(size).color(col));
+        }
+    }
+}
+
 /// "A, B" as names, for a server that sends several directors in one string.
 pub(super) fn split_names(s: &str) -> Vec<&str> {
     s.split(',')
@@ -555,6 +582,30 @@ fn kv_people_row(ui: &mut Ui, key: &str, names: &[&str], line: bool) -> Option<C
             .hline(r.x_range(), r.top(), Stroke::new(1.0f32, LINE()));
     }
     click
+}
+
+/// A [`kv_rows`] row whose value is [`service_links`].
+fn kv_service_row(ui: &mut Ui, services: &[&str], title: &str, line: bool) {
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Streaming on").size(14.0).color(MUTED()));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            // laid out from the right: last service first
+            for (i, s) in services.iter().enumerate().rev() {
+                service_link(ui, s, title, 14.0, TEAL());
+                if i > 0 {
+                    ui.label(RichText::new(", ").size(14.0).color(MUTED()));
+                }
+            }
+        });
+    });
+    ui.add_space(10.0);
+    if line {
+        let r = ui.available_rect_before_wrap();
+        ui.painter()
+            .hline(r.x_range(), r.top(), Stroke::new(1.0f32, LINE()));
+    }
 }
 
 /// An [`info_rows`] row whose value is names that open each person's page.
@@ -1221,8 +1272,10 @@ impl Browse {
             .into_iter()
             .filter_map(|(k, v)| v.map(|(v, c, s)| (k, v, c, s)))
             .collect();
-        if let Some(s) = self.discover.streaming_on(&item.id) {
-            rows.insert(0, ("Streaming on", s, TEAL(), 14.0));
+        let linked = self.came_from_streaming();
+        let services = self.discover.services(&item.id);
+        if !linked && !services.is_empty() {
+            rows.insert(0, ("Streaming on", services.join(", "), TEAL(), 14.0));
         }
         panel(ui, |ui| {
             caps(ui, "File · Metadata", TEAL());
@@ -1233,7 +1286,11 @@ impl Browse {
                 .map(split_names)
                 .unwrap_or_default();
             if !directors.is_empty() {
-                click = kv_people_row(ui, "Director", &directors, !rows.is_empty());
+                let more = !rows.is_empty() || (linked && !services.is_empty());
+                click = kv_people_row(ui, "Director", &directors, more);
+            }
+            if linked && !services.is_empty() {
+                kv_service_row(ui, &services, &item.title, !rows.is_empty());
             }
             kv_rows(ui, &rows);
             if self.client.admin {
@@ -1673,8 +1730,10 @@ impl Browse {
         };
         let eps: usize = item.seasons.iter().map(|s| s.episodes.len()).sum();
         let mut rows = Vec::new();
-        if let Some(s) = self.discover.streaming_on(&item.id) {
-            rows.push(("Streaming on", s));
+        let linked = self.came_from_streaming();
+        let services = self.discover.services(&item.id);
+        if !linked && !services.is_empty() {
+            rows.push(("Streaming on", services.join(", ")));
         }
         if let Some(n) = &item.network {
             rows.push(("Network", n.clone()));
@@ -1690,6 +1749,23 @@ impl Browse {
             panel(ui, |ui| {
                 ui.label(bold("Info", 17.0));
                 ui.add_space(16.0);
+                if linked && !services.is_empty() {
+                    ui.horizontal_top(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(112.0, 18.0), Sense::hover());
+                        ui.painter().text(
+                            r.left_center(),
+                            Align2::LEFT_CENTER,
+                            "Streaming on",
+                            FontId::proportional(14.0),
+                            MUTED(),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            service_links(ui, &services, &item.title, 14.0, TEAL());
+                        });
+                    });
+                    ui.add_space(12.0);
+                }
                 info_rows(ui, &rows, 112.0);
             });
         };

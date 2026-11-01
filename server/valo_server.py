@@ -738,7 +738,7 @@ def addon_catalogs(m):
 
 
 class Addons:
-    """addons.json: Stremio addons the admin added (catalogs, metadata,
+    """addons.json: Stremio addons the admin turned on (catalogs, metadata,
     subtitles), for every user."""
 
     def __init__(self, folder):
@@ -753,12 +753,12 @@ class Addons:
 
     def add(self, url, by):
         url, m = addon_manifest(url)
-        hints = m.get("behaviorHints") or {}
         with self.lock:
             if any(a["url"] == url for a in self.items):
                 raise AddonError(f"{m['name']} is already added")
             a = {
-                "id": secrets.token_hex(4),
+                # from the link, so turning it off and on keeps its layout rows
+                "id": hashlib.sha256(url.encode()).hexdigest()[:8],
                 "url": url,
                 "name": str(m["name"])[:100],
                 "description": str(m.get("description") or "")[:500] or None,
@@ -767,7 +767,6 @@ class Addons:
                 "types": [t for t in m.get("types") or [] if isinstance(t, str)],
                 "resources": addon_resources(m),
                 "catalogs": addon_catalogs(m),
-                "configurable": bool(hints.get("configurable") or hints.get("configurationRequired")),
                 "added": int(time.time()),
                 "added_by": by,
             }

@@ -11,7 +11,7 @@ The app's Admin page has a sidebar of sections. Each one needs its own endpoints
 | Requests    | Titles people asked for through a Discord bot                             | [Requests and the Discord bot](admin-requests.md) |
 | Library     | Edit a title's details and artwork, fetch them from IMDb                  | [Library editing](admin-library.md)         |
 | Collections | Group titles so A to Z keeps them together, in an order the admin picks   | [Collections](admin-collections.md)         |
-| Addons      | Stremio addons for everyone: home-page catalogs, missing details, subtitles | [Addons](admin-addons.md)                 |
+| Addons      | Turn Stremio addons on for everyone: home-page catalogs, missing details, subtitles | [Addons](admin-addons.md)         |
 | Layout      | Which rows everyone sees on the home page, and their order                  | [Layout](admin-layout.md)                 |
 | Users       | List, add and remove users, admin rights, passwords, sign out everywhere  | this page                                   |
 

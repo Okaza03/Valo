@@ -306,6 +306,11 @@ impl Browse {
         }
     }
 
+    /// This page was opened from the Streaming tab.
+    fn came_from_streaming(&self) -> bool {
+        self.history.last() == Some(&View::Streaming)
+    }
+
     fn back(&mut self) {
         self.view = self.history.pop().unwrap_or(View::Home);
         self.to_top = true;

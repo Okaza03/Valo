@@ -80,8 +80,8 @@ impl Section {
                 "Group titles like the Batman films, so A to Z keeps them together, oldest first."
             }
             Section::Addons => {
-                "Stremio addons for everyone: catalogs on the home page, missing details \
-                 filled in, and subtitles in the player."
+                "Turn Stremio addons on for everyone: catalogs on the home page, missing \
+                 details filled in, and subtitles in the player."
             }
             Section::Layout => {
                 "How the app looks for everyone: which rows the home page shows, in what order."
