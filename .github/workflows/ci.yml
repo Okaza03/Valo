@@ -39,9 +39,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # debug build: no keystore needed
+      # debug builds of both apps: no keystore needed
       - name: APK
         env:
           JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         working-directory: apps/androidtv
-        run: ./gradlew --no-daemon assembleDebug
+        run: ./gradlew --no-daemon assembleDebug testTvDebugUnitTest testPhoneDebugUnitTest

@@ -31,6 +31,25 @@ android {
         buildConfigField("String", "RELEASES_URL", "\"$releases\"")
     }
 
+    // One codebase, two apps: src/main is shared, src/tv and src/phone have the
+    // screens. They install side by side, and each updates from its own APK.
+    flavorDimensions += "device"
+    productFlavors {
+        create("tv") {
+            dimension = "device"
+            buildConfigField("String", "APK_SUFFIX", "\"-androidtv.apk\"")
+            buildConfigField("String", "DEVICE_NAME", "\"Valo TV\"")
+            buildConfigField("String", "USER_AGENT", "\"Valo-AndroidTV\"")
+        }
+        create("phone") {
+            dimension = "device"
+            applicationIdSuffix = ".phone"
+            buildConfigField("String", "APK_SUFFIX", "\"-android.apk\"")
+            buildConfigField("String", "DEVICE_NAME", "\"Valo\"")
+            buildConfigField("String", "USER_AGENT", "\"Valo-Android\"")
+        }
+    }
+
     signingConfigs {
         if (keystore != null) {
             create("release") {
@@ -67,7 +86,12 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.tv:tv-material:1.1.0")
+    "tvImplementation"("androidx.tv:tv-material:1.1.0")
+    "phoneImplementation"("androidx.compose.material3:material3")
+    // the Cast button, and playing on a Chromecast or Google TV
+    "phoneImplementation"("com.google.android.gms:play-services-cast-framework:23.0.0")
+    "phoneImplementation"("androidx.mediarouter:mediarouter:1.8.1")
+    "phoneImplementation"("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")

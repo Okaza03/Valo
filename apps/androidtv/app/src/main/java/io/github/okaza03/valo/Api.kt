@@ -445,7 +445,7 @@ class Client(val base: String, val info: ServerInfo, @Volatile var token: String
     fun login(username: String, password: String): Session {
         val body = buildJsonObject {
             put("username", username); put("password", password)
-            put("device", "Valo TV on ${android.os.Build.MODEL}")
+            put("device", "${BuildConfig.DEVICE_NAME} on ${android.os.Build.MODEL}")
         }
         val req = request("/api/login").post(body.toString().toRequestBody(JSON)).build()
         return call(req, "Sign-in failed") { r ->
@@ -639,7 +639,7 @@ class Client(val base: String, val info: ServerInfo, @Volatile var token: String
             .readTimeout(30, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder()
-                    .header("User-Agent", "Valo-AndroidTV/${BuildConfig.VERSION_NAME}").build())
+                    .header("User-Agent", "${BuildConfig.USER_AGENT}/${BuildConfig.VERSION_NAME}").build())
             }
             .build()
 

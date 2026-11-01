@@ -19,3 +19,11 @@ The app transcodes nothing. It plays whatever FFmpeg can decode (H.264, HEVC, AV
 ## Images
 
 Images (posters, backdrops, logos, stills, cast photos) can be JPEG, PNG or WebP. When a sign-in is on, image and stream requests to the server carry the same `Authorization: Bearer` header. Images on another host (a CDN, TMDB) are fetched without it.
+
+## Casting from the phone app
+
+The server needs nothing extra for this. A Chromecast can't send the `Authorization` header, so the phone asks your server for the video and passes it on, and the TV only ever sees a random link to the phone. That has three consequences:
+
+- The phone has to stay on and on the same Wi-Fi as the TV. A notification shows while it's casting, and swiping the app away ends it.
+- The file has to be something the Chromecast can play, since nothing is transcoded: H.264 video (4K models HEVC too) with AAC or MP3 sound. The app says so when the TV refuses a file.
+- Subtitle files (SRT, VTT, ASS) are converted to WebVTT on the way, so the server's files and the addons' both show on the TV. Subtitles inside the video file don't, and their timing can't be moved there.

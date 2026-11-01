@@ -16,7 +16,7 @@ Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT
 | Path                | What's in it                                                      |
 | ------------------- | ----------------------------------------------------------------- |
 | `apps/valo/`        | The desktop app (Rust, egui, FFmpeg)                              |
-| `apps/androidtv/`   | The Android TV / Google TV app (`./gradlew assembleRelease`)      |
+| `apps/androidtv/`   | The Android apps: `src/main` is shared, `src/tv` is Android TV / Google TV, `src/phone` is phones and tablets (`./gradlew assembleTvRelease assemblePhoneRelease`) |
 | `server/`           | The bundled Python server (standard library only)                 |
 | `docs/api/`         | The server API guide                                              |
 | `xtask/`            | Build helpers (`cargo xtask ffmpeg`, `dist`, `installer`)         |
@@ -66,7 +66,7 @@ Write the summary in plain words about what changes for the user.
 - Fill in the pull request template.
 - Link the issue it closes (`Closes #123`).
 - Add screenshots or a short clip for UI changes.
-- Say which platforms you tested on (Linux, Windows, Android TV).
+- Say which platforms you tested on (Linux, Windows, Android TV, Android phone).
 
 ## License
 

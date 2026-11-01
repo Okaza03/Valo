@@ -1,5 +1,5 @@
 // "Is there a newer Valo?" — asks GitHub for the latest release, like the
-// desktop app (apps/valo/src/update.rs), and installs its TV APK.
+// desktop app (apps/valo/src/update.rs), and installs this app's APK.
 package io.github.okaza03.valo
 
 import android.app.PendingIntent
@@ -50,7 +50,7 @@ object Updates {
         return false
     }
 
-    /** The latest release if it's newer than this build and has a TV APK; null if we're current. */
+    /** The latest release if it's newer than this build and has our APK; null if we're current. */
     fun latest(): Release? {
         val req = Request.Builder().url(BuildConfig.RELEASES_URL)
             .header("Accept", "application/vnd.github+json").build()
@@ -66,7 +66,7 @@ object Updates {
             throw IOException(e.message?.takeIf { "GitHub" in it || "releases" in it } ?: "can't reach GitHub", e)
         }
         val version = r.tag.trimStart('v', 'V')
-        val apk = r.assets.find { it.name.endsWith("-androidtv.apk") } ?: return null
+        val apk = r.assets.find { it.name.endsWith(BuildConfig.APK_SUFFIX) } ?: return null
         val sums = r.assets.find { it.name == "SHA256SUMS.txt" }?.url
         return if (newer(version, VERSION)) Release(version, apk.url, apk.name, sums) else null
     }

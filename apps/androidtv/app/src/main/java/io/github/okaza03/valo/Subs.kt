@@ -13,11 +13,41 @@ import androidx.media3.extractor.text.webvtt.WebvttParser
 import okhttp3.Request
 import java.util.zip.GZIPInputStream
 
+/** How long the file's last cue stays up: nothing says when it ends. */
+private const val LAST_CUE_US = 5_000_000L
+
+/** One subtitle, in milliseconds. */
+data class VttCue(val startMs: Long, val endMs: Long, val text: String)
+
+/** "01:02:03.004" */
+private fun vttTime(ms: Long) = "%02d:%02d:%02d.%03d".format(ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+
+/** A WebVTT file. A blank line would end a cue, so they're taken out of the text. */
+fun vtt(cues: List<VttCue>): String = buildString {
+    append("WEBVTT\n\n")
+    for (c in cues) {
+        append(vttTime(c.startMs)).append(" --> ").append(vttTime(c.endMs)).append('\n')
+        append(c.text.replace(Regex("\n\\s*\n"), "\n")).append("\n\n")
+    }
+}
+
 /** A parsed subtitle file: the cues on screen at any time. */
 @OptIn(UnstableApi::class)
 class SubTrack(private val subtitle: androidx.media3.extractor.text.Subtitle) {
     /** The cues at `ms` into the video. */
     fun at(ms: Long): List<Cue> = subtitle.getCues(ms * 1000)
+
+    /** The whole file as WebVTT, the only kind a Chromecast shows. */
+    fun toVtt(): String {
+        val n = subtitle.eventTimeCount
+        val cues = (0 until n).mapNotNull { i ->
+            val start = subtitle.getEventTime(i)
+            val end = if (i + 1 < n) subtitle.getEventTime(i + 1) else start + LAST_CUE_US
+            val text = subtitle.getCues(start).mapNotNull { it.text?.toString() }.joinToString("\n").trim()
+            if (text.isEmpty()) null else VttCue(start / 1000, end / 1000, text)
+        }
+        return vtt(cues)
+    }
 
     companion object {
         /** Download and parse `s`; our server's files carry the sign-in. */

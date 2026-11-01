@@ -56,10 +56,12 @@ jobs:
             echo "::warning::VALO_KEYSTORE_BASE64 isn't set; the APK is signed with a throwaway debug key"
           fi
           cd apps/androidtv
-          ./gradlew --no-daemon assembleRelease
+          ./gradlew --no-daemon assembleTvRelease assemblePhoneRelease
           mkdir -p ../../target/dist
-          cp app/build/outputs/apk/release/app-release.apk \
+          cp app/build/outputs/apk/tv/release/app-tv-release.apk \
             "../../target/dist/valo-${GITHUB_REF_NAME}-androidtv.apk"
+          cp app/build/outputs/apk/phone/release/app-phone-release.apk \
+            "../../target/dist/valo-${GITHUB_REF_NAME}-android.apk"
 
       - uses: actions/upload-artifact@v7
         with:

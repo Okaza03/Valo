@@ -41,62 +41,12 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import io.github.okaza03.valo.AppModel
 import io.github.okaza03.valo.Devices
-import io.github.okaza03.valo.Entry
 import io.github.okaza03.valo.Filter
 import io.github.okaza03.valo.Films
 import io.github.okaza03.valo.Item
 import io.github.okaza03.valo.Kind
 import io.github.okaza03.valo.Library
 import io.github.okaza03.valo.Screen
-
-private fun same(a: String, b: String) = a.trim().equals(b.trim(), ignoreCase = true)
-
-/** A title someone is credited on, with the character they played. */
-private class Credit(val item: Item, val character: String?)
-
-/** Everything one person did in the library, newest first. */
-private class Person(lib: Library, name: String) {
-    val movies = ArrayList<Credit>()
-    val shows = ArrayList<Credit>()
-    val directed = ArrayList<Credit>()
-    val created = ArrayList<Credit>()
-    var photo: String? = null
-
-    init {
-        for (item in lib.all) {
-            item.cast.find { same(it.name, name) }?.let { m ->
-                photo = photo ?: m.photo
-                val c = Credit(item, m.character?.takeIf { it.isNotBlank() })
-                if (item.kind == Kind.Movie) movies += c else shows += c
-            }
-            if (item.director?.split(',')?.any { same(it, name) } == true) directed += Credit(item, null)
-            if (item.creators.any { same(it, name) }) created += Credit(item, null)
-        }
-        // newest first, titles without a year last
-        for (l in listOf(movies, shows, directed, created)) l.sortWith(compareBy({ it.item.year == null }, { -(it.item.year ?: 0) }))
-    }
-
-    val titles get() = (movies + shows + directed + created).map { it.item }.distinctBy { it.id }
-
-    val roles get() = buildList {
-        if (movies.isNotEmpty() || shows.isNotEmpty()) add("Actor")
-        if (directed.isNotEmpty()) add("Director")
-        if (created.isNotEmpty()) add("Creator")
-    }
-}
-
-/** "1999–2021", or one year. */
-private fun span(items: List<Item>): String? {
-    val lo = items.mapNotNull { it.year }.minOrNull() ?: return null
-    val hi = items.mapNotNull { it.endYear ?: it.year }.maxOrNull() ?: lo
-    return if (hi > lo) "$lo–$hi" else "$lo"
-}
-
-/** The `n` most common of `names`, most common first, ties A to Z. */
-private fun top(names: List<String>, n: Int): List<Pair<String, Int>> =
-    names.groupingBy { it }.eachCount().entries
-        .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-        .take(n).map { it.key to it.value }
 
 @Composable
 fun PersonScreen(model: AppModel, lib: Library, name: String) {
@@ -284,42 +234,8 @@ fun ProfileScreen(model: AppModel, lib: Library) {
         if (signedIn) model.loadDevices()
     }
 
-    // what each entry is: a movie, or an episode of a series
-    class Watch(val item: Item, val episodeId: String?, val sub: String, val art: String?, val e: Entry)
-    val entries = model.history()
-    fun secs(e: Entry) = if (e.dur > 0) minOf(e.pos, e.dur) else e.pos
-    var movieSecs = 0.0
-    var epSecs = 0.0
-    var moviesDone = 0
-    var epsDone = 0
-    var inProgress = 0
-    val genreSecs = HashMap<String, Double>()
-    val perShow = HashMap<String, Pair<Int, Double>>()
-    val recent = ArrayList<Watch>()
-    for ((id, e) in entries) {
-        val movie = lib.movies.find { it.id == id }
-        val item = if (movie != null) {
-            movieSecs += secs(e)
-            if (e.watched) moviesDone++
-            recent += Watch(movie, null, movie.year?.let { "Movie · $it" } ?: "Movie", movie.thumb ?: movie.backdrop ?: movie.poster, e)
-            movie
-        } else {
-            val (s, season, ep) = lib.findEpisode(id) ?: continue
-            epSecs += secs(e)
-            if (e.watched) epsDone++
-            val (n, t) = perShow[s.id] ?: (0 to 0.0)
-            perShow[s.id] = (n + if (e.watched) 1 else 0) to (t + secs(e))
-            recent += Watch(s, ep.id, "${season.code(ep.number, "S%02dE%02d")} · ${ep.title}", ep.still ?: s.backdrop ?: s.poster, e)
-            s
-        }
-        if (e.inProgress) inProgress++
-        for (g in item.genres) genreSecs[g] = (genreSecs[g] ?: 0.0) + secs(e)
-    }
-    val showsDone = lib.series.count { model.status(it) == Filter.Watched }
-    val onList = model.myList(lib).size
-    fun time(s: Double) = if (s > 0) fmtRuntime(s) else "—"
-    val genres = genreSecs.entries.sortedWith(compareByDescending<Map.Entry<String, Double>> { it.value }.thenBy { it.key }).take(6)
-    val shows = perShow.mapNotNull { (id, v) -> lib.find(id)?.let { Triple(it, v.first, v.second) } }.sortedByDescending { it.third }.take(5)
+    val w = WatchStats(model, lib)
+    fun time(s: Double) = watchTime(s)
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to colorFor(name).copy(alpha = 0.35f), 0.4f to BG))) {
         LazyColumn(
@@ -352,12 +268,12 @@ fun ProfileScreen(model: AppModel, lib: Library) {
             item {
                 Row(Modifier.padding(horizontal = EDGE), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     for ((v, label) in listOf(
-                        time(movieSecs + epSecs) to "Time watched",
-                        "$moviesDone" to "Movies finished",
-                        "$epsDone" to "Episodes finished",
-                        "$showsDone" to "Shows completed",
-                        "$inProgress" to "In progress",
-                        "$onList" to "On My list",
+                        time(w.movieSecs + w.epSecs) to "Time watched",
+                        "${w.moviesDone}" to "Movies finished",
+                        "${w.epsDone}" to "Episodes finished",
+                        "${w.showsDone}" to "Shows completed",
+                        "${w.inProgress}" to "In progress",
+                        "${w.onList}" to "On My list",
                     )) {
                         Stat(v, label, Modifier.weight(1f))
                     }
@@ -365,20 +281,20 @@ fun ProfileScreen(model: AppModel, lib: Library) {
             }
             item(key = "recent") {
                 Column {
-                    RowTitle("Recently watched", recent.size.coerceAtMost(15))
-                    if (recent.isEmpty()) {
+                    RowTitle("Recently watched", w.recent.size.coerceAtMost(15))
+                    if (w.recent.isEmpty()) {
                         Text("Nothing watched yet.", color = MUTED, fontSize = 15.sp, modifier = Modifier.padding(horizontal = EDGE))
                     }
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = EDGE),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        items(recent.take(15), key = { it.episodeId ?: it.item.id }) { w ->
-                            val state = if (w.e.watched) "Watched" else "%.0f%%".format(w.e.fraction * 100)
+                        items(w.recent.take(15), key = { it.episodeId ?: it.item.id }) { r ->
+                            val state = if (r.e.watched) "Watched" else "%.0f%%".format(r.e.fraction * 100)
                             ArtCard(
-                                art = w.art, title = w.item.title, sub = "${w.sub}  ·  $state  ·  ${ago(w.e.updated)}",
-                                width = 240.dp, ratio = 16f / 9f, progress = if (w.e.watched) 1f else w.e.fraction,
-                                onClick = { model.push(Screen.Details(w.item.id)) },
+                                art = r.art, title = r.item.title, sub = "${r.sub}  ·  $state  ·  ${ago(r.e.updated)}",
+                                width = 240.dp, ratio = 16f / 9f, progress = if (r.e.watched) 1f else r.e.fraction,
+                                onClick = { model.push(Screen.Details(r.item.id)) },
                             )
                         }
                     }
@@ -386,21 +302,21 @@ fun ProfileScreen(model: AppModel, lib: Library) {
             }
             item(key = "stats") {
                 Row(Modifier.padding(horizontal = EDGE), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    if (genres.isNotEmpty()) {
+                    if (w.genres.isNotEmpty()) {
                         Panel(Modifier.weight(1f)) {
                             MonoText("Favorite genres", 12.sp, TEAL)
-                            val max = genres.first().value.coerceAtLeast(1.0)
-                            for ((g, s) in genres) Bar(g, fmtRuntime(s), (s / max).toFloat())
+                            val max = w.genres.first().value.coerceAtLeast(1.0)
+                            for ((g, s) in w.genres) Bar(g, fmtRuntime(s), (s / max).toFloat())
                         }
                     }
                     Panel(Modifier.weight(1f)) {
                         MonoText("Watching", 12.sp, TEAL)
                         InfoRows(
                             listOf(
-                                "Movies" to time(movieSecs),
-                                "TV shows" to time(epSecs),
-                                "Started" to "${entries.size} movies & episodes",
-                            ) + shows.map { (s, done, t) -> s.title to "$done of ${s.episodes.size} episodes · ${fmtRuntime(t)}" },
+                                "Movies" to time(w.movieSecs),
+                                "TV shows" to time(w.epSecs),
+                                "Started" to "${w.entries.size} movies & episodes",
+                            ) + w.shows.map { (s, done, t) -> s.title to "$done of ${s.episodes.size} episodes · ${fmtRuntime(t)}" },
                             labelWidth = 170.dp,
                         )
                         Text("Counted from your watch history on this server.", color = MUTED, fontSize = 12.sp)

@@ -55,9 +55,6 @@ import io.github.okaza03.valo.Library
 import io.github.okaza03.valo.Requests
 import io.github.okaza03.valo.Screen
 
-val OK = Color(0xFF62C88A)
-val WARN = Color(0xFFF2B84B)
-
 @Composable
 fun RemoteScreen(model: AppModel, lib: Library, item: Item) {
     val d = model.discover

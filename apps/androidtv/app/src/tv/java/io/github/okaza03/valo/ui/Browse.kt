@@ -302,23 +302,9 @@ fun GridScreen(model: AppModel, lib: Library, kind: Kind) {
     val all = if (kind == Kind.Movie) lib.movies else lib.series
     val genres = all.flatMap { it.genres }.distinct().sorted()
     if (g.genre != null && g.genre !in genres) g.genre = null
-    val inGenre = all.filter { i -> g.genre.let { it == null || it in i.genres } }
-    val status = inGenre.map(model::status)
-    fun count(f: Filter) = status.count { it == f }
-    var items = inGenre.zip(status).filter { g.filter == Filter.All || it.second == g.filter }.map { it.first }
-    // titles without the key go last either way; the library comes A to Z
-    fun <K : Comparable<K>> by(key: (Item) -> K?): List<Item> {
-        val (with, without) = items.partition { key(it) != null }
-        val sorted = if (g.desc) with.sortedByDescending { key(it)!! } else with.sortedBy { key(it)!! }
-        return sorted + without
-    }
-    items = when (g.sort) {
-        Sort.Title -> if (g.desc) items.reversed() else items
-        Sort.Year -> by { it.year }
-        Sort.Added -> by { it.added }
-        Sort.Director -> by { it.maker?.lowercase() }
-    }
-    val makerLabel = if (kind == Kind.Movie) "Director" else "Creator"
+    val t = gridTitles(model, g, all)
+    val (inGenre, items) = t.inGenre to t.items
+    fun count(f: Filter) = t.count(f)
 
     Box(Modifier.fillMaxSize().background(BG)) {
         LibraryPage(model, lib, Screen.Grid(kind)) {
@@ -340,21 +326,7 @@ fun GridScreen(model: AppModel, lib: Library, kind: Kind) {
                     Spacer(Modifier.weight(1f).widthIn(min = 24.dp))
                     // each sort both ways (the desktop app's direction button)
                     Choice(
-                        "Sort", g.sort to g.desc,
-                        buildList {
-                            add((Sort.Title to false) to "A – Z")
-                            add((Sort.Title to true) to "Z – A")
-                            add((Sort.Year to true) to "Newest first")
-                            add((Sort.Year to false) to "Oldest first")
-                            if (all.any { it.added != null }) {
-                                add((Sort.Added to true) to "Recently added")
-                                add((Sort.Added to false) to "Added first")
-                            }
-                            if (all.any { it.maker != null }) {
-                                add((Sort.Director to false) to "$makerLabel A – Z")
-                                add((Sort.Director to true) to "$makerLabel Z – A")
-                            }
-                        },
+                        "Sort", g.sort to g.desc, sortChoices(all, kind),
                     ) { (sort, desc) ->
                         g.sort = sort
                         g.desc = desc
