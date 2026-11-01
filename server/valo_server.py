@@ -594,6 +594,7 @@ class Requests:
         imdb = req.get("imdb_id")
         title = str(req.get("title", "")).strip().lower()
         year, kind = req.get("year"), req.get("kind")
+        year = year if isinstance(year, int) else None
         for r in reversed(self.items):
             if r["status"] not in self.OPEN:
                 continue
@@ -602,7 +603,7 @@ class Requests:
                     return r
             elif (
                 r["title"].lower() == title
-                and (not year or not r.get("year") or r["year"] == year)
+                and r.get("year") == year
                 and (not kind or not r.get("kind") or r["kind"] == kind)
             ):
                 return r

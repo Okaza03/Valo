@@ -83,7 +83,7 @@ The bot signs in with its own secret, not a user's password: a long random strin
 
 The server sets `id`, `created` and `updated`, and `status` to `"pending"`. A bot that finds the title is already on disk may send `"status": "available"`, so the request is kept as asked for and fulfilled at once. After telling (or failing to tell) the requester, the bot can report `notified` with `PATCH /api/requests/<id>` and `{"notified": false}`. A signed-in user's token may use the same endpoints; that's optional. Then `requested_by` is their username and `source` is `"app"`. `GET /api/requests` gives them everyone's requests, so the app can show *Requested by alice on 23 Oct 2026* instead of a Request button, and nobody asks for a title twice. Other people's requests leave out `requester_id`, `note`, `message_id` and `notified`. A server that only sends a user their own requests still works, but then two people can ask for the same title.
 
-"Already requested" means an open (`pending` or `approved`) request with the same `imdb_id`, or, without one, the same title, year and kind. A `denied` request doesn't count, so someone else can ask again.
+"Already requested" means an open (`pending` or `approved`) request with the same `imdb_id`, or, without one, the same title, year and kind. Compare the year as well as the title: remakes share a name, and *The Running Man* from 1987 isn't the one from 2025. A `denied` request doesn't count, so someone else can ask again.
 
 A bot's own `PATCH` of `notified` or `message_id` shouldn't change `updated`, or the bot sees its own change as a new answer on the next poll.
 

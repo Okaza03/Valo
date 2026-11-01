@@ -393,19 +393,12 @@ impl State {
         let Some(Ok(list)) = &self.requests else {
             return None;
         };
-        let title = item.title.to_lowercase();
         let mine = |r: &MediaRequest| {
             r.requested_by
                 .as_deref()
                 .is_some_and(|by| me.is_some_and(|me| by.eq_ignore_ascii_case(me)))
         };
-        let matches = list
-            .iter()
-            .rev()
-            .filter(|r| match (&r.imdb_id, &item.imdb_id) {
-                (Some(a), Some(b)) => a == b,
-                _ => r.title.to_lowercase() == title && (r.year.is_none() || r.year == item.year),
-            });
+        let matches = list.iter().rev().filter(|r| asks_for(r, item));
         let mut denied = None;
         for r in matches {
             if r.status != "denied" {
@@ -416,6 +409,15 @@ impl State {
             }
         }
         denied
+    }
+}
+
+/// This request is for this title. Without IMDb ids the years have to
+/// agree, or a request for one film would stand for its remake too.
+fn asks_for(r: &MediaRequest, item: &Item) -> bool {
+    match (&r.imdb_id, &item.imdb_id) {
+        (Some(a), Some(b)) => a == b,
+        _ => r.title.to_lowercase() == item.title.to_lowercase() && r.year == item.year,
     }
 }
 
@@ -468,9 +470,9 @@ struct Search {
 
 /// Our titles, to find an addon's title among them.
 struct Ours<'a> {
-    by_imdb: HashMap<(Kind, &'a str), &'a str>,
-    /// By [`title_key`].
-    by_title: HashMap<(Kind, String), Vec<YearId<'a>>>,
+    by_imdb: HashMap<(Kind, &'a str), YearId<'a>>,
+    /// By [`title_key`], with whether we know the title's IMDb id.
+    by_title: HashMap<(Kind, String), Vec<(YearId<'a>, bool)>>,
 }
 
 impl<'a> Ours<'a> {
@@ -481,36 +483,39 @@ impl<'a> Ours<'a> {
         };
         for i in lib.all() {
             if let Some(imdb) = i.imdb_id.as_deref() {
-                o.by_imdb.insert((i.kind, imdb.trim()), i.id.as_str());
+                o.by_imdb
+                    .insert((i.kind, imdb.trim()), (i.year, i.id.as_str()));
             }
             o.by_title
                 .entry((i.kind, title_key(&i.title)))
                 .or_default()
-                .push((i.year, i.id.as_str()));
+                .push(((i.year, i.id.as_str()), i.imdb_id.is_some()));
         }
         o
     }
 
     /// By IMDb id; else by title and year (a year apart is fine: release
     /// dates differ by country), for titles the server has no IMDb id for.
+    /// Years further apart are another film, even with the same IMDb id:
+    /// the server may have looked up the wrong one of a remake.
     fn find(&self, it: &Item) -> Option<&'a str> {
-        if let Some(id) = it
-            .imdb_id
-            .as_deref()
-            .and_then(|i| self.by_imdb.get(&(it.kind, i)))
-        {
-            return Some(id);
+        let gap = |y: Option<u32>| y.zip(it.year).map(|(a, b)| a.abs_diff(b));
+        let imdb = it.imdb_id.as_deref();
+        if let Some((y, id)) = imdb.and_then(|i| self.by_imdb.get(&(it.kind, i))) {
+            if gap(*y).is_none_or(|g| g <= 1) {
+                return Some(id);
+            }
         }
         let same = self.by_title.get(&(it.kind, title_key(&it.title)))?;
-        let near = |y: Option<u32>| match (y, it.year) {
-            (Some(a), Some(b)) => a.abs_diff(b) <= 1,
-            _ => true,
-        };
         // the closest year wins, for remakes with the same name
         same.iter()
-            .filter(|(y, _)| near(*y))
-            .min_by_key(|(y, _)| y.zip(it.year).map_or(2, |(a, b)| a.abs_diff(b)))
-            .map(|(_, id)| *id)
+            .filter(|((y, _), known)| match gap(*y) {
+                Some(g) => g <= 1,
+                // no year to go by: different IMDb ids are different films
+                None => !(*known && imdb.is_some()),
+            })
+            .min_by_key(|((y, _), _)| gap(*y).unwrap_or(2))
+            .map(|((_, id), _)| *id)
     }
 }
 
@@ -1395,5 +1400,61 @@ mod tests {
         assert_eq!(find(Kind::Movie, "Buddy", Some(2010), None), None); // another film
         assert_eq!(find(Kind::Series, "Backrooms", Some(2026), None), Some("4"));
         assert_eq!(find(Kind::Movie, "Backrooms", Some(2026), None), None); // not a movie
+    }
+
+    #[test]
+    fn remakes_are_other_films() {
+        let lib = Library {
+            movies: vec![
+                // the server looked up the 1987 film for its 2025 remake
+                item(
+                    "1",
+                    Kind::Movie,
+                    "The Running Man",
+                    Some(2025),
+                    Some("tt0093894"),
+                ),
+                item("2", Kind::Movie, "Total Recall", None, Some("tt0100802")),
+            ],
+            series: Vec::new(),
+        };
+        let ours = Ours::new(&lib);
+        let find = |t, y, imdb| ours.find(&item("x", Kind::Movie, t, y, imdb));
+        assert_eq!(find("The Running Man", Some(1987), Some("tt0093894")), None);
+        assert_eq!(find("The Running Man", Some(1963), Some("tt0057463")), None);
+        assert_eq!(
+            find("The Running Man", Some(2025), Some("tt14107334")),
+            Some("1")
+        );
+        assert_eq!(find("Total Recall", Some(2012), Some("tt1386703")), None);
+        assert_eq!(
+            find("Total Recall", Some(1990), Some("tt0100802")),
+            Some("2")
+        );
+    }
+
+    #[test]
+    fn requests_are_for_one_film() {
+        let film = |y, imdb| item("x", Kind::Movie, "The Running Man", y, imdb);
+        let asked = |year, imdb_id: Option<&str>| MediaRequest {
+            title: "The running man".into(),
+            year,
+            imdb_id: imdb_id.map(Into::into),
+            ..Default::default()
+        };
+        assert!(asks_for(&asked(Some(2025), None), &film(Some(2025), None)));
+        assert!(asks_for(
+            &asked(None, Some("tt14107334")),
+            &film(Some(2025), Some("tt14107334"))
+        ));
+        assert!(!asks_for(
+            &asked(Some(2025), Some("tt14107334")),
+            &film(Some(1987), Some("tt0093894"))
+        ));
+        assert!(!asks_for(&asked(Some(2025), None), &film(Some(1987), None)));
+        assert!(!asks_for(
+            &asked(None, None),
+            &film(Some(1987), Some("tt0093894"))
+        ));
     }
 }

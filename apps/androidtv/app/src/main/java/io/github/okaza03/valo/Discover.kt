@@ -43,23 +43,33 @@ sealed interface Films {
 
 /** Our titles, to find an addon's title among them. */
 class Ours(lib: Library) {
-    private val byImdb = HashMap<Pair<Kind, String>, String>()
-    private val byTitle = HashMap<Pair<Kind, String>, MutableList<Pair<Int?, String>>>()
+    private val byImdb = HashMap<Pair<Kind, String>, Pair<Int?, String>>()
+    private val byTitle = HashMap<Pair<Kind, String>, MutableList<Triple<Int?, Boolean, String>>>()
 
     init {
         for (i in lib.all) {
-            Addons.imdbId(i.imdbId)?.let { byImdb[i.kind to it] = i.id }
-            byTitle.getOrPut(i.kind to Addons.titleKey(i.title)) { ArrayList() } += i.year to i.id
+            val imdb = Addons.imdbId(i.imdbId)
+            imdb?.let { byImdb[i.kind to it] = i.year to i.id }
+            byTitle.getOrPut(i.kind to Addons.titleKey(i.title)) { ArrayList() } += Triple(i.year, imdb != null, i.id)
         }
     }
 
-    /** By IMDb id; else by title and year (a year apart is fine: release dates differ by country). */
+    /**
+     * By IMDb id; else by title and year (a year apart is fine: release dates differ by country).
+     * Years further apart are another film, even with the same IMDb id: the server may have
+     * looked up the wrong one of a remake.
+     */
     fun find(it: Item): String? {
-        Addons.imdbId(it.imdbId)?.let { id -> byImdb[it.kind to id]?.let { found -> return found } }
-        val same = byTitle[it.kind to Addons.titleKey(it.title)] ?: return null
         fun gap(y: Int?) = if (y != null && it.year != null) kotlin.math.abs(y - it.year) else null
+        val imdb = Addons.imdbId(it.imdbId)
+        val hit = imdb?.let { id -> byImdb[it.kind to id] }
+        if (hit != null && (gap(hit.first) ?: 0) <= 1) return hit.second
+        val same = byTitle[it.kind to Addons.titleKey(it.title)] ?: return null
         // the closest year wins, for remakes with the same name
-        return same.filter { (y, _) -> (gap(y) ?: 0) <= 1 }.minByOrNull { (y, _) -> gap(y) ?: 2 }?.second
+        return same.filter { (y, known, _) ->
+            // no year to go by: different IMDb ids are different films
+            gap(y)?.let { g -> g <= 1 } ?: !(known && imdb != null)
+        }.minByOrNull { (y, _, _) -> gap(y) ?: 2 }?.third
     }
 }
 
@@ -254,7 +264,8 @@ class Discover(private val scope: CoroutineScope, private val model: AppModel) {
         val matches = list.filter { r ->
             val rid = Addons.imdbId(r.imdbId)
             if (rid != null && imdb != null) rid == imdb
-            else r.title.equals(item.title, ignoreCase = true) && (r.year == null || r.year == item.year)
+            // the years have to agree, or a request for one film would stand for its remake too
+            else r.title.equals(item.title, ignoreCase = true) && r.year == item.year
         }.asReversed()
         return matches.firstOrNull { it.status != "denied" }
             ?: matches.firstOrNull { me != null && it.requestedBy.equals(me, ignoreCase = true) }
