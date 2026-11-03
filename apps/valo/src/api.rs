@@ -714,6 +714,13 @@ pub struct SyncReport {
     /// It carries on in the background; follow the log.
     pub running: bool,
     pub message: Option<String>,
+    /// Titles whose image files are gone, which the next movie or series
+    /// sync downloads again (`missing_images`, or `missing_art`).
+    #[serde(alias = "missing_art")]
+    pub missing_images: MissingImages,
+    /// Changes per kind (movies, series) when the server lists them apart.
+    #[serde(skip)]
+    split: Option<(usize, usize)>,
 
     // Other shapes servers answer with, folded into the above by `tidy`.
     #[serde(deserialize_with = "null_as_empty")]
@@ -732,6 +739,11 @@ impl SyncReport {
     /// Fold per-kind lists, `dry_run` and `started` into the documented
     /// fields; `accepted` is a `202` answer (started, not done).
     fn tidy(mut self, accepted: bool) -> Self {
+        let movies = self.added_movies.len() + self.removed_movies.len();
+        let series = self.added_series.len() + self.removed_series.len();
+        if movies + series > 0 {
+            self.split = Some((movies, series));
+        }
         self.added.append(&mut self.added_movies);
         self.added.append(&mut self.added_series);
         self.removed.append(&mut self.removed_movies);
@@ -744,6 +756,145 @@ impl SyncReport {
             self.applied = true;
         }
         self
+    }
+
+    /// Whether this folder scan found work for _Sync movies_ (`Kind::Movie`)
+    /// or _Sync series_: new or removed files of that kind, or missing
+    /// images (an episode's count for its series). A file the app can't
+    /// place counts for both, and so does a scan still running.
+    pub fn has_work(&self, kind: Kind) -> bool {
+        let m = &self.missing_images;
+        let images = match kind {
+            Kind::Movie => !m.movies.is_empty(),
+            Kind::Series => !m.series.is_empty() || !m.episodes.is_empty(),
+        };
+        if self.running || images {
+            return true;
+        }
+        if let Some((movies, series)) = self.split {
+            if self.added.len() + self.removed.len() == movies + series {
+                return if kind == Kind::Movie { movies } else { series } > 0;
+            }
+        }
+        self.added
+            .iter()
+            .chain(&self.removed)
+            .any(|p| path_kind(p).is_none_or(|k| k == kind))
+    }
+}
+
+/// Whether a media file's path is a movie's or an episode's: by its top
+/// folder (`/media/movies/…`, `Series/…`), else by an `S01E02` in it.
+fn path_kind(path: &str) -> Option<Kind> {
+    for seg in path.split(['/', '\\']) {
+        match seg.to_lowercase().as_str() {
+            "movies" | "movie" | "films" | "film" => return Some(Kind::Movie),
+            "series" | "tv" | "shows" | "tv shows" | "tvshows" => return Some(Kind::Series),
+            _ => {}
+        }
+    }
+    let b = path.to_lowercase().into_bytes();
+    let digits = |i: usize| b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+    (0..b.len())
+        .any(|i| {
+            let n = if b[i] == b's' { digits(i + 1) } else { 0 };
+            (1..=2).contains(&n) && b.get(i + 1 + n) == Some(&b'e') && digits(i + 2 + n) > 0
+        })
+        .then_some(Kind::Series)
+}
+
+/// Titles whose image files are missing, from a folder scan, as lines like
+/// "Arcane (poster, logo)". Servers send `{"movies": […], "series": […],
+/// "episodes": […]}` with strings or objects (`title`, `year`, `season`,
+/// `episode`, `missing`), or one list of objects with a `type`.
+#[derive(Clone, Debug, Default)]
+pub struct MissingImages {
+    pub movies: Vec<String>,
+    pub series: Vec<String>,
+    pub episodes: Vec<String>,
+}
+
+impl MissingImages {
+    pub fn len(&self) -> usize {
+        self.movies.len() + self.series.len() + self.episodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn group(&mut self, kind: &str) -> Option<&mut Vec<String>> {
+        match kind.to_lowercase().as_str() {
+            "movies" | "movie" => Some(&mut self.movies),
+            "series" | "show" | "shows" => Some(&mut self.series),
+            "episodes" | "episode" => Some(&mut self.episodes),
+            _ => None,
+        }
+    }
+
+    /// One entry as a line: a string as it is; an object as
+    /// "Title (Year) S01E02 (poster, logo)".
+    fn line(v: &Value) -> Option<String> {
+        if let Some(s) = v.as_str() {
+            return Some(s.to_owned());
+        }
+        let text = |k: &str| match v.get(k)? {
+            Value::String(s) if !s.is_empty() => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        };
+        let mut out = ["title", "name", "series", "path"]
+            .iter()
+            .find_map(|k| text(k))?;
+        if let Some(y) = text("year") {
+            out.push_str(&format!(" ({y})"));
+        }
+        let num = |k: &str| v.get(k).and_then(Value::as_u64);
+        match (num("season"), num("episode")) {
+            (Some(s), Some(e)) => out.push_str(&format!(" S{s:02}E{e:02}")),
+            (None, Some(e)) => out.push_str(&format!(" E{e:02}")),
+            _ => {}
+        }
+        let missing: Vec<&str> = ["missing", "images", "fields", "art"]
+            .iter()
+            .find_map(|k| v.get(*k)?.as_array())
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if !missing.is_empty() {
+            out.push_str(&format!(" ({})", missing.join(", ")));
+        }
+        Some(out)
+    }
+}
+
+impl<'de> Deserialize<'de> for MissingImages {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mut out = Self::default();
+        match Value::deserialize(d)? {
+            Value::Object(groups) => {
+                for (kind, list) in groups {
+                    let Some(dest) = out.group(&kind) else {
+                        continue;
+                    };
+                    let list = list.as_array().cloned().unwrap_or_default();
+                    dest.extend(list.iter().filter_map(Self::line));
+                }
+            }
+            Value::Array(list) => {
+                for v in &list {
+                    let kind = v
+                        .get("type")
+                        .or_else(|| v.get("kind"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("movie");
+                    if let (Some(line), Some(dest)) = (Self::line(v), out.group(kind)) {
+                        dest.push(line);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(out)
     }
 }
 
@@ -1812,6 +1963,13 @@ impl Client {
         self.admin_json(&format!("logs?after={after}"))
     }
 
+    /// Empty the server's log for every admin (`DELETE /api/admin/logs`);
+    /// `NoAdminApi` when the server can't.
+    pub fn admin_clear_logs(&self) -> Result<()> {
+        self.admin("DELETE", "logs").call().map_err(admin_missing)?;
+        Ok(())
+    }
+
     pub fn admin_analytics(&self, days: u32) -> Result<Analytics> {
         self.admin_json(&format!("analytics?days={days}"))
     }
@@ -2583,6 +2741,45 @@ mod tests {
             (l[0].message.as_str(), l[0].time),
             ("[00:39:39] folders", 0)
         );
+    }
+
+    #[test]
+    fn folder_scan_work_per_kind() {
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added": ["/mnt/disk1/media/series/Arcane/Season 1/Arcane.S01E01.mkv"],
+                "removed": [], "applied": false,
+                "missing_images": {"movies": [], "series": ["Arcane (poster, logo)"],
+                  "episodes": [{"title": "Arcane", "season": 1, "episode": 2, "missing": ["thumbnail"]}]}}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert_eq!(r.missing_images.series, ["Arcane (poster, logo)"]);
+        assert_eq!(r.missing_images.episodes, ["Arcane S01E02 (thumbnail)"]);
+        assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
+
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added": [], "missing_art": [{"type": "movie", "title": "Heat", "year": 1995, "missing": ["poster"]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(r.missing_images.movies, ["Heat (1995) (poster)"]);
+        assert!(r.has_work(Kind::Movie) && !r.has_work(Kind::Series));
+
+        // per-kind lists, and paths the app can't place
+        let r: SyncReport = serde_json::from_str(r#"{"added_movies": ["a.mkv"]}"#).unwrap();
+        let r = r.tidy(false);
+        assert!(r.has_work(Kind::Movie) && !r.has_work(Kind::Series));
+        let r: SyncReport = serde_json::from_str(r#"{"removed": ["/data/x.mkv"]}"#).unwrap();
+        assert!(r.has_work(Kind::Movie) && r.has_work(Kind::Series));
+        assert_eq!(
+            path_kind("Movies/Se7en (1995)/Se7en.mkv"),
+            Some(Kind::Movie)
+        );
+        assert_eq!(
+            path_kind("/d/The Office/The.Office.s02e10.mkv"),
+            Some(Kind::Series)
+        );
+        assert_eq!(path_kind("/d/Se7en (1995)/Se7en.mkv"), None);
+        assert!(!SyncReport::default().has_work(Kind::Movie));
     }
 
     #[test]

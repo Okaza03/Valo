@@ -20,8 +20,8 @@ const SYNCS: [(&str, &str, &str); 3] = [
     (
         "folders",
         "Sync folders",
-        "Scans /media directories and compares against the database. Lists new and \
-         removed files — no changes written.",
+        "Scans the media folders on every disk and compares them against the database. \
+         Lists new and removed files and missing images; writes nothing.",
     ),
     (
         "movies",
@@ -55,6 +55,13 @@ pub(in super::super) struct State {
     report: Option<(&'static str, SyncReport)>,
     sync_error: Option<String>,
     sync_missing: bool,
+    /// What the last folder scan found work for: (movies, series). None
+    /// until a scan, so Sync movies and Sync series wait for one.
+    work: Option<(bool, bool)>,
+    /// Emptying the server's log.
+    clear_task: Option<Task<Result<()>>>,
+    /// The server can't empty its log, so Clear only empties it here.
+    clear_missing: bool,
     /// Asking "write the folder sync's changes?".
     confirm_apply: bool,
     /// The health row that's open.
@@ -117,6 +124,23 @@ impl State {
             ctx.request_repaint_after(LOG_EVERY);
         }
 
+        if let Some(r) = self.clear_task.as_mut().and_then(|t| t.poll()) {
+            self.clear_task = None;
+            match r {
+                Ok(()) => {
+                    // the server may number its lines from 1 again, and an
+                    // answer asked for before the clear would bring old lines back
+                    self.logs.clear();
+                    self.log_after = 0;
+                    self.log_task = None;
+                    self.log_at = None;
+                }
+                Err(e) if e.is::<crate::api::Unauthorized>() => cx.login = true,
+                Err(e) if e.is::<crate::api::NoAdminApi>() => self.clear_missing = true,
+                Err(e) => self.log_error = Some(format!("Couldn't clear the log: {e:#}")),
+            }
+        }
+
         if let Some(r) = self.syncing.as_mut().and_then(|(_, t)| t.poll()) {
             let (what, _) = self.syncing.take().unwrap();
             match r {
@@ -125,6 +149,9 @@ impl State {
                     // so titles it reports removed shouldn't linger here
                     cx.reload_library = true;
                     self.sync_error = None;
+                    if what == "folders" {
+                        self.work = Some((rep.has_work(Kind::Movie), rep.has_work(Kind::Series)));
+                    }
                     self.report = Some((what, rep));
                 }
                 Err(e) if e.is::<crate::api::Unauthorized>() => cx.login = true,
@@ -202,7 +229,7 @@ impl State {
             |ui, (st, cx)| {
                 st.health(ui, cx);
                 ui.add_space(20.0);
-                st.log(ui);
+                st.log(ui, cx);
             },
             |ui, (st, cx)| {
                 st.api_status(ui);
@@ -436,12 +463,29 @@ impl State {
                             ui.add(egui::Spinner::new().size(16.0).color(MUTED()));
                         } else {
                             let label = if what == "folders" { "Compare" } else { "Run" };
+                            // movies and series only after a scan that found them work
+                            let (ready, why) = match (what, self.work) {
+                                ("folders", _) => (true, ""),
+                                (_, None) => (false, "Run Sync folders first"),
+                                ("movies", Some((m, _))) => (m, NOTHING_NEW),
+                                (_, Some((_, s))) => (s, NOTHING_NEW),
+                            };
+                            let free = running.is_none() && !self.sync_missing;
                             let b = ui
-                                .add_enabled_ui(running.is_none() && !self.sync_missing, |ui| {
-                                    small_button(ui, label)
-                                })
+                                .add_enabled_ui(free && ready, |ui| small_button(ui, label))
                                 .inner;
+                            let b = if free && !ready {
+                                b.on_disabled_hover_text(why)
+                            } else {
+                                b
+                            };
                             if b.clicked() {
+                                // until the next scan says there's more to do
+                                match (what, self.work.as_mut()) {
+                                    ("movies", Some(w)) => w.0 = false,
+                                    ("series", Some(w)) => w.1 = false,
+                                    _ => {}
+                                }
                                 let c = cx.client.clone();
                                 self.sync_error = None;
                                 self.syncing = Some((
@@ -517,6 +561,45 @@ impl State {
                             }
                         });
                 }
+                let missing = &rep.missing_images;
+                if !missing.is_empty() {
+                    egui::CollapsingHeader::new(format!("Missing images: {}", missing.len()))
+                        .id_salt(("sync", "missing images"))
+                        .default_open(missing.len() <= 10)
+                        .show(ui, |ui| {
+                            for (label, list) in [
+                                ("Movies", &missing.movies),
+                                ("Series", &missing.series),
+                                ("Episodes", &missing.episodes),
+                            ] {
+                                if list.is_empty() {
+                                    continue;
+                                }
+                                egui::CollapsingHeader::new(format!("{label}: {}", list.len()))
+                                    .id_salt(("missing images", label))
+                                    .default_open(list.len() <= 10)
+                                    .show(ui, |ui| {
+                                        for t in list.iter().take(200) {
+                                            ui.label(mono(t, 10.0).color(WARN()));
+                                        }
+                                        if list.len() > 200 {
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "and {} more",
+                                                    list.len() - 200
+                                                ))
+                                                .color(MUTED()),
+                                            );
+                                        }
+                                    });
+                            }
+                            ui.label(
+                                RichText::new("Sync movies or Sync series downloads these again.")
+                                    .small()
+                                    .color(MUTED()),
+                            );
+                        });
+                }
                 // a dry run with changes: offer to write them
                 let changes = rep.added.len() + rep.removed.len();
                 if *what == "folders" && !rep.applied && changes > 0 {
@@ -550,6 +633,7 @@ impl State {
                 if rep.added.is_empty()
                     && rep.removed.is_empty()
                     && rep.updated.is_empty()
+                    && missing.is_empty()
                     && !rep.running
                 {
                     ui.label(
@@ -570,7 +654,7 @@ impl State {
         }
     }
 
-    fn log(&mut self, ui: &mut Ui) {
+    fn log(&mut self, ui: &mut Ui, cx: &mut Cx) {
         ui.horizontal(|ui| {
             caps(ui, "Live log", TEAL());
             if !self.paused && !self.log_missing {
@@ -581,8 +665,22 @@ impl State {
                     if small_button(ui, if self.paused { "Resume" } else { "Pause" }).clicked() {
                         self.paused = !self.paused;
                     }
-                    if small_button(ui, "Clear").clicked() {
+                    let tip = if self.clear_missing {
+                        "Clears it here only: this server can't empty its log (DELETE /api/admin/logs)"
+                    } else {
+                        "Empties the server's log, for every admin"
+                    };
+                    let b = ui
+                        .add_enabled_ui(self.clear_task.is_none(), |ui| small_button(ui, "Clear"))
+                        .inner
+                        .on_hover_text(tip);
+                    if b.clicked() {
                         self.logs.clear();
+                        if !self.clear_missing {
+                            let c = cx.client.clone();
+                            self.clear_task =
+                                Some(Task::spawn(&cx.ctx, move || c.admin_clear_logs()));
+                        }
                     }
                 }
             });
@@ -656,6 +754,10 @@ impl State {
             });
     }
 }
+
+/// Why Sync movies or Sync series waits after a scan.
+const NOTHING_NEW: &str =
+    "The last scan found nothing new for this. Run Sync folders again after changing files";
 
 type Check = (&'static str, fn(&Item) -> bool);
 

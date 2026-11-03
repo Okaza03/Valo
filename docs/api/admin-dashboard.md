@@ -10,7 +10,7 @@ The first section of the app's Admin page. Some of it works with no admin endpoi
 | Library health    | `health` in `/api/admin/status`: your checks **replace** the app's, so it matches your website. Without them, the app checks for a missing poster, backdrop, overview, year and genres |
 | API status        | [`GET /api/admin/status`](#get-apiadminstatus) for response time, version, uptime and services |
 | Sync operations   | [`POST /api/admin/sync/<what>`](#post-apiadminsyncwhat), plus [`/api/admin/rescan`](admin.md#post-apiadminrescan) |
-| Live log          | [`GET /api/admin/logs`](#get-apiadminlogs)                                                |
+| Live log          | [`GET /api/admin/logs`](#get-apiadminlogs); its _Clear_ button uses [`DELETE /api/admin/logs`](#delete-apiadminlogs) |
 
 All of them follow the [rules for every admin request](admin.md#rules-for-every-request). `404`, `405` or `501` means "not set up", and the app links here.
 
@@ -52,7 +52,7 @@ The three sync buttons. `<what>` is one of:
 
 | `<what>`  | Button       | What the server does                                                                                           |
 | --------- | ------------ | -------------------------------------------------------------------------------------------------------------- |
-| `folders` | Sync folders | Scans the media directories and compares them against the database. Lists new and removed files; **writes nothing** |
+| `folders` | Sync folders | Scans the media directories on every disk and compares them against the database. Lists new and removed files and missing images; **writes nothing** |
 | `movies`  | Sync movies  | Adds new movie files to the database, removes movies whose files are gone, fetches details for the new ones    |
 | `series`  | Sync series  | The same for series: new shows, seasons and episodes in, missing ones out, details for the new ones            |
 
@@ -77,6 +77,32 @@ Answer:
 | `applied` | bool     | `false` for `folders` (a dry run); `true` when the database was changed. The app then reloads the library |
 | `running` | bool     | `true` when the work carries on in the background. The app points the admin at the live log      |
 | `message` | string   | One line shown above the lists                                                                   |
+| `missing_images` | object | `folders` only: titles whose image files are gone (see below). `missing_art` works too |
+
+### Missing images
+
+An image the database points at can go missing on disk: an admin deleted it, a disk was swapped, or the server couldn't write it (see [Several disks](#several-disks)). A `folders` scan should list these so the admin knows a sync is worth running:
+
+```json
+"missing_images": {
+  "movies":   ["Heat (1995) (poster)"],
+  "series":   ["Arcane (poster, logo)"],
+  "episodes": ["Arcane S01E03 (thumbnail)"]
+}
+```
+
+Each entry can also be an object, `{"title": "Arcane", "year": 2021, "season": 1, "episode": 3, "missing": ["thumbnail"]}`, which the app writes out the same way. A flat list of such objects with a `"type"` (`movie`, `series`, `episode`) works too. Leave out fields an admin locked. The app shows them as collapsible lists under the scan.
+
+For this to help, _Sync movies_ and _Sync series_ must download an image again **whenever its file is missing**, not only when the database column is empty: once a column holds `/media/image/…`, a check for "empty" never fires again.
+
+### Sync movies and Sync series wait for a scan
+
+_Sync movies_ and _Sync series_ start disabled (_Run Sync folders first_). After a `folders` scan, each one turns on only if the scan found something for it:
+
+- **Sync movies:** new or removed movie files, or movies with missing images.
+- **Sync series:** new or removed episode files, or series or episodes with missing images.
+
+The app tells a movie file from an episode by its folder (`movies`, `films`, `series`, `tv`, `shows` anywhere in the path) or an `S01E02` in the name; a file it can't place turns on both. To be exact, send `added_movies`, `added_series`, `removed_movies` and `removed_series` instead of `added` and `removed`. A scan answered with `"running": true` turns on both. Running a sync turns its button off again until the next scan.
 
 ### Applying the folder sync
 
@@ -85,6 +111,16 @@ After a `folders` dry run that found changes, the app offers _Apply these change
 The app waits up to 10 minutes for an answer. For anything slower, start the work, answer `{"running": true}` at once, and log progress to the [live log](#get-apiadminlogs).
 
 `/api/admin/rescan` from the [Admin API](admin.md#post-apiadminrescan) shows up as a fourth button, _Rescan library_.
+
+### Several disks
+
+A library can live on more than one disk, for example `/media/movies` on one and `/mnt/disk1/media/movies` on another. Everything that reads the folders must read all of them: `folders`, `movies` and `series` scan every root, and a series split over two disks (one season on each) stays one series. Answer with the full path, so the admin can see which disk a file is on.
+
+Three things to check when titles on the second disk won't play or keep losing their images:
+
+- **The server can write there.** PHP-FPM, for example, runs as `www-data`, so folders owned by another user with mode `755` make every image download fail with _Permission denied_. A share that creates the folders (Samba) needs the same `create mask`/`directory mask` settings on every disk.
+- **Every disk has a stream location.** With nginx and `X-Accel-Redirect`, each root needs its own `internal` location. One that's missing (or added without `nginx -s reload`) sends the redirect back to `index.php`, which loops and answers `500`.
+- **The scan reports what it couldn't do.** Log a line for every image it couldn't write, so it shows in the live log.
 
 ### Removing titles
 
@@ -175,6 +211,10 @@ GET /api/admin/logs?after=1041
 Return only lines with an `id` greater than `after`, oldest first. With `after=0` (the first request), return the last 200 or so. Keep a ring buffer of the last thousand lines in memory; that's enough.
 
 Don't log the log requests themselves, or the feed fills with its own polling. Never log passwords or tokens: admins see everything here.
+
+## `DELETE /api/admin/logs`
+
+The live log's _Clear_ button. Empty the log for everyone and answer `200` (any body). Keep the ids growing afterwards (delete the lines, don't reset a counter): other admins' apps still ask for lines after the last id they saw. The app itself starts again from `after=0` after a clear. Without this route (`404`/`405`), _Clear_ only empties the app's own view.
 
 ## Laravel example
 

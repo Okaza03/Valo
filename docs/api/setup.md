@@ -18,7 +18,10 @@ python3 server/valo_server.py ~/Videos --port 9000 --name "Living room"
 python3 server/valo_server.py ~/Videos --add-user user     # asks for a password, turns sign-in on
 python3 server/valo_server.py ~/Videos --add-user user --admin
 python3 server/valo_server.py ~/Videos --omdb-key KEY --bot-token SECRET
+python3 server/valo_server.py /mnt/disk1/media /mnt/disk2/media   # one library over two disks
 ```
+
+Give one folder per disk to spread the library over several. Each has its own `Movies/` and `Series/`. A series found on more than one disk (Season 1 on one, Season 2 on another) is listed once, and the syncs on the Dashboard compare every disk. Titles on the first disk keep their ids when you add a second one; the others get `@1/`, `@2/`… in front. Users, progress and the rest of `.valo/` stay in the first folder.
 
 `--add-user` creates the user and exits; `--admin` gives them the app's Admin page (users, dashboard, analytics, requests, library editing, collections). Start the server again afterwards. Users, tokens, each user's watch progress, requests and collections are stored in `~/Videos/.valo/`. Sign-in is on as soon as one user exists.
 

@@ -3,6 +3,7 @@
 
     python3 valo_server.py ~/Videos                  # open library, port 8080
     python3 valo_server.py ~/Videos --add-user user  # enable sign-in
+    python3 valo_server.py /mnt/disk1 /mnt/disk2     # a library over two disks
 
 Expected layout (anything else is ignored):
 
@@ -22,6 +23,11 @@ photo being a URL or an image file next to info.json), released, end_year,
 network, status, budget, revenue, score, score_source, reviews. A series can add
 "episodes": {"S01E01": {"title", "overview", "aired", "score"}}. A logo.png
 next to the video is used as title artwork.
+
+Give more than one folder to spread the library over several disks: each one
+has its own Movies/ and Series/, a series in more than one (Season 1 on one
+disk, Season 2 on another) shows up once, and the syncs compare every disk.
+Valo's own files (.valo/) stay in the first folder.
 
 With sign-in on, each user's watch progress is kept in .valo/progress.json
 and served from /api/progress, their My list and what they took off Continue
@@ -75,6 +81,11 @@ class Log:
             )
             self.next += 1
         print(f"[{level}] {message}", flush=True)
+
+    def clear(self):
+        """Forget every line; ids keep counting, so no app asks for the wrong ones."""
+        with self.lock:
+            self.lines.clear()
 
     def after(self, after):
         with self.lock:
@@ -208,7 +219,7 @@ def subtitles(lib, video, places, episode=None):
             label += f" {seen[label]}"
         out.append(
             {
-                "id": hashlib.sha1(str(f.relative_to(lib.root)).encode()).hexdigest()[:12],
+                "id": hashlib.sha1(lib.rel(f).encode()).hexdigest()[:12],
                 "language": lang,
                 "label": label,
                 "format": SUB_EXTS[f.suffix.lower()],
@@ -252,7 +263,7 @@ def file_info(lib, f):
         "container": f.suffix.lstrip(".").lower(),
         "size": f.stat().st_size,
         "name": f.name,
-        "path": "/" + str(f.parent.relative_to(lib.root)),
+        "path": "/" + lib.rel(f.parent),
     }
 
 
@@ -291,9 +302,24 @@ def write_info(path, fields):
     path.write_text(json.dumps(info, indent=2, ensure_ascii=False))
 
 
+def show_folders(lib, name=None):
+    """{series name: its folders}, over every disk; the folder whose info.json
+    holds the series' details (else the first disk's) comes first."""
+    shows = {}
+    for top in lib.category(SERIES_DIRS):
+        for show in sorted(d for d in top.iterdir() if d.is_dir()):
+            if name is None or show.name == name:
+                shows.setdefault(show.name, []).append(show)
+    for folders in shows.values():
+        folders.sort(key=lambda d: not (d / "info.json").is_file())
+    return shows
+
+
 class Library:
-    def __init__(self, root, collections=None):
-        self.root = root
+    def __init__(self, roots, collections=None):
+        # one folder per disk; the first one's names have no prefix, so a
+        # library that grows a second disk keeps its ids
+        self.roots = list(roots)
         self.collections = collections
         self.skipped = []  # video files the scan couldn't place
         self.cache, self.stamp, self.lock = None, 0, threading.Lock()
@@ -301,8 +327,30 @@ class Library:
         # since the cache rescans on its own every minute
         self.synced = None
 
+    def rel(self, path):
+        """A path's name in the library: relative to its disk, with "@1/" in
+        front on the second disk, "@2/" on the third, ..."""
+        hits = [(i, r) for i, r in enumerate(self.roots) if r == path or r in path.parents]
+        i, root = max(hits, key=lambda h: len(h[1].parts))  # the closest one, if they nest
+        rel = str(path.relative_to(root))
+        return rel if i == 0 else f"@{i}/{rel}"
+
+    def resolve(self, rel):
+        """The path a library name stands for, or None outside every disk."""
+        m = re.match(r"@(\d+)/(.*)", rel, re.S)
+        i, rest = (int(m.group(1)), m.group(2)) if m else (0, rel)
+        if i >= len(self.roots):
+            return None
+        root = self.roots[i]
+        f = (root / rest).resolve()
+        return f if root in f.parents else None
+
+    def show(self, rel):
+        """A library name for people: as it is with one disk, else the full path."""
+        return rel if len(self.roots) == 1 else str(self.resolve(rel) or rel)
+
     def url(self, kind, path):
-        return f"/{kind}/" + quote(str(path.relative_to(self.root)))
+        return f"/{kind}/" + quote(self.rel(path))
 
     def get(self, fresh=False):
         with self.lock:
@@ -314,27 +362,30 @@ class Library:
 
     def category(self, names):
         return [
-            d for d in self.root.iterdir() if d.is_dir() and d.name.lower() in names
+            d
+            for root in self.roots
+            if root.is_dir()
+            for d in sorted(root.iterdir())
+            if d.is_dir() and d.name.lower() in names
         ]
 
     def item_files(self, kind, id):
         """(info.json path, art folder, art name prefix or None) for a library id."""
         rel = id.split(":", 1)[1] if ":" in id else id
         if kind == "movies":
-            f = (self.root / rel).resolve()
-            if self.root not in f.parents or not f.is_file():
+            f = self.resolve(rel)
+            if not f or not f.is_file():
                 return None
-            top = next(d for d in self.root.iterdir() if d in f.parents)
+            top = next((d for d in self.category(MOVIE_DIRS) if d in f.parents), None)
+            if top is None:
+                return None
             own = f.parent != top
             info = f.with_suffix(".json")
             if own and not info.exists():
                 info = f.parent / "info.json"
             return info, f.parent, (None if own else f.stem)
-        for top in self.category(SERIES_DIRS):
-            show = top / rel
-            if show.is_dir() and show.parent == top:
-                return show / "info.json", show, None
-        return None
+        folders = show_folders(self, rel).get(rel)
+        return (folders[0] / "info.json", folders[0], None) if folders else None
 
     def scan(self):
         movies, series = [], []
@@ -364,7 +415,7 @@ class Library:
                 )
                 movies.append(
                     {
-                        "id": "m:" + str(f.relative_to(self.root)),
+                        "id": "m:" + self.rel(f),
                         "title": info.get("title", title),
                         "year": info.get("year", year),
                         "overview": info.get("overview", ""),
@@ -382,11 +433,12 @@ class Library:
                         **(extras(self, info, folder) if own else {}),
                     }
                 )
-        for top in self.category(SERIES_DIRS):
-            for show in sorted(d for d in top.iterdir() if d.is_dir()):
-                info = read_info(show / "info.json")
-                eps_info = info.get("episodes", {})
-                seasons = {}
+        for name, folders in sorted(show_folders(self).items()):
+            home = folders[0]
+            info = read_info(home / "info.json")
+            eps_info = info.get("episodes", {})
+            seasons = {}
+            for show in folders:
                 for f in sorted(show.rglob("*")):
                     if f.suffix.lower() not in VIDEO:
                         continue
@@ -407,13 +459,13 @@ class Library:
                         )
                         s, e = int(s), int(e)
                     else:
-                        self.skipped.append(str(f.relative_to(self.root)))
+                        self.skipped.append(self.rel(f))
                         continue
                     meta = eps_info.get(f"S{s:02d}E{e:02d}", {})
                     still = find_art(f.parent, [f.stem, f"{f.stem}-thumb"])
                     seasons.setdefault(s, []).append(
                         {
-                            "id": "e:" + str(f.relative_to(self.root)),
+                            "id": "e:" + self.rel(f),
                             "number": e,
                             "title": meta.get("title")
                             or clean(rest)[0]
@@ -433,37 +485,42 @@ class Library:
                             "file": file_info(self, f),
                         }
                     )
-                if not seasons:
-                    continue
-                title, year = clean(show.name)
-                poster = find_art(show, ["poster", "folder", "cover"])
-                backdrop = find_art(show, ["fanart", "backdrop", "background"])
-                thumb = find_art(show, ["thumb", "landscape"])
-                newest = max(
-                    p.stat().st_mtime
-                    for p in show.rglob("*")
-                    if p.suffix.lower() in VIDEO
-                )
-                series.append(
-                    {
-                        "id": "s:" + show.name,
-                        "title": info.get("title", title),
-                        "year": info.get("year", year),
-                        "overview": info.get("overview", ""),
-                        "genres": info.get("genres", []),
-                        "rating": info.get("rating"),
-                        "added": int(newest),
-                        "poster": poster and self.url("art", poster),
-                        "backdrop": backdrop and self.url("art", backdrop),
-                        "thumb": thumb and self.url("art", thumb),
-                        "seasons": [
-                            {"number": n, "episodes": eps}
-                            | ({"title": "Featurettes"} if n == FEATURETTES else {})
-                            for n, eps in sorted(seasons.items())
-                        ],
-                        **extras(self, info, show),
-                    }
-                )
+            if not seasons:
+                continue
+            title, year = clean(name)
+
+            def art(names):
+                return next(filter(None, (find_art(d, names) for d in folders)), None)
+
+            poster = art(["poster", "folder", "cover"])
+            backdrop = art(["fanart", "backdrop", "background"])
+            thumb = art(["thumb", "landscape"])
+            newest = max(
+                p.stat().st_mtime
+                for d in folders
+                for p in d.rglob("*")
+                if p.suffix.lower() in VIDEO
+            )
+            series.append(
+                {
+                    "id": "s:" + name,
+                    "title": info.get("title", title),
+                    "year": info.get("year", year),
+                    "overview": info.get("overview", ""),
+                    "genres": info.get("genres", []),
+                    "rating": info.get("rating"),
+                    "added": int(newest),
+                    "poster": poster and self.url("art", poster),
+                    "backdrop": backdrop and self.url("art", backdrop),
+                    "thumb": thumb and self.url("art", thumb),
+                    "seasons": [
+                        {"number": n, "episodes": eps}
+                        | ({"title": "Featurettes"} if n == FEATURETTES else {})
+                        for n, eps in sorted(seasons.items())
+                    ],
+                    **extras(self, info, home),
+                }
+            )
         if self.collections:
             self.collections.apply(movies, series)
         return {"movies": movies, "series": series}
@@ -487,6 +544,7 @@ class Library:
                 a, b = self.files(old, k), self.files(fresh, k)
                 added += sorted(b - a)
                 removed += sorted(a - b)
+            added, removed = [self.show(p) for p in added], [self.show(p) for p in removed]
             if what == "folders" and not apply:
                 return {"added": added, "removed": removed, "applied": False}
             if what == "folders":
@@ -1560,6 +1618,10 @@ def make_handler(
                 return self.send_json(r)
             if parts == ["logs"] and method == "GET":
                 return self.send_json(log.after(int(self.query().get("after") or 0)))
+            if parts == ["logs"] and method == "DELETE":
+                log.clear()
+                log(f"log cleared by {user}")
+                return self.send_json({})
             if parts == ["analytics"] and method == "GET":
                 days = max(1, min(int(self.query().get("days") or 30), 366))
                 return self.send_json(analytics(progress, lib, days))
@@ -1867,8 +1929,8 @@ def make_handler(
                 return self.send_json(lists.hidden(user))
             for prefix in ("/media/", "/art/"):
                 if path.startswith(prefix):
-                    f = (lib.root / unquote(path[len(prefix) :])).resolve()
-                    if lib.root in f.parents and f.is_file():
+                    f = lib.resolve(unquote(path[len(prefix) :]))
+                    if f and f.is_file():
                         return self.send_file(f, head)
             self.send_json({"error": "not found"}, 404)
 
@@ -1919,7 +1981,13 @@ def make_handler(
 
 def main():
     ap = argparse.ArgumentParser(description="Valo reference media server")
-    ap.add_argument("media", type=Path, help="folder containing Movies/ and Series/")
+    ap.add_argument(
+        "media",
+        type=Path,
+        nargs="+",
+        help="folder containing Movies/ and Series/; give one per disk to use several "
+        "(Valo's own data stays in the first)",
+    )
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--name", default=None, help="name shown in the app")
@@ -1940,8 +2008,13 @@ def main():
         help="secret the Discord bot sends to post requests (or VALO_BOT_TOKEN)",
     )
     a = ap.parse_args()
-    root = a.media.expanduser().resolve()
-    data = root / ".valo"
+    roots = [m.expanduser().resolve() for m in a.media]
+    for r in roots:
+        if not r.is_dir():
+            raise SystemExit(f"{r} isn't a folder")
+    if len(set(roots)) != len(roots):
+        raise SystemExit("the same folder is given twice")
+    data = roots[0] / ".valo"
     users = Users(data)
     if a.add_user:
         pw = getpass.getpass(f"Password for {a.add_user}: ")
@@ -1958,7 +2031,7 @@ def main():
     addons = Addons(data)
     layout = Layout(data)
     handler = make_handler(
-        Library(root, cols),
+        Library(roots, cols),
         users,
         progress,
         name,
@@ -1972,7 +2045,7 @@ def main():
     )
     srv = ThreadingHTTPServer((a.host, a.port), handler)
     log(
-        f"Serving {root} on http://{a.host}:{a.port}  (sign-in {'on' if users.users else 'off'})"
+        f"Serving {', '.join(map(str, roots))} on http://{a.host}:{a.port}  (sign-in {'on' if users.users else 'off'})"
     )
     try:
         srv.serve_forever()

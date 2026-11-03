@@ -62,6 +62,7 @@ In short, there are three options:
    python3 server/valo_server.py ~/Videos                 # Movies/ and Series/ inside
    python3 server/valo_server.py ~/Videos --add-user user # turn on sign-in
    python3 server/valo_server.py ~/Videos --add-user user --admin  # ...as an admin
+   python3 server/valo_server.py /mnt/disk1 /mnt/disk2    # a library over two disks
    ```
 2. **Your own app with the Valo API.** It needs four routes:
 
