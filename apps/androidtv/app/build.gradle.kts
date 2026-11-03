@@ -82,6 +82,7 @@ android {
 }
 
 dependencies {
+    val media3 = "1.11.1"
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.foundation:foundation")
@@ -92,12 +93,13 @@ dependencies {
     "phoneImplementation"("com.google.android.gms:play-services-cast-framework:23.0.0")
     "phoneImplementation"("androidx.mediarouter:mediarouter:1.8.1")
     "phoneImplementation"("androidx.appcompat:appcompat:1.7.1")
+    // surround sound as stereo, for Chromecasts that won't take it (StereoStream.kt)
+    "phoneImplementation"("androidx.media3:media3-muxer:$media3")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.19.1")
 
-    val media3 = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     // subtitle files are parsed and drawn by the app, so their timing can move
     implementation("androidx.media3:media3-extractor:$media3")

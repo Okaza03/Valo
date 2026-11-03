@@ -16,6 +16,7 @@ import java.net.URI
 class CastProxyTest {
     private val file = ByteArray(300_000) { (it % 251).toByte() }
     private val seenAuth = ArrayList<String?>()
+    private val seenEncoding = ArrayList<String?>()
     private lateinit var server: HttpServer
     private val proxy = CastProxy(OkHttpClient())
     private val upstream get() = "http://127.0.0.1:${server.address.port}/video.mkv"
@@ -25,6 +26,7 @@ class CastProxyTest {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/video.mkv") { x ->
             seenAuth += x.requestHeaders.getFirst("Authorization")
+            seenEncoding += x.requestHeaders.getFirst("Accept-Encoding")
             val range = x.requestHeaders.getFirst("Range")
             x.responseHeaders.add("Content-Type", "application/octet-stream")
             x.responseHeaders.add("Accept-Ranges", "bytes")
@@ -113,6 +115,64 @@ class CastProxyTest {
             assertEquals("WEBVTT\n", c.inputStream.readBytes().decodeToString())
         }
         assertEquals(1, made)
+    }
+
+    @Test
+    fun deliveryCountsTheVideoNotTheArtwork() {
+        assertEquals(Delivery(), proxy.delivery)
+        open(proxy.add(upstream, null)).inputStream.readBytes() // artwork: no type of ours
+        assertEquals(Delivery(), proxy.delivery)
+        open(proxy.add(upstream, null, "video/mp4"), range = "bytes=0-999").inputStream.readBytes()
+        assertEquals(Delivery(1, 206, 1000), proxy.delivery)
+        proxy.clear()
+        assertEquals(Delivery(), proxy.delivery)
+    }
+
+    @Test
+    fun asksForTheFileUncompressed() {
+        open(proxy.add(upstream, null)).inputStream.readBytes()
+        assertEquals("identity", seenEncoding.single())
+    }
+
+    @Test
+    fun subtitlesThatFailDontTakeTheProxyDown() {
+        val bad = proxy.add("text/vtt") { throw IllegalStateException("not a subtitle file") }
+        assertEquals(500, open(bad).responseCode)
+        assertEquals(200, open(proxy.add(upstream, null)).responseCode)
+    }
+
+    @Test
+    fun aServerThatsDownIsReported() {
+        server.stop(0)
+        assertEquals(502, open(proxy.add(upstream, null, "video/mp4")).responseCode)
+        assertEquals(502, proxy.delivery.status)
+    }
+
+    @Test
+    fun theMessageSaysWhatReallyHappened() {
+        assertTrue(castFailure(905, Delivery(), "mp4 / h264 / aac").startsWith("The TV never asked"))
+        assertTrue(castFailure(905, Delivery(2, 401, 0), null).startsWith("The server wouldn't give out the video (it answered 401)."))
+        assertTrue(castFailure(103, Delivery(3, 206, 5), null).startsWith("The connection"))
+        val codec = castFailure(102, Delivery(4, 206, 3_145_728), "mkv / hevc / dts")
+        assertTrue(codec.startsWith("The TV can't play this file (mkv / hevc / dts)."))
+        assertTrue(codec.endsWith("TV error 102 · 4 requests · server 206 · 3.0 MB sent"))
+        assertTrue(castFailure(104, Delivery(1, 200, 9), "mov / h264 / aac", 6, stereo = true).startsWith("The TV won't play this file (mov / h264 / aac), even after converting"))
+    }
+
+    @Test
+    fun aLiveStreamIsCountedAndEndsWithTheFile() {
+        val c = open(proxy.addLive("video/mp4") { it.write(ByteArray(5000)) })
+        assertEquals(200, c.responseCode)
+        assertEquals("none", c.getHeaderField("Accept-Ranges"))
+        assertEquals(5000, c.inputStream.readBytes().size)
+        assertEquals(Delivery(1, 200, 5000), proxy.delivery)
+    }
+
+    @Test
+    fun aLiveStreamThatFailsIsReported() {
+        val c = open(proxy.addLive("video/mp4") { throw IllegalStateException("no decoder") })
+        c.inputStream.readBytes()
+        assertEquals(500, proxy.delivery.status)
     }
 
     @Test

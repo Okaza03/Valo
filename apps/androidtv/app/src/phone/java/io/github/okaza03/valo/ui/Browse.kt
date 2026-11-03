@@ -378,7 +378,7 @@ fun StreamingScreen(model: AppModel, lib: Library) {
         ) {
             Column(Modifier.padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(pick, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = TEXT)
-                Text("What's on it now. Titles on the server play; the rest you can request.", color = MUTED, fontSize = 13.sp)
+                Text("Play what's already on your server, and request anything that isn't.", color = MUTED, fontSize = 13.sp)
                 // a new service starts at the top
                 Chips(pick, sources.map { Triple(it, it, null) }, {
                     st.service = it

@@ -807,7 +807,7 @@ impl Browse {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(
-                        "What's on it now. Titles on the server play; the rest you can request.",
+                        "Play what's already on your server, and request anything that isn't.",
                     )
                     .color(MUTED()),
                 );

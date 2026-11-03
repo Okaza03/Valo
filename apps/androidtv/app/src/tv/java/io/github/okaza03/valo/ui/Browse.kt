@@ -411,7 +411,7 @@ fun StreamingScreen(model: AppModel, lib: Library) {
                         Spacer(Modifier.height(4.dp))
                         Text(pick, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = TEXT)
                         Text(
-                            "What's on it now. Titles on the server play; the rest you can request.",
+                            "Play what's already on your server, and request anything that isn't.",
                             color = MUTED, fontSize = 15.sp,
                         )
                         Spacer(Modifier.height(14.dp))

@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
+import com.google.android.gms.cast.MediaError
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -31,10 +32,11 @@ import io.github.okaza03.valo.Subtitle
 import io.github.okaza03.valo.ui.ADDON_SUBS
 import io.github.okaza03.valo.ui.subLabel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.DatagramSocket
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -42,6 +44,9 @@ import java.util.concurrent.TimeUnit
 private const val ADDON_WAIT_MS = 3_000L
 /** Save the position this often, like the local player. */
 private const val SAVE_EVERY_MS = 5_000L
+/** The TV lost the connection, which says nothing about the file (MediaError.DetailedErrorCode). */
+private const val MEDIA_NETWORK = 103
+private const val SKIP_WAIT_MS = 500L
 
 /** What's on the TV. */
 data class Casting(val itemId: String, val episodeId: String?, val title: String, val sub: String?, val art: String?) {
@@ -50,6 +55,28 @@ data class Casting(val itemId: String, val episodeId: String?, val title: String
 
 /** A subtitle track the TV can show. */
 data class CastTrack(val id: Long, val label: String)
+
+/**
+ * The Chromecast takes these files as they are. Others it may seem to accept
+ * and then play without a picture, so they're rewrapped first (StereoStream).
+ */
+fun castsDirectly(url: String) = url.substringBefore('?').substringAfterLast('.').lowercase() in setOf("mp4", "m4v", "mov", "webm", "m3u8")
+
+/**
+ * The video has to become H.264 on this device: anything else it can't decode,
+ * and it would play the sound with no picture and no error. Cast's plain
+ * "Chromecast" model is the dongles without HEVC; TVs and newer ones have it.
+ */
+fun needsH264(codec: String?, model: String?): Boolean {
+    val c = codec?.lowercase() ?: return false
+    return when {
+        isH264(c) -> false
+        c.contains("265") || c.contains("hevc") -> model == "Chromecast"
+        else -> true
+    }
+}
+
+private fun isH264(codec: String) = codec.contains("264", true) || codec.contains("avc", true)
 
 /** What the container is called to the Chromecast. It goes by the file's extension. */
 fun castType(url: String): String = when (url.substringBefore('?').substringAfterLast('.').lowercase()) {
@@ -62,12 +89,37 @@ fun castType(url: String): String = when (url.substringBefore('?').substringAfte
 class Caster(private val app: Application, private val model: AppModel) {
     private val scope get() = model.viewModelScope
     // a paused TV stops reading for as long as it likes
-    private val proxy = CastProxy(Client.http.newBuilder().readTimeout(0, TimeUnit.SECONDS).build())
+    private val streamHttp = Client.http.newBuilder().readTimeout(0, TimeUnit.SECONDS).build()
+    private val proxy = CastProxy(streamHttp)
     private var context: CastContext? = null
     private var session: CastSession? = null
     private var lastSave = 0L
     /** The title that has finished, so a repeated status doesn't move on twice. */
     private var ended: String? = null
+    /** The TV stopped on an error, and its code when it gave one. */
+    private var failed = false
+    private var errorCode: Int? = null
+    /** How the title on the TV was started, to start it again another way. */
+    private class Start(val url: String, val auth: String?, var toH264: Boolean, val codec: String?, val meta: MediaMetadata, val tracks: List<MediaTrack>, val active: LongArray, val base: String, val durationMs: Long) {
+        /** Kept between seeks, so its index isn't fetched each time. */
+        var file: ServerFile? = null
+    }
+    private var started: Start? = null
+    /** The phone is converting the sound to stereo, from this far in. */
+    private var stereo = false
+    @Volatile private var offsetMs = 0L
+    /** TVs that turned surround sound down: they get stereo straight away from now on. */
+    private val stereoOnly = HashSet<String>()
+    /** TVs that turned down video that isn't H.264. */
+    private val onlyH264 = HashSet<String>()
+
+    /** The file on the TV: "mkv / hevc / eac3". */
+    private var fileInfo: String? = null
+    private var fileChannels: Int? = null
+    /** A seek waiting to see if another comes. */
+    private var skip: Job? = null
+    /** Where this title started, for the next try. */
+    private var startMs = 0L
 
     /** The Cast SDK runs here; it needs Google Play services. */
     var available by mutableStateOf(false)
@@ -111,11 +163,15 @@ class Caster(private val app: Application, private val model: AppModel) {
 
     private val callback = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() = status()
+        override fun onMediaError(e: MediaError) {
+            errorCode = e.detailedErrorCode
+            if (failed) report()
+        }
     }
 
     private val progress = RemoteMediaClient.ProgressListener { pos, dur ->
-        positionMs = pos
-        durationMs = dur
+        if (skip == null) positionMs = pos + offsetMs
+        durationMs = started?.durationMs?.takeIf { stereo && it > 0 } ?: dur
         val at = System.currentTimeMillis()
         if (playing && at - lastSave >= SAVE_EVERY_MS) {
             lastSave = at
@@ -177,13 +233,45 @@ class Caster(private val app: Application, private val model: AppModel) {
         playing = st?.playerState == MediaStatus.PLAYER_STATE_PLAYING
         buffering = st?.playerState == MediaStatus.PLAYER_STATE_BUFFERING || st?.playerState == MediaStatus.PLAYER_STATE_LOADING
         activeTrack = st?.activeTrackIds?.firstOrNull()
+        if (playing) error = null
         if (wasPlaying != playing && now != null) CastService.show(app)
         if (st?.playerState != MediaStatus.PLAYER_STATE_IDLE) return
         when (st.idleReason) {
             MediaStatus.IDLE_REASON_FINISHED -> finished()
-            MediaStatus.IDLE_REASON_ERROR -> error = "The TV can't play this file. Chromecasts play H.264 video " +
-                "(4K models HEVC too) with AAC or MP3 sound; other files can only be watched on this phone."
+            MediaStatus.IDLE_REASON_ERROR -> {
+                if (failed) return
+                failed = true
+                // it had the file and turned it down: often it's the sound, which we can change
+                val refused = proxy.delivery.requests > 0 && errorCode != MEDIA_NETWORK
+                val st = started
+                val from = positionMs.coerceAtLeast(startMs)
+                when {
+                    !refused || st == null -> report()
+                    !stereo -> {
+                        if ((fileChannels ?: 0) > 2) session?.castDevice?.deviceId?.let(stereoOnly::add)
+                        loadStereo(from)
+                    }
+                    // the sound wasn't it: the last thing left to change is the video
+                    !st.toH264 && st.codec?.let(::isH264) == false -> {
+                        session?.castDevice?.deviceId?.let(onlyH264::add)
+                        st.toH264 = true
+                        loadStereo(from)
+                    }
+                    else -> report()
+                }
+            }
         }
+    }
+
+    private fun report() {
+        val made = started?.file?.h264
+        val video = if (started?.toH264 == true) {
+            "video converted" + (made?.let { f -> " to ${f.initializationData.firstOrNull()?.let(::avcCodec)} ${f.width}x${f.height}" } ?: "")
+        } else {
+            "video copied"
+        }
+        error = castFailure(errorCode, proxy.delivery, fileInfo, fileChannels, stereo) +
+            " · ${session?.castDevice?.modelName ?: "unknown model"} · $video"
     }
 
     /** Remember where the TV is. */
@@ -211,12 +299,8 @@ class Caster(private val app: Application, private val model: AppModel) {
         }
     }
 
-    /** The address the TV reaches this phone at: whichever of ours is on its network. */
-    private fun host(s: CastSession): String? = runCatching {
-        val ip = s.castDevice?.inetAddress ?: return null
-        val local = DatagramSocket().use { it.connect(ip, 9); it.localAddress.hostAddress } ?: return null
-        if (':' in local) "[${local.substringBefore('%')}]" else local
-    }.getOrNull()
+    private fun tvAddress(s: CastSession) =
+        runCatching { s.castDevice?.let { if (it.hasIPv4Address()) it.ipAddress else it.inetAddress } }.getOrNull()
 
     /** The subtitles as tracks, each made into WebVTT when the TV first asks for it. */
     private fun subtitleTracks(subs: List<Subtitle>, c: Client, base: String): List<MediaTrack> = subs.mapIndexed { i, sub ->
@@ -245,11 +329,20 @@ class Caster(private val app: Application, private val model: AppModel) {
         save()
         ended = null
         error = null
+        failed = false
+        errorCode = null
+        val file = episode?.file ?: item.file
+        fileInfo = file?.let { listOfNotNull(it.container, it.videoCodec, it.audioCodec).joinToString(" / ").ifEmpty { null } }
+        fileChannels = file?.audioChannels
         positionMs = 0
         durationMs = 0
         tracks = emptyList()
         now = Casting(item.id, episode?.id, item.title, sub, art)
         val start = if (fromStart) 0.0 else model.entry(key)?.takeIf { it.inProgress }?.pos ?: 0.0
+        startMs = (start * 1000).toLong()
+        started = null
+        stereo = false
+        offsetMs = 0
         val lang = model.prefs.subtitleLanguage
         val files = episode?.subtitles ?: item.subtitles
         scope.launch {
@@ -260,9 +353,12 @@ class Caster(private val app: Application, private val model: AppModel) {
                     runCatching { Addons.subtitles(model.discover.addons, kind, id) }.getOrDefault(emptyList())
                 }
             }.orEmpty().sortedBy { if (it.language == lang) 0 else 1 }.take(ADDON_SUBS)
-            val ip = withContext(Dispatchers.IO) { host(s) }
+            // which of the phone's addresses the TV can reach it at
+            val tv = tvAddress(s)
+            val mine = withContext(Dispatchers.IO) { localAddresses(app) }
+            val ip = pickAddress(tv, mine)?.hostAddress
             if (ip == null) {
-                error = "Couldn't find this phone on the TV's network. Are they on the same Wi-Fi?"
+                error = "Couldn't find this phone's Wi-Fi address. Is it on the same Wi-Fi as the TV?\n\n${addressReport(tv, mine)}"
                 now = null
                 return@launch
             }
@@ -286,16 +382,51 @@ class Caster(private val app: Application, private val model: AppModel) {
             tracks = media.map { CastTrack(it.id, it.name.orEmpty()) }
             // the language picked last comes on by itself
             val on = subs.indexOfFirst { !it.forced && lang != null && it.language == lang }
+            val active = if (on >= 0) longArrayOf(on + 1L) else longArrayOf()
+            val known = ((episode?.duration ?: item.duration ?: 0.0) * 1000).toLong()
+            val toH264 = needsH264(file?.videoCodec, s.castDevice?.modelName) || s.castDevice?.deviceId in onlyH264 && file?.videoCodec?.let(::isH264) == false
+            started = Start(url, c.authFor(url), toH264, file?.videoCodec, meta, media, active, base, known)
             val req = MediaLoadRequestData.Builder()
                 .setMediaInfo(info)
                 .setAutoplay(true)
-                .setCurrentTime((start * 1000).toLong())
-                .apply { if (on >= 0) setActiveTrackIds(longArrayOf(on + 1L)) }
+                .setCurrentTime(startMs)
+                .apply { if (on >= 0) setActiveTrackIds(active) }
                 .build()
             val rc = s.remoteMediaClient ?: return@launch
+            if (toH264 || !castsDirectly(url) || (fileChannels ?: 0) > 2 && s.castDevice?.deviceId in stereoOnly) return@launch loadStereo(startMs)
             rc.load(req).setResultCallback { r ->
-                if (!r.status.isSuccess) error = "The TV couldn't start this title"
+                if (!r.status.isSuccess && !failed) error = "The TV couldn't start this title"
             }
+        }
+    }
+
+    /** Play the title with the phone turning its sound to stereo, from `ms` in. */
+    private fun loadStereo(ms: Long) {
+        val st = started ?: return
+        val rc = client ?: return
+        val file = st.file ?: ServerFile(streamHttp, st.url, st.auth).also { st.file = it }
+        stereo = true
+        failed = false
+        errorCode = null
+        proxy.restartDelivery()
+        val fromUs = ms * 1000
+        val path = proxy.addLive("video/mp4") { out ->
+            writeStereo(file, fromUs, out, st.toH264) { base -> offsetMs = base / 1000 }
+        }
+        // what it sees as the start: seeking is a new stream, not a jump in this one
+        offsetMs = ms
+        positionMs = ms
+        val info = MediaInfo.Builder(st.base + path)
+            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType("video/mp4")
+            .setMetadata(st.meta)
+            .setMediaTracks(st.tracks)
+            .build()
+        val req = MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true)
+            .apply { if (st.active.isNotEmpty()) setActiveTrackIds(st.active) }
+            .build()
+        rc.load(req).setResultCallback { r ->
+            if (!r.status.isSuccess && !failed) error = "The TV couldn't start this title"
         }
     }
 
@@ -305,6 +436,16 @@ class Caster(private val app: Application, private val model: AppModel) {
 
     fun seek(ms: Long) {
         positionMs = ms
+        if (stereo) {
+            // a stream can't jump, only start again: wait for the last of a few quick taps
+            skip?.cancel()
+            skip = scope.launch {
+                delay(SKIP_WAIT_MS)
+                skip = null
+                loadStereo(ms)
+            }
+            return
+        }
         client?.seek(MediaSeekOptions.Builder().setPosition(ms).build())
     }
 
