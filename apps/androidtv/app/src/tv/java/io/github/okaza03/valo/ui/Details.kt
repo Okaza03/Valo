@@ -117,6 +117,8 @@ fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
                     Spacer(Modifier.height(24.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         when {
+                            // still focusable, so the page opens on it and says why
+                            item.unavailable -> TvButton(MOVING_LABEL, {}, modifier = Modifier.focusRequester(play))
                             item.kind == Kind.Movie -> {
                                 val entry = model.entry(item.id)
                                 val e = entry?.takeIf { it.inProgress }

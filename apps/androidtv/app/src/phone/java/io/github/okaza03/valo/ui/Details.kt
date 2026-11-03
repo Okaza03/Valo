@@ -189,6 +189,10 @@ fun DetailsScreen(model: AppModel, lib: Library, item: Item) {
 @Composable
 private fun PlayButtons(model: AppModel, item: Item) {
     val wide = Modifier.fillMaxWidth()
+    if (item.unavailable) {
+        Btn(MOVING_LABEL, {}, wide, enabled = false)
+        return
+    }
     if (item.kind == Kind.Movie) {
         val entry = model.entry(item.id)
         val e = entry?.takeIf { it.inProgress }

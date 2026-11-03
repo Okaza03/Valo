@@ -14,6 +14,8 @@ Stream URLs must serve the raw video file and support range requests:
 
 Most frameworks do this for you: Laravel's `response()->file()`, Express's `res.sendFile()`, Flask's `send_file(..., conditional=True)`, nginx's `alias`/`root`.
 
+A title an admin marked as being moved answers `503` instead; see [Moving](admin-moving.md).
+
 The app transcodes nothing. It plays whatever FFmpeg can decode (H.264, HEVC, AV1, VP9, AAC, AC3, Opus, …) in any common container.
 
 ## Images

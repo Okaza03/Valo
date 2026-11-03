@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import io.github.okaza03.valo.ui.movingArt
 
 sealed interface Screen {
     data class Loading(val message: String) : Screen
@@ -190,7 +191,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ navigation
 
-    fun push(s: Screen) {
+    fun push(s0: Screen) {
+        val s = playable(s0)
         if (s == screen) return
         stack += s
     }
@@ -230,7 +232,16 @@ class AppModel(app: Application) : AndroidViewModel(app) {
 
     /** Swap the top screen, e.g. the player moving on to the next episode. */
     fun swap(s: Screen) {
-        stack[stack.lastIndex] = s
+        stack[stack.lastIndex] = playable(s)
+    }
+
+    /** A title an admin is moving can't play: its page, which says why, instead. */
+    private fun playable(s: Screen): Screen {
+        if (s !is Screen.Player) return s
+        val lib = library ?: return s
+        val ep = s.episodeId?.let { lib.findEpisode(it)?.third }
+        val moving = lib.find(s.itemId)?.unavailable == true || ep?.unavailable == true
+        return if (moving) Screen.Details(s.itemId) else s
     }
 
     // --------------------------------------------------------------- session
@@ -286,6 +297,7 @@ class AppModel(app: Application) : AndroidViewModel(app) {
                 loadedAt = System.currentTimeMillis()
                 noteArrivals(it)
                 library = discover.onLibrary(it)
+                movingArt = it.movingArt()
                 if (first) {
                     query = ""
                     replace(Screen.Home)

@@ -8,6 +8,7 @@ mod collections;
 mod dashboard;
 mod layout;
 mod library;
+mod moving;
 mod requests;
 mod users;
 
@@ -34,18 +35,20 @@ pub(super) enum Section {
     Requests,
     Library,
     Collections,
+    Moving,
     Addons,
     Layout,
     Users,
 }
 
 impl Section {
-    const ALL: [Section; 8] = [
+    const ALL: [Section; 9] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
         Section::Collections,
+        Section::Moving,
         Section::Addons,
         Section::Layout,
         Section::Users,
@@ -58,6 +61,7 @@ impl Section {
             Section::Requests => "Requests",
             Section::Library => "Library",
             Section::Collections => "Collections",
+            Section::Moving => "Moving",
             Section::Addons => "Addons",
             Section::Layout => "Layout",
             Section::Users => "Users",
@@ -79,6 +83,10 @@ impl Section {
             Section::Collections => {
                 "Group titles like the Batman films, so A to Z keeps them together, oldest first."
             }
+            Section::Moving => {
+                "Mark titles whose files you're moving between disks. Nobody can play them \
+                 until you untick them, and their posters say MOVING."
+            }
             Section::Addons => {
                 "Turn Stremio addons on for everyone: catalogs on the home page, missing \
                  details filled in, and subtitles in the player."
@@ -98,6 +106,7 @@ impl Section {
             Section::Requests => api::ADMIN_DOCS_REQUESTS,
             Section::Library => api::ADMIN_DOCS_LIBRARY,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
+            Section::Moving => api::ADMIN_DOCS_MOVING,
             Section::Addons => api::ADMIN_DOCS_ADDONS,
             Section::Layout => api::ADMIN_DOCS_LAYOUT,
             Section::Users => api::ADMIN_API_DOCS,
@@ -120,6 +129,7 @@ impl Section {
                 "the endpoints for editing titles (/api/admin/movies/…, /api/admin/series/…)"
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
+            Section::Moving => "the moving endpoints (GET and PUT /api/admin/moving)",
             Section::Addons => "the addon endpoints (/api/addons, /api/admin/addons)",
             Section::Layout => "the layout endpoints (/api/layout, /api/admin/layout)",
             Section::Users => "Valo's admin API (/api/admin/users)",
@@ -310,6 +320,7 @@ pub(super) struct AdminState {
     requests: requests::State,
     library: library::State,
     collections: collections::State,
+    moving: moving::State,
     addons: addons::State,
     layout: layout::State,
     users: users::State,
@@ -326,6 +337,7 @@ impl AdminState {
             Section::Requests => self.requests.refresh(),
             Section::Library => self.library.refresh(),
             Section::Collections => self.collections.refresh(),
+            Section::Moving => self.moving.refresh(),
             Section::Addons => self.addons.refresh(),
             Section::Layout => self.layout.refresh(),
             Section::Users => {}
@@ -359,6 +371,7 @@ impl AdminState {
             Section::Requests => self.requests.missing(),
             Section::Library => self.library.missing,
             Section::Collections => self.collections.missing(),
+            Section::Moving => self.moving.missing(),
             Section::Addons => self.addons.missing(),
             Section::Layout => self.layout.missing(),
             Section::Users => self.users.missing(),
@@ -593,6 +606,7 @@ impl Browse {
             Section::Requests => st.requests.ui(ui, &mut cx),
             Section::Library => st.library.ui(ui, &mut cx),
             Section::Collections => st.collections.ui(ui, &mut cx),
+            Section::Moving => st.moving.ui(ui, &mut cx),
             Section::Addons => st.addons.ui(ui, &mut cx),
             Section::Layout => st.layout.ui(ui, &mut cx),
             Section::Users => st.users.ui(ui, &mut cx),

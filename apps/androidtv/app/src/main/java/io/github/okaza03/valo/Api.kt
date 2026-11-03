@@ -82,6 +82,8 @@ data class Episode(
     val score: Float? = null,
     val file: FileInfo? = null,
     val subtitles: List<Subtitle> = emptyList(),
+    /** Being moved between disks (see [Item.unavailable]). */
+    val unavailable: Boolean = false,
 )
 
 @Serializable
@@ -147,6 +149,12 @@ data class Item(
     @SerialName("imdb_id") val imdbId: String? = null,
     /** A number or a string. */
     @SerialName("tmdb_id") val tmdbId: JsonElement? = null,
+    /**
+     * An admin is moving its files between disks: it can't be played until
+     * they're done, and its artwork carries a MOVING band. A series' episodes
+     * all follow it.
+     */
+    val unavailable: Boolean = false,
     @kotlinx.serialization.Transient val kind: Kind = Kind.Movie,
     /** From an addon (see Addons.kt): the addon's name, its trailer, … */
     @kotlinx.serialization.Transient val addon: AddonInfo? = null,
@@ -211,6 +219,14 @@ data class Library(val movies: List<Item> = emptyList(), val series: List<Item> 
         return null
     }
 
+    /** The artwork of everything being moved: posters, backdrops, thumbnails and stills. */
+    fun movingArt(): Set<String> = buildSet {
+        for (i in all) {
+            if (i.unavailable) listOfNotNull(i.poster, i.backdrop, i.thumb).forEach(::add)
+            i.episodes.filter { it.unavailable }.mapNotNullTo(this) { it.still }
+        }
+    }
+
     /** Genres ordered by how many titles have them. */
     fun genres(): List<String> = all.flatMap { it.genres }.groupingBy { it }.eachCount()
         .entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
@@ -237,6 +253,7 @@ data class Library(val movies: List<Item> = emptyList(), val series: List<Item> 
                             id = "episode:" + e.id.ifEmpty { es }, stream = es, still = fix(e.still),
                             aired = e.aired?.take(10),
                             subtitles = subs(e.subtitles),
+                            unavailable = e.unavailable || it.unavailable,
                         )
                     })
                 },

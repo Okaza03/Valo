@@ -38,7 +38,8 @@ between devices, and
 users, a dashboard with syncs and the live log, analytics from watch
 progress, requests (filled by a Discord bot, see docs/api/admin-requests.md),
 editing titles (written to info.json; IMDb lookups need --omdb-key),
-collections (.valo/collections.json), Stremio addons (.valo/addons.json):
+collections (.valo/collections.json), titles being moved between disks
+(.valo/moving.json: nobody can stream them meanwhile), Stremio addons (.valo/addons.json):
 their catalogs, metadata and subtitles show up for every user, and the home
 page's layout (.valo/layout.json): which rows everyone sees, in what order.
 """
@@ -316,10 +317,13 @@ def show_folders(lib, name=None):
 
 
 class Library:
-    def __init__(self, roots, collections=None):
+    def __init__(self, roots, collections=None, moving=None):
         # one folder per disk; the first one's names have no prefix, so a
         # library that grows a second disk keeps its ids
         self.roots = list(roots)
+        self.moving = moving
+        # the video files nobody may stream: those of titles being moved
+        self.blocked = set()
         self.collections = collections
         self.skipped = []  # video files the scan couldn't place
         self.cache, self.stamp, self.lock = None, 0, threading.Lock()
@@ -356,9 +360,34 @@ class Library:
         with self.lock:
             if fresh or self.cache is None or time.time() - self.stamp > 60:
                 self.cache, self.stamp = self.scan(), time.time()
+                self.mark(self.cache)
                 if self.synced is None:
                     self.synced = self.cache
             return self.cache
+
+    def mark(self, data):
+        """Flag the titles being moved ("unavailable", on every episode of a
+        series too) and note their files, which the server won't stream."""
+        blocked = set()
+        for m in data["movies"]:
+            m["unavailable"] = bool(self.moving and self.moving.has("movies", m["id"]))
+            if m["unavailable"]:
+                blocked.add(m["id"][2:])
+        for sr in data["series"]:
+            on = bool(self.moving and self.moving.has("series", sr["id"]))
+            sr["unavailable"] = on
+            for se in sr["seasons"]:
+                for e in se["episodes"]:
+                    e["unavailable"] = on
+                    if on:
+                        blocked.add(e["id"][2:])
+        self.blocked = blocked
+
+    def set_moving(self, kind, id, on):
+        self.moving.set(kind, id, on)
+        with self.lock:
+            if self.cache is not None:
+                self.mark(self.cache)
 
     def category(self, names):
         return [
@@ -552,6 +581,7 @@ class Library:
             else:
                 self.cache = dict(self.cache or fresh, **{what: fresh[what]})
                 self.synced = dict(old, **{what: fresh[what]})
+            self.mark(self.cache)
             self.stamp = time.time()
             return {"added": added, "removed": removed, "applied": True}
 
@@ -839,6 +869,29 @@ class Addons:
             self.items = [a for a in self.items if a["id"] != id]
             self.save()
             return len(self.items) < before
+
+
+class Moving:
+    """moving.json: {"movies": [ids], "series": [ids]}, the titles an admin
+    is moving between disks. Nobody can stream them until they're unmarked."""
+
+    def __init__(self, folder):
+        self.path = folder / "moving.json"
+        data = read_info(self.path)
+        self.data = {
+            k: {str(i) for i in data.get(k, []) if isinstance(i, str)} if isinstance(data, dict) else set()
+            for k in ("movies", "series")
+        }
+        self.lock = threading.Lock()
+
+    def has(self, kind, id):
+        return id in self.data[kind]
+
+    def set(self, kind, id, on):
+        with self.lock:
+            (self.data[kind].add if on else self.data[kind].discard)(id)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps({k: sorted(v) for k, v in self.data.items()}, indent=2))
 
 
 class Layout:
@@ -1367,6 +1420,11 @@ def library_ids(lib, kind):
     }
 
 
+def parts_of(path):
+    """/api/admin/a/b -> ["a", "b"]"""
+    return [unquote(p) for p in path.split("/")[3:]]
+
+
 def make_handler(
     lib, users, progress, name, cols, reqs, addons, layout, omdb_key=None, bot_token=None, lists=None
 ):
@@ -1552,7 +1610,7 @@ def make_handler(
                 return self.send_json({"error": "sign in required"}, 401)
             if not users.is_admin(user):
                 return self.send_json({"error": "admins only"}, 403)
-            if method == "PUT":
+            if method == "PUT" and parts_of(path) != ["moving"]:
                 req = {}  # an image upload
             else:
                 req = self.json_body(body)
@@ -1618,6 +1676,27 @@ def make_handler(
                 return self.send_json(r)
             if parts == ["logs"] and method == "GET":
                 return self.send_json(log.after(int(self.query().get("after") or 0)))
+            if parts == ["moving"] and method == "GET":
+                data = lib.get()
+                return self.send_json(
+                    {
+                        k: [
+                            {"id": i["id"], "title": i["title"], "year": i.get("year"), "moving": i.get("unavailable", False)}
+                            for i in data[k]
+                        ]
+                        for k in ("movies", "series")
+                    }
+                )
+            if parts == ["moving"] and method == "PUT":
+                kind = {"movie": "movies", "series": "series"}.get(req.get("type"))
+                data = lib.get()
+                item = kind and next((i for i in data[kind] if i["id"] == str(req.get("id"))), None)
+                if not item:
+                    return self.send_json({"error": "no such title"}, 404)
+                on = bool(req.get("moving"))
+                lib.set_moving(kind, item["id"], on)
+                log(("Marked as moving (unavailable): " if on else "Available again: ") + item["title"])
+                return self.send_json({})
             if parts == ["logs"] and method == "DELETE":
                 log.clear()
                 log(f"log cleared by {user}")
@@ -1930,6 +2009,10 @@ def make_handler(
             for prefix in ("/media/", "/art/"):
                 if path.startswith(prefix):
                     f = lib.resolve(unquote(path[len(prefix) :]))
+                    if f and f.is_file() and prefix == "/media/" and lib.rel(f) in lib.blocked:
+                        return self.send_json(
+                            {"error": "Unavailable — this title is being moved. Try again later."}, 503
+                        )
                     if f and f.is_file():
                         return self.send_file(f, head)
             self.send_json({"error": "not found"}, 404)
@@ -2030,8 +2113,9 @@ def main():
     reqs = Requests(data)
     addons = Addons(data)
     layout = Layout(data)
+    moving = Moving(data)
     handler = make_handler(
-        Library(roots, cols),
+        Library(roots, cols, moving),
         users,
         progress,
         name,

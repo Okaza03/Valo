@@ -47,6 +47,7 @@ Either list can be empty, missing or `null`. Any field can be left out or set to
 | `imdb_id`      | string                 |              | requests: "already in the library"              | `"tt1375666"`            |
 | `collection`   | string                 |              | A to Z: sorted under this name                  | `"Batman"`               |
 | `collection_index` | int                |              | its place in the collection, `0` first          | `2`                      |
+| `unavailable`  | bool                   |              | being moved between disks: can't play, MOVING band ([Moving](admin-moving.md)) | `true` |
 
 Titles with a `collection` sit together in A to Z under the collection's name, in `collection_index` order (oldest first when it's missing). So _Batman_ (1989), _Batman Returns_ and _The Batman_ end up side by side under B. `collection` may also be an object with a `name` (`{"name": "Batman"}`), as some databases store it. Admins can manage collections from the app; see [Collections](admin-collections.md).
 
@@ -85,6 +86,7 @@ Same as a movie, minus `stream`, `subtitles`, `director`, `budget`, `revenue` an
 | `score`    | number             |              | Out of 10                   |
 | `file`     | [File](#file-info) |              |                             |
 | `subtitles` | [Subtitle](#subtitle)[] |         | The player's subtitle menu  |
+| `unavailable` | bool             |              | Being moved; its series' flag counts too |
 
 ### Cast member
 

@@ -140,7 +140,7 @@ impl Browse {
         ui2.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let (label, restart) = self.play_label(item, progress);
-            if primary_button_icon(ui, Icon::Play, &label, true).clicked() {
+            if primary_button_icon(ui, Icon::Play, &label, !item.unavailable).clicked() {
                 click = Some(Click::Play(item.id.clone(), None, false));
             }
             if restart && skin != Skin::Netflix && secondary_button(ui, "Start over").clicked() {
@@ -307,7 +307,7 @@ impl Browse {
             ui2.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
                 let (label, _) = self.play_label(item, progress);
-                if primary_button_icon(ui, Icon::Play, &label, true).clicked() {
+                if primary_button_icon(ui, Icon::Play, &label, !item.unavailable).clicked() {
                     click = Some(Click::Play(item.id.clone(), None, false));
                 }
             });
@@ -405,7 +405,12 @@ impl Browse {
                             .expand(if hot { 4.0 } else { 0.0 });
                         match item.poster.as_ref().and_then(|u| images.get(u)) {
                             Some(t) => image_cover(p, pr, &t, 4, Color32::WHITE),
-                            None => crate::ui::placeholder(p, pr, &item.title, 4),
+                            None => {
+                                crate::ui::placeholder(p, pr, &item.title, 4);
+                                if item.unavailable {
+                                    crate::ui::moving_tape(p, pr, 4.0);
+                                }
+                            }
                         }
                         if self.watched(item) {
                             crate::ui::watched_sash(p, pr, 1.0);

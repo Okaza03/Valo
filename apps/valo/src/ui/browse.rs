@@ -119,6 +119,9 @@ struct NextUp<'a> {
     started: bool,
 }
 
+/// The play button's label while an admin moves a title's files.
+const MOVING_LABEL: &str = "Unavailable — being moved";
+
 struct Card {
     item: String,
     episode: Option<String>,
@@ -132,6 +135,8 @@ struct Card {
     progress: Option<f32>,
     /// A movie that's been watched: gets the "WATCHED" sash.
     watched: bool,
+    /// Being moved between disks: gets the "MOVING" band.
+    moving: bool,
     /// Has a "⋮" menu to remove it from Continue watching.
     removable: bool,
 }
@@ -388,6 +393,7 @@ impl Browse {
                         self.to_top = true;
                     }
                     self.note_arrivals(&lib);
+                    crate::ui::set_moving_art(lib.moving_art());
                     self.lib = Some(Arc::new(lib));
                     self.loaded_at = Some(Instant::now());
                 }
@@ -563,6 +569,10 @@ impl Browse {
             Some(Click::Bookmark(id)) => {
                 let key = self.key(&id);
                 self.watchlist.toggle(&key);
+            }
+            Some(Click::Play(id, ep, _)) if self.moving(&id, ep.as_deref()) => {
+                // its page says why it can't play
+                self.go(View::Details(id));
             }
             Some(Click::Play(id, ep, restart)) => {
                 if let Some(lib) = self.lib.clone() {
@@ -988,7 +998,7 @@ impl Browse {
         let ui = &mut child;
         ui.horizontal(|ui| {
             let (label, restart) = self.play_label(item, progress);
-            if crate::ui::primary_button_icon(ui, Icon::Play, &label, true).clicked() {
+            if crate::ui::primary_button_icon(ui, Icon::Play, &label, !item.unavailable).clicked() {
                 click = Some(Click::Play(item.id.clone(), None, false));
             }
             if restart && secondary_button(ui, "Start over").clicked() {
@@ -1078,6 +1088,9 @@ impl Browse {
     }
 
     fn play_label(&self, item: &Item, progress: &Progress) -> (String, bool) {
+        if item.unavailable {
+            return (MOVING_LABEL.into(), false);
+        }
         match item.kind {
             Kind::Movie => match progress.get(&self.key(&item.id)) {
                 Some(e) if e.in_progress() => (format!("Resume from {}", fmt_time(e.pos)), true),
@@ -1104,6 +1117,16 @@ impl Browse {
                 None => ("Play".into(), false),
             },
         }
+    }
+
+    /// An admin is moving this title's files (or the episode's), so it can't play.
+    fn moving(&self, id: &str, ep: Option<&str>) -> bool {
+        let Some(lib) = self.lib.as_ref() else {
+            return false;
+        };
+        let episode = ep.and_then(|e| lib.find_episode(e));
+        lib.find(id).is_some_and(|i| i.unavailable)
+            || episode.is_some_and(|(s, si, ei)| s.seasons[si].episodes[ei].unavailable)
     }
 
     /// The episode to continue with: the one being watched, or the one after the last finished.
@@ -1162,6 +1185,7 @@ impl Browse {
                         meta: Some(short_meta(m)),
                         progress: Some(e.fraction()),
                         watched: false,
+                        moving: m.unavailable,
                         removable: true,
                     });
                 }
@@ -1194,6 +1218,7 @@ impl Browse {
                         meta: Some(format!("{} · {code}", s.title)),
                         progress: Some(n.resume.map_or(0.0, Entry::fraction)),
                         watched: false,
+                        moving: s.unavailable || ep.unavailable,
                         removable: true,
                     });
                 }
@@ -1225,6 +1250,7 @@ impl Browse {
                     })
                     .flatten(),
                 watched: self.watched(i),
+                moving: i.unavailable,
                 removable: false,
             })
             .collect()
@@ -1844,7 +1870,13 @@ fn card_at(
     } else {
         c.art.as_ref()
     };
-    match url.and_then(|u| images.get(u)) {
+    let tex = url.and_then(|u| images.get(u));
+    // real artwork gets the band from image_cover; a stand-in gets it here
+    let stand_in = c.moving
+        && tex
+            .as_ref()
+            .is_none_or(|t| !crate::ui::is_moving_art(&t.name()));
+    match tex {
         Some(tex) => image_cover(p, art, &tex, rad, Color32::WHITE),
         None if url.is_some_and(|u| !images.failed(u)) => {
             p.rect_filled(art, rad, SURFACE());
@@ -1950,6 +1982,9 @@ fn card_at(
     // the bookmark takes the corner on hover
     if c.watched {
         crate::ui::watched_sash(p, art, 1.0 - t);
+    }
+    if stand_in {
+        crate::ui::moving_tape(p, art, rad as f32);
     }
     if t > 0.0 {
         if spec.hover_outline > 0.0 {

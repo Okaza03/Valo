@@ -8,8 +8,8 @@ use eframe::egui::{
 
 use super::super::{fmt_runtime, Browse, Click, SIDE};
 use super::{
-    clamp_text, fill_button, minutes, people_links, placed, play_colors, similar, tag, title_art,
-    years, GOLD,
+    clamp_text, fill_button, minutes, people_links, placed, play_colors, play_look, similar, tag,
+    title_art, years, GOLD,
 };
 use crate::api::{FileInfo, Item, Kind, Library};
 use crate::config::Progress;
@@ -185,7 +185,12 @@ impl Browse {
                     ui.spacing_mut().item_spacing.x = 12.0;
                     let (label, resume) = self.play_label(item, progress);
                     let (bh, min_w) = if split { (52.0, 220.0) } else { (46.0, 150.0) };
-                    if fill_button(ui, &label, Some(Icon::Play), play_colors(), bh, min_w, 0.0)
+                    let (icon, colors) = play_look(item, play_colors());
+                    if ui
+                        .add_enabled_ui(!item.unavailable, |ui| {
+                            fill_button(ui, &label, icon, colors, bh, min_w, 0.0)
+                        })
+                        .inner
                         .clicked()
                     {
                         click = Some(Click::Play(item.id.clone(), None, false));
@@ -494,16 +499,13 @@ impl Browse {
                 {
                     click = Some(Click::Play(item.id.clone(), None, true));
                 }
-                if fill_button(
-                    ui,
-                    &label,
-                    Some(Icon::Play),
-                    (PRIMARY(), INK()),
-                    38.0,
-                    0.0,
-                    19.0,
-                )
-                .clicked()
+                let (icon, colors) = play_look(item, (PRIMARY(), INK()));
+                if ui
+                    .add_enabled_ui(!item.unavailable, |ui| {
+                        fill_button(ui, &label, icon, colors, 38.0, 0.0, 19.0)
+                    })
+                    .inner
+                    .clicked()
                 {
                     click = Some(Click::Play(item.id.clone(), None, false));
                 }

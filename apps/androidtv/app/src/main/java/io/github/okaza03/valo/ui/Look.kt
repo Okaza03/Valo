@@ -9,7 +9,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.sqrt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,12 +93,54 @@ fun colorFor(s: String): Color {
     return Color(srgb(r + m), srgb(g + m), srgb(b + m))
 }
 
-/** A server image; a plain tile while it loads or when there is none. */
+/** The play button's label while an admin moves a title's files. */
+const val MOVING_LABEL = "Unavailable — being moved"
+
+/** The artwork of the titles being moved, from the latest library: it gets the MOVING band. */
+var movingArt by mutableStateOf(emptySet<String>())
+
+/**
+ * A server image; a plain tile while it loads or when there is none. The
+ * artwork of a title being moved carries the MOVING band, wherever it shows.
+ */
 @Composable
 fun Art(url: String?, modifier: Modifier = Modifier, scale: ContentScale = ContentScale.Crop) {
     Box(modifier.background(SURFACE)) {
         if (url != null) {
             AsyncImage(model = url, contentDescription = null, contentScale = scale, modifier = Modifier.fillMaxSize())
+            if (url in movingArt) MovingTape()
+        }
+    }
+}
+
+/**
+ * The red "MOVING" band across a title's artwork while an admin moves its
+ * files, as on the desktop app and the website: the art dims, and a band runs
+ * edge to edge at -30°, its text sized to the art (its width, or its height
+ * when it's wide).
+ */
+@Composable
+fun MovingTape(modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier.fillMaxSize().clipToBounds().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+        val s = minOf(maxWidth, maxHeight, 240.dp)
+        // long enough to cross the art corner to corner
+        val length = sqrt(maxWidth.value * maxWidth.value + maxHeight.value * maxHeight.value).dp + s * 2
+        val text = with(LocalDensity.current) { (s * 0.17f).toSp() }
+        Box(
+            Modifier.requiredWidth(length).requiredHeight(s * 0.26f).rotate(-30f)
+                .shadow(6.dp).background(Color(0xFFD4202B))
+                .drawBehind {
+                    val y = size.height * 0.11f
+                    val w = (s * 0.012f).toPx().coerceAtLeast(1f)
+                    drawLine(Color.White, Offset(0f, y), Offset(size.width, y), w)
+                    drawLine(Color.White, Offset(0f, size.height - y), Offset(size.width, size.height - y), w)
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicText(
+                "MOVING", style = TextStyle(color = Color.White, fontSize = text, fontWeight = FontWeight.Black),
+                maxLines = 1, softWrap = false,
+            )
         }
     }
 }

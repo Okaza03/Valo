@@ -137,6 +137,7 @@ fun BoxScope.Backdrop(url: String?) {
     if (url == null) return
     Box(Modifier.align(Alignment.TopEnd).fillMaxWidth(0.72f).fillMaxHeight(0.75f)) {
         AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        if (url in movingArt) MovingTape()
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to BG, 0.45f to BG.copy(alpha = 0.35f), 1f to Color.Transparent)))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to BG)))
     }

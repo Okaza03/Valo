@@ -735,7 +735,23 @@ pub fn gradient(p: &Painter, r: Rect, c: [Color32; 4]) {
     p.add(m);
 }
 
-/// Paint `tex` so it covers `r`, cropping whatever doesn't fit.
+thread_local! {
+    /// Artwork of the titles an admin is moving (see [`moving_tape`]).
+    static MOVING_ART: std::cell::RefCell<std::collections::HashSet<String>> =
+        Default::default();
+}
+
+/// The artwork URLs that get the MOVING band, from the latest library.
+pub fn set_moving_art(urls: std::collections::HashSet<String>) {
+    MOVING_ART.with(|m| *m.borrow_mut() = urls);
+}
+
+pub fn is_moving_art(url: &str) -> bool {
+    MOVING_ART.with(|m| m.borrow().contains(url))
+}
+
+/// Paint `tex` so it covers `r`, cropping whatever doesn't fit. Artwork of
+/// a title an admin is moving gets the MOVING band, wherever it shows.
 pub fn image_cover(p: &Painter, r: Rect, tex: &TextureHandle, radius: u8, tint: Color32) {
     let sz = tex.size_vec2();
     let (ta, ra) = (sz.x / sz.y, r.width() / r.height());
@@ -751,6 +767,9 @@ pub fn image_cover(p: &Painter, r: Rect, tex: &TextureHandle, radius: u8, tint: 
         p.image(tex.id(), r, uv, tint);
     } else {
         p.add(egui::epaint::RectShape::filled(r, radius, tint).with_texture(tex.id(), uv));
+    }
+    if is_moving_art(&tex.name()) {
+        moving_tape(p, r, radius as f32);
     }
 }
 
@@ -804,6 +823,54 @@ pub fn watched_sash(p: &Painter, art: Rect, fade: f32) {
             .with_angle(angle)
             .with_override_text_color(Color32::WHITE.gamma_multiply(fade)),
     );
+}
+
+/// The red "MOVING" band across a title's artwork while an admin moves its
+/// files: the art dims, and a band runs corner to corner at -30°, its text
+/// sized to the art so it fits a small card and a large poster alike.
+pub fn moving_tape(p: &Painter, art: Rect, rounding: f32) {
+    let p = p.with_clip_rect(art.intersect(p.clip_rect()));
+    p.rect_filled(art, rounding, Color32::from_black_alpha(130));
+    // a poster's width; on wide art (thumbnails, banners) its height, so
+    // the band stays a band, and no bigger than on a large poster
+    let w = art.width().min(art.height()).min(420.0);
+    let angle = -std::f32::consts::FRAC_PI_6;
+    let (sin, cos) = angle.sin_cos();
+    let (along, across) = (vec2(cos, sin), vec2(-sin, cos));
+    let c = art.center();
+    // long enough to cross any shape edge to edge
+    let (len, h) = (art.size().length() / 2.0 + w, w * 0.13);
+    let band = |off: egui::Vec2, half: f32| {
+        vec![
+            c + off - along * len - across * half,
+            c + off + along * len - across * half,
+            c + off + along * len + across * half,
+            c + off - along * len + across * half,
+        ]
+    };
+    let shadow = Color32::from_black_alpha(90);
+    p.add(egui::Shape::convex_polygon(
+        band(vec2(0.0, w * 0.02), h),
+        shadow,
+        Stroke::NONE,
+    ));
+    let red = Color32::from_rgb(0xd4, 0x20, 0x2b);
+    p.add(egui::Shape::convex_polygon(
+        band(egui::Vec2::ZERO, h),
+        red,
+        Stroke::NONE,
+    ));
+    // white lines along both edges
+    let line = Stroke::new((w * 0.012).max(1.0), Color32::WHITE);
+    for side in [-1.0, 1.0] {
+        let o = across * side * h * 0.78;
+        p.line_segment([c + o - along * len, c + o + along * len], line);
+    }
+    let font = FontId::new(w * 0.17, FontFamily::Name("black".into()));
+    let galley = p.layout_no_wrap("MOVING".to_owned(), font, Color32::WHITE);
+    let half = galley.size() / 2.0;
+    let pos = c - vec2(half.x * cos - half.y * sin, half.x * sin + half.y * cos);
+    p.add(egui::epaint::TextShape::new(pos, galley, Color32::WHITE).with_angle(angle));
 }
 
 pub fn spinner_text(ui: &mut Ui, text: &str) {

@@ -111,6 +111,11 @@ pub struct Item {
     pub collection: Option<String>,
     /// Its place in the collection, 0 first.
     pub collection_index: Option<u32>,
+    /// An admin marked it as being moved between disks: it can't be played
+    /// until they unmark it, and its poster carries a MOVING band. A
+    /// series' episodes all follow it.
+    #[serde(alias = "moving")]
+    pub unavailable: bool,
 
     // Admin lists and records only.
     /// Movies: it has at least one subtitle.
@@ -271,6 +276,9 @@ pub struct Episode {
     pub file: Option<FileInfo>,
     #[serde(deserialize_with = "null_as_empty")]
     pub subtitles: Vec<SubtitleTrack>,
+    /// Being moved (see [`Item::unavailable`]).
+    #[serde(alias = "moving")]
+    pub unavailable: bool,
 }
 
 /// A subtitle file for a movie or episode (`"subtitles"` in the library).
@@ -384,6 +392,7 @@ impl Item {
                     e.id = e.stream.clone();
                 }
                 e.id = format!("episode:{}", e.id);
+                e.unavailable |= self.unavailable;
             }
         }
     }
@@ -401,6 +410,28 @@ impl Library {
 
     pub fn find(&self, id: &str) -> Option<&Item> {
         self.all().find(|i| i.id == id)
+    }
+
+    /// The artwork URLs of everything an admin is moving: posters,
+    /// backdrops and thumbnails of the titles, and their episodes' stills.
+    pub fn moving_art(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for i in self.all() {
+            if i.unavailable {
+                out.extend(
+                    [&i.poster, &i.backdrop, &i.thumb]
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+            }
+            let eps = i.seasons.iter().flat_map(|s| &s.episodes);
+            out.extend(
+                eps.filter(|e| e.unavailable)
+                    .filter_map(|e| e.still.clone()),
+            );
+        }
+        out
     }
 
     /// Series, season index and episode index for an episode id.
@@ -1419,6 +1450,62 @@ pub const ADDON_REQUEST_URL: &str =
     "https://github.com/Okaza03/Valo/issues/new?template=addon_request.yml";
 pub const ADMIN_DOCS_LAYOUT: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-layout.md";
+pub const ADMIN_DOCS_MOVING: &str =
+    "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-moving.md";
+
+/// Our ids ("movie:12", "series:7") of the titles `GET /api/admin/moving`
+/// marks as being moved. It may list just those (`{"movies": [12], "series":
+/// [7]}`), or every title with a flag (`{"movies": [{"id": 12, "moving":
+/// true}, …]}`, `moving` or `unavailable`), or one list with a `type` each.
+fn moving_ids(v: &Value) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let mut add = |tag: &str, e: &Value| {
+        let (id, on) = match e {
+            Value::Object(o) => {
+                let on = ["moving", "unavailable"]
+                    .iter()
+                    .any(|k| o.get(*k).and_then(Value::as_bool) == Some(true));
+                (o.get("id").cloned().unwrap_or(Value::Null), on)
+            }
+            v => (v.clone(), true),
+        };
+        let id = match id {
+            Value::String(s) => s,
+            Value::Number(n) => n.to_string(),
+            _ => return,
+        };
+        if on {
+            out.insert(format!("{tag}:{id}"));
+        }
+    };
+    let tag = |k: &str| match k.to_lowercase().as_str() {
+        "movies" | "movie" => Some("movie"),
+        "series" | "show" | "shows" => Some("series"),
+        _ => None,
+    };
+    match v {
+        Value::Object(groups) => {
+            for (k, list) in groups {
+                if let (Some(t), Some(list)) = (tag(k), list.as_array()) {
+                    list.iter().for_each(|e| add(t, e));
+                }
+            }
+        }
+        Value::Array(list) => {
+            for e in list {
+                let kind = e
+                    .get("type")
+                    .or_else(|| e.get("kind"))
+                    .and_then(Value::as_str);
+                if let Some(t) = kind.and_then(tag) {
+                    add(t, e);
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
 
 /// The server is reachable but lacks a part of the Valo API, so only
 /// its admin can fix it. The UI offers a message the user can send them.
@@ -1961,6 +2048,30 @@ impl Client {
     /// Log lines after `after` (0: the latest ones).
     pub fn admin_logs(&self, after: u64) -> Result<Vec<LogLine>> {
         self.admin_json(&format!("logs?after={after}"))
+    }
+
+    /// Our ids of the titles marked as being moved (`GET /api/admin/moving`).
+    pub fn admin_moving(&self) -> Result<HashSet<String>> {
+        let v: Value = self.admin_json("moving")?;
+        Ok(moving_ids(&v))
+    }
+
+    /// Mark a movie or series as being moved, so nobody can play it, or
+    /// make it playable again (`PUT /api/admin/moving`).
+    pub fn admin_set_moving(&self, item: &Item, moving: bool) -> Result<()> {
+        let id = item.server_id();
+        let id = id
+            .parse::<u64>()
+            .map_or_else(|_| Value::from(id), Value::from);
+        let kind = if item.kind == Kind::Movie {
+            "movie"
+        } else {
+            "series"
+        };
+        self.admin("PUT", "moving")
+            .send_json(serde_json::json!({ "type": kind, "id": id, "moving": moving }))
+            .map_err(admin_missing)?;
+        Ok(())
     }
 
     /// Empty the server's log for every admin (`DELETE /api/admin/logs`);
@@ -2741,6 +2852,39 @@ mod tests {
             (l[0].message.as_str(), l[0].time),
             ("[00:39:39] folders", 0)
         );
+    }
+
+    #[test]
+    fn moving_shapes() {
+        let ids = |s: &str| {
+            let mut v: Vec<String> = moving_ids(&serde_json::from_str(s).unwrap())
+                .into_iter()
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            ids(r#"{"movies":[12,45],"series":[7]}"#),
+            ["movie:12", "movie:45", "series:7"]
+        );
+        assert_eq!(
+            ids(
+                r#"{"movies":[{"id":1,"title":"A","moving":false},{"id":"m:B.mkv","moving":true}],
+                   "series":[{"id":7,"unavailable":true}]}"#
+            ),
+            ["movie:m:B.mkv", "series:7"]
+        );
+        assert_eq!(
+            ids(r#"[{"type":"series","id":7,"moving":true},{"type":"movie","id":2}]"#),
+            ["series:7"]
+        );
+        let mut lib: Library = serde_json::from_str(
+            r#"{"series": [{"id": 7, "title": "S", "unavailable": true,
+                "seasons": [{"number": 1, "episodes": [{"id": 1, "number": 1, "stream": "/e/1"}]}]}]}"#,
+        )
+        .unwrap();
+        lib.finish("http://h");
+        assert!(lib.series[0].seasons[0].episodes[0].unavailable);
     }
 
     #[test]

@@ -41,6 +41,19 @@ pub(super) fn TEAL() -> Color32 {
 }
 
 /// The main button: gold for Valo, the style's own button color otherwise.
+/// A title's play button: `normal` colors and the play icon, or grey and
+/// none while an admin moves its files (the button is off then too).
+pub(super) fn play_look(
+    item: &Item,
+    normal: (Color32, Color32),
+) -> (Option<Icon>, (Color32, Color32)) {
+    if item.unavailable {
+        (None, (SURFACE_HI(), MUTED()))
+    } else {
+        (Some(Icon::Play), normal)
+    }
+}
+
 pub(super) fn play_colors() -> (Color32, Color32) {
     if crate::ui::theme::skin() == crate::ui::theme::Skin::Valo {
         (GOLD(), INK())
@@ -726,7 +739,12 @@ pub(super) fn poster_tile(
     let p = ui.painter();
     match item.poster.as_ref().and_then(|u| images.get(u)) {
         Some(t) => image_cover(p, art, &t, 6, Color32::WHITE),
-        None => placeholder(p, art, &item.title, 6),
+        None => {
+            placeholder(p, art, &item.title, 6);
+            if item.unavailable {
+                crate::ui::moving_tape(p, art, 6.0);
+            }
+        }
     }
     if watched {
         crate::ui::watched_sash(p, art, 1.0);
@@ -941,7 +959,12 @@ impl Browse {
                 let p = ui.painter_at(rect);
                 match item.poster.as_ref().and_then(|u| images.get(u)) {
                     Some(t) => image_cover(&p, pr, &t, 8, Color32::WHITE),
-                    None => placeholder(&p, pr, &item.title, 8),
+                    None => {
+                        placeholder(&p, pr, &item.title, 8);
+                        if item.unavailable {
+                            crate::ui::moving_tape(&p, pr, 8.0);
+                        }
+                    }
                 }
                 if let Some(d) = &item.director {
                     let top = Rect::from_min_size(pr.min, vec2(pr.width(), 70.0));
@@ -1088,7 +1111,12 @@ impl Browse {
                     } else {
                         label
                     };
-                    if fill_button(ui, &label, Some(Icon::Play), play_colors(), 42.0, 0.0, 0.0)
+                    let (icon, colors) = play_look(item, play_colors());
+                    if ui
+                        .add_enabled_ui(!item.unavailable, |ui| {
+                            fill_button(ui, &label, icon, colors, 42.0, 0.0, 0.0)
+                        })
+                        .inner
                         .clicked()
                     {
                         click = Some(Click::Play(item.id.clone(), None, false));
@@ -1399,16 +1427,13 @@ impl Browse {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
                     let (label, _) = self.play_label(item, progress);
-                    if fill_button(
-                        ui,
-                        &label,
-                        Some(Icon::Play),
-                        (PRIMARY(), INK()),
-                        44.0,
-                        168.0,
-                        4.0,
-                    )
-                    .clicked()
+                    let (icon, colors) = play_look(item, (PRIMARY(), INK()));
+                    if ui
+                        .add_enabled_ui(!item.unavailable, |ui| {
+                            fill_button(ui, &label, icon, colors, 44.0, 168.0, 4.0)
+                        })
+                        .inner
+                        .clicked()
                     {
                         click = Some(Click::Play(item.id.clone(), None, false));
                     }
