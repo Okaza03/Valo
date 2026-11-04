@@ -38,7 +38,7 @@ The Admin page's _Analytics_ section: plays per day, the most watched titles, an
 | `days`         | array  | One entry per day of the range, **oldest first**, days without plays included: `day` (`YYYY-MM-DD`), `plays`, `hours` |
 | `top`          | array  | Most played first, about 20 **of each kind**: `title`, `kind` (`"movie"`/`"series"`), `plays`, `hours`, optional `users` (how many different users played it). Episodes count toward their series. The app has Both / Movies / Series tabs, so send `kind` |
 | `top_rated`    | array  | Optional, best first: `title`, `kind`, `avg_rating` (out of 10), `rating_count`, from users' own ratings. Shown as _Top rated_ |
-| `users`        | array  | `name`, `plays`, `hours`, `last_active` (unix time), optional `movies` and `episodes` (how many of each they watched) |
+| `users`        | array  | **Everyone** who watched in the range, not only the top few: `name`, `plays`, `hours`, `last_active` (unix time), optional `movies` and `episodes` (how many of each they watched). The app adds the users who didn't watch from `GET /api/admin/users` |
 
 Every field is optional; missing numbers show as 0 and missing lists as empty.
 

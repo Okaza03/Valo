@@ -96,6 +96,11 @@ impl State {
         self.list.missing
     }
 
+    /// Everyone loaded so far.
+    pub fn list(&self) -> &[AdminUser] {
+        self.list.data.as_deref().unwrap_or_default()
+    }
+
     pub fn count(&self) -> Option<usize> {
         self.list.data.as_ref().map(Vec::len)
     }
@@ -124,6 +129,7 @@ impl State {
         }
         let busy = cx.busy;
         let mut req = None;
+        let mut open = None;
         let State {
             list,
             confirm_delete,
@@ -151,8 +157,10 @@ impl State {
                 };
                 for u in users {
                     let you = u.name.to_lowercase() == cx.me;
-                    if let Some(r) = user_row(ui, u, you, busy, confirm_delete, reset, rename) {
-                        *req = Some(r);
+                    match user_row(ui, u, you, busy, confirm_delete, reset, rename) {
+                        Some(Row::Req(r)) => *req = Some(r),
+                        Some(Row::Open) => open = Some(u.name.clone()),
+                        None => {}
                     }
                     ui.add_space(8.0);
                 }
@@ -193,6 +201,9 @@ impl State {
         if let Some(r) = req {
             cx.run(move |c| r.run(c));
         }
+        if open.is_some() {
+            cx.profile = open;
+        }
     }
 }
 
@@ -222,7 +233,15 @@ pub(super) fn danger_button(ui: &mut Ui, text: &str) -> egui::Response {
     ui.add(b)
 }
 
+/// What a click on a user's row asks for.
+enum Row {
+    Req(Req),
+    /// Their page under Analytics.
+    Open,
+}
+
 /// One user: name, role, last activity, and what can be done to them.
+/// Clicking their name opens their page.
 fn user_row(
     ui: &mut Ui,
     u: &AdminUser,
@@ -231,8 +250,9 @@ fn user_row(
     confirm_delete: &mut Option<String>,
     reset: &mut Option<(String, String)>,
     rename: &mut Option<(String, String)>,
-) -> Option<Req> {
+) -> Option<Row> {
     let mut req = None;
+    let mut open = false;
     egui::Frame::new()
         .stroke(Stroke::new(1.0f32, LINE()))
         .corner_radius(8)
@@ -240,26 +260,41 @@ fn user_row(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
-                chrome::avatar(ui.painter(), r.center(), 17.0, &u.name);
-                ui.add_space(6.0);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.horizontal(|ui| {
-                        let shown = u
-                            .display_name
-                            .as_deref()
-                            .filter(|d| !d.is_empty() && *d != u.name);
-                        ui.label(bold(shown.unwrap_or(&u.name), 15.0));
-                        if shown.is_some() {
-                            ui.label(mono(format!("@{}", u.name), 10.0).color(MUTED()));
-                        }
-                        if you {
-                            ui.label(mono("YOU", 10.0).color(TEAL()));
-                        }
+                let who = ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+                    chrome::avatar(ui.painter(), r.center(), 17.0, &u.name);
+                    ui.add_space(6.0);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.horizontal(|ui| {
+                            let shown = u
+                                .display_name
+                                .as_deref()
+                                .filter(|d| !d.is_empty() && *d != u.name);
+                            ui.label(bold(shown.unwrap_or(&u.name), 15.0));
+                            if shown.is_some() {
+                                ui.label(mono(format!("@{}", u.name), 10.0).color(MUTED()));
+                            }
+                            if you {
+                                ui.label(mono("YOU", 10.0).color(TEAL()));
+                            }
+                        });
+                        ui.label(mono(user_line(u), 10.5).color(MUTED()));
                     });
-                    ui.label(mono(user_line(u), 10.5).color(MUTED()));
                 });
+                let who = who
+                    .response
+                    .interact(Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(format!("Open {}'s page", u.name));
+                if who.hovered() {
+                    ui.painter().rect_filled(
+                        who.rect.expand(4.0),
+                        6.0,
+                        Color32::from_white_alpha(8),
+                    );
+                }
+                open |= who.clicked();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_enabled_ui(!busy, |ui| {
                         let more =
@@ -403,5 +438,5 @@ fn user_row(
                 }
             }
         });
-    req
+    req.map(Row::Req).or(open.then_some(Row::Open))
 }

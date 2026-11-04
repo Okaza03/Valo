@@ -19,7 +19,7 @@ use eframe::egui::{self, vec2, Align2, Color32, FontId, RichText, Sense, Ui};
 
 use super::details::{caps, padded, panel, TEAL};
 use super::{Browse, Click};
-use crate::api::{self, Client, Item, Kind, Library, NoAdminApi, Unauthorized};
+use crate::api::{self, AdminUser, Client, Item, Kind, Library, NoAdminApi, Unauthorized};
 use crate::images::Images;
 use crate::ui::chrome;
 use crate::ui::{
@@ -264,6 +264,8 @@ pub(super) struct Cx<'a> {
     pub me: String,
     /// How many users the server has, once known.
     pub users: Option<usize>,
+    /// Everyone who can sign in, once loaded.
+    pub accounts: &'a [AdminUser],
     /// Every title as the server's admin sees it, or the library's when
     /// the server can't list them (`catalog` false).
     pub movies: &'a [Item],
@@ -278,6 +280,8 @@ pub(super) struct Cx<'a> {
     pub click: Option<Click>,
     /// Scroll the page back to the top.
     pub to_top: bool,
+    /// Open this user's page under Analytics.
+    pub profile: Option<String>,
 }
 
 impl<'a> Cx<'a> {
@@ -577,6 +581,7 @@ impl Browse {
         ui.add_space(10.0);
 
         let users = st.users.count();
+        let accounts = st.users.list().to_vec();
         let catalog = st.has_catalog();
         let (movies, series) = match (&st.catalog[0].data, &st.catalog[1].data) {
             (Some(m), Some(s)) => (m.as_slice(), s.as_slice()),
@@ -590,6 +595,7 @@ impl Browse {
             busy,
             me: self.user.clone().unwrap_or_default().to_lowercase(),
             users,
+            accounts: &accounts,
             movies,
             series,
             catalog,
@@ -599,6 +605,7 @@ impl Browse {
             reload_library: false,
             click: None,
             to_top: false,
+            profile: None,
         };
         match section {
             Section::Dashboard => st.dashboard.ui(ui, &mut cx),
@@ -618,6 +625,7 @@ impl Browse {
             reload_library,
             click,
             to_top,
+            profile,
             ..
         } = cx;
         self.to_top |= to_top;
@@ -646,6 +654,13 @@ impl Browse {
                     st.library.select(i);
                 }
             }
+        }
+        if let Some(name) = profile {
+            st.section = Section::Analytics;
+            st.notice = None;
+            st.notice_docs = false;
+            st.analytics.open(name, section);
+            self.to_top = true;
         }
         if refresh {
             st.notice = None;

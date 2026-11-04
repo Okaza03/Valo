@@ -11,14 +11,14 @@ use eframe::egui::{
 use std::hash::{BuildHasher, RandomState};
 
 use super::{Browse, Click, Probe, Tab, View, GAP, SIDE};
-use crate::api::{featurette, CastMember, Episode, FileInfo, Item, Library};
+use crate::api::{featurette, CastMember, Episode, FileInfo, Item, Library, Watcher};
 use crate::config::Progress;
 use crate::images::Images;
 use crate::ui::chrome::{self, Icon};
 use crate::ui::theme::Details;
 use crate::ui::{black_font, bold, gradient, image_cover, mono, placeholder};
 use crate::ui::{BG, INK, LINE, LINE_HI, MUTED, PRIMARY, SURFACE_HI, TEXT};
-use crate::util::{color_for, fmt_runtime, fmt_time, percent_decode};
+use crate::util::{color_for, fmt_runtime, fmt_time, percent_decode, Task};
 
 /// Ratings, quality and the main button on Valo's details pages.
 #[allow(non_snake_case)]
@@ -853,7 +853,119 @@ fn all_episodes(s: &Item) -> Vec<(usize, usize)> {
 
 // ------------------------------------------------------------- pages
 
+/// Who else watched a movie or series, as last loaded from the server.
+#[derive(Default)]
+pub(super) struct Watchers {
+    list: Vec<Watcher>,
+    task: Option<Task<anyhow::Result<Vec<Watcher>>>>,
+    at: Option<std::time::Instant>,
+}
+
+/// "Jo watched this", "Jo and Sam …", "Jo, Sam and 3 others …": the two
+/// latest by name.
+fn watchers_text(list: &[Watcher]) -> String {
+    let who = match list {
+        [] => return String::new(),
+        [a] => a.shown().to_owned(),
+        [a, b] => format!("{} and {}", a.shown(), b.shown()),
+        [a, b, rest @ ..] => format!(
+            "{}, {} and {} other{}",
+            a.shown(),
+            b.shown(),
+            rest.len(),
+            if rest.len() == 1 { "" } else { "s" }
+        ),
+    };
+    format!("{who} watched this")
+}
+
+/// Up to three overlapping faces (a "+N" one for the rest) and the two
+/// latest names; hover for everyone.
+fn watchers_row(ui: &mut Ui, list: &[Watcher]) {
+    if list.is_empty() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        let r = 14.0;
+        let step = r * 1.35;
+        let faces = list.len().min(3);
+        let n = faces + usize::from(list.len() > 3);
+        let w = 2.0 * (r + 2.0) + step * (n - 1) as f32;
+        let (rect, resp) = ui.allocate_exact_size(vec2(w, 2.0 * (r + 2.0)), Sense::hover());
+        let p = ui.painter();
+        // right to left, so the latest sits on top
+        for i in (0..n).rev() {
+            let c = pos2(rect.left() + r + 2.0 + step * i as f32, rect.center().y);
+            p.circle_filled(c, r + 2.0, BG());
+            match list.get(i).filter(|_| i < faces) {
+                Some(u) => {
+                    p.circle_filled(c, r, color_for(&u.name));
+                    let initial = u.shown().chars().next().unwrap_or('?');
+                    p.text(
+                        c,
+                        Align2::CENTER_CENTER,
+                        initial.to_uppercase().to_string(),
+                        black_font(r * 1.0),
+                        Color32::WHITE,
+                    );
+                }
+                None => {
+                    p.circle_filled(c, r, SURFACE_HI());
+                    p.text(
+                        c,
+                        Align2::CENTER_CENTER,
+                        format!("+{}", list.len() - faces),
+                        FontId::new(r * 0.8, FontFamily::Name("bold".into())),
+                        TEXT(),
+                    );
+                }
+            }
+        }
+        let tip: Vec<String> = list
+            .iter()
+            .map(|u| {
+                let what = if u.completed { "watched" } else { "started" };
+                if u.updated > 0 {
+                    format!("{}  ·  {what} {}", u.shown(), super::people::ago(u.updated))
+                } else {
+                    u.shown().to_owned()
+                }
+            })
+            .collect();
+        ui.add_space(6.0);
+        let text = ui.label(
+            RichText::new(watchers_text(list))
+                .size(13.5)
+                .color(TEXT().gamma_multiply(0.85)),
+        );
+        resp.union(text).on_hover_text(tip.join("\n"));
+    });
+}
+
 impl Browse {
+    /// Who else watched this movie or series: loaded when its page opens,
+    /// then again every minute while it's open.
+    fn watchers_of(&mut self, ctx: &egui::Context, item: &Item) -> Vec<Watcher> {
+        // the library's titles only, not an addon's
+        if !item.id.starts_with("movie:") && !item.id.starts_with("series:") {
+            return Vec::new();
+        }
+        let client = self.client.clone();
+        let w = self.watchers.entry(item.id.clone()).or_default();
+        if let Some(r) = w.task.as_mut().and_then(|t| t.poll()) {
+            w.task = None;
+            w.at = Some(std::time::Instant::now());
+            if let Ok(list) = r {
+                w.list = list;
+            }
+        }
+        if w.task.is_none() && w.at.is_none_or(|t| t.elapsed().as_secs() >= 60) {
+            let (kind, id) = (item.kind, item.server_id().to_owned());
+            w.task = Some(Task::spawn(ctx, move || client.watchers(kind, &id)));
+        }
+        w.list.clone()
+    }
+
     /// File info for `stream`: what the server sent, completed by probing the
     /// stream once in the background (cached), plus the probed duration.
     fn file_for(
@@ -918,8 +1030,17 @@ impl Browse {
         if details == Details::Watch {
             return self.watch_page(ui, lib, item, images, progress, file.as_ref(), runtime);
         }
+        let watchers = self.watchers_of(ui.ctx(), item);
         if details != Details::Valo {
-            click = self.styled_header(ui, item, images, progress, file.as_ref(), runtime);
+            click = self.styled_header(
+                ui,
+                item,
+                images,
+                progress,
+                file.as_ref(),
+                runtime,
+                &watchers,
+            );
         } else {
             let w = ui.available_width();
             let h = (w * 0.5).clamp(520.0, 700.0);
@@ -1149,6 +1270,10 @@ impl Browse {
                     ui.painter().circle_filled(r.center(), 3.5, GOLD());
                     ui.label(RichText::new(status).size(12.5).color(GOLD()));
                 });
+                if !watchers.is_empty() {
+                    ui.add_space(16.0);
+                    watchers_row(ui, &watchers);
+                }
             });
         }
 
@@ -1382,8 +1507,9 @@ impl Browse {
         if details == Details::Watch {
             return self.watch_page(ui, lib, item, images, progress, None, None);
         }
+        let watchers = self.watchers_of(ui.ctx(), item);
         if details != Details::Valo {
-            click = self.styled_header(ui, item, images, progress, None, None);
+            click = self.styled_header(ui, item, images, progress, None, None, &watchers);
         } else {
             let w = ui.available_width();
             let h = (w * 0.42).clamp(460.0, 640.0);
@@ -1454,6 +1580,10 @@ impl Browse {
                         }
                     }
                 });
+                if !watchers.is_empty() {
+                    ui.add_space(14.0);
+                    watchers_row(ui, &watchers);
+                }
                 if !item.creators.is_empty() {
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
@@ -2174,6 +2304,26 @@ impl Browse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_who_watched() {
+        let w = |n: &str| Watcher {
+            name: n.into(),
+            ..Default::default()
+        };
+        let mut list = vec![w("jo")];
+        assert_eq!(watchers_text(&list), "jo watched this");
+        list[0].display_name = Some("Jo Ann".into());
+        list.push(w("sam"));
+        assert_eq!(watchers_text(&list), "Jo Ann and sam watched this");
+        list.push(w("kim"));
+        assert_eq!(watchers_text(&list), "Jo Ann, sam and 1 other watched this");
+        list.push(w("lee"));
+        assert_eq!(
+            watchers_text(&list),
+            "Jo Ann, sam and 2 others watched this"
+        );
+    }
 
     #[test]
     fn formats() {

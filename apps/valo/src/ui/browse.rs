@@ -176,6 +176,8 @@ pub struct Browse {
     shuffle: RandomState,
     /// By stream URL.
     probes: HashMap<String, Probe>,
+    /// Who else watched each movie, by id.
+    watchers: HashMap<String, details::Watchers>,
     /// Re-checking a remembered session's admin rights (`GET /api/me`).
     me: Option<Task<Option<Me>>>,
     /// Asking for a new password, when an admin wants one.
@@ -230,6 +232,7 @@ impl Browse {
             hidden: Hidden::load(),
             shuffle: RandomState::new(),
             probes: HashMap::new(),
+            watchers: HashMap::new(),
             me: None,
             password: password::Prompt::default(),
             admin: admin::AdminState::default(),

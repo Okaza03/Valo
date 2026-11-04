@@ -480,6 +480,31 @@ where
     Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
 }
 
+/// Someone else who played a movie or a series (`GET /api/watchers/…`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Watcher {
+    pub name: String,
+    pub display_name: Option<String>,
+    /// Watched the movie, or every episode of the series.
+    #[serde(deserialize_with = "null_as_default")]
+    pub completed: bool,
+    /// Unix time they last played it.
+    #[serde(deserialize_with = "null_as_default")]
+    pub updated: i64,
+}
+
+impl Watcher {
+    /// Their display name, or the username.
+    pub fn shown(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .unwrap_or(&self.name)
+    }
+}
+
 /// One title's watch state as `/api/progress` sends and takes it.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
@@ -1790,6 +1815,26 @@ impl Client {
             // 401 also covers servers without sign-in, which have no user to keep it for
             Err(ureq::Error::Status(401 | 404 | 405 | 501, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't load watch progress")),
+        }
+    }
+
+    /// Everyone else who played a movie or a series' episodes, latest first
+    /// (`GET /api/watchers/<movie|series>/<id>`, by the server's id). Empty
+    /// when the server doesn't say.
+    pub fn watchers(&self, kind: Kind, id: &str) -> Result<Vec<Watcher>> {
+        if self.info.mode != Mode::Api {
+            return Ok(Vec::new());
+        }
+        let kind = if kind == Kind::Movie {
+            "movie"
+        } else {
+            "series"
+        };
+        let url = format!("{}/api/watchers/{kind}/{}", self.base, encode_segment(id));
+        match self.get(&url).set("Accept", "application/json").call() {
+            Ok(r) => Ok(r.into_json().unwrap_or_default()),
+            Err(ureq::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(Vec::new()),
+            Err(e) => Err(status_err(e, "can't load who watched this")),
         }
     }
 

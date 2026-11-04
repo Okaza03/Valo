@@ -1090,6 +1090,32 @@ def user_analytics(progress, users, lib, name, days):
     }
 
 
+def watchers(progress, users, lib, kind, id, me):
+    """Everyone but `me` who played a movie, or any episode of a series, the
+    latest first; None for an unknown series. A series counts as watched once
+    they finished every episode."""
+    if kind == "movie":
+        keys = [f"movie:{id}"]
+    else:
+        show = next((s for s in lib.get()["series"] if s["id"] == id), None)
+        if not show:
+            return None
+        keys = [f"episode:{e['id']}" for se in show["seasons"] for e in se["episodes"]]
+    done = lambda e: e["duration"] > 0 and e["position"] >= 0.95 * e["duration"]
+    out = []
+    for user, entries in progress.data.items():
+        played = [entries[k] for k in keys if k in entries]
+        if user == me or not played or user not in users.users:
+            continue
+        out.append({
+            "name": user,
+            "display_name": users.users[user].get("display_name"),
+            "completed": len(played) == len(keys) and all(map(done, played)),
+            "updated": max(e["updated"] for e in played),
+        })
+    return sorted(out, key=lambda w: -w["updated"])
+
+
 def download(url, folder, name):
     """Save an image from `url` as folder/name.<ext>, replacing other formats."""
     req = urllib.request.Request(url, headers={"User-Agent": "valo-server"})
@@ -1999,6 +2025,15 @@ def make_handler(
                 if not user:
                     return self.send_json({"error": "sign in required"}, 401)
                 return self.send_json(progress.list(user))
+            m = re.fullmatch(r"/api/watchers/(movie|series)/([^/]+)", path)
+            if m:
+                user = self.user()
+                if not user:
+                    return self.send_json({"error": "sign in required"}, 401)
+                found = watchers(progress, users, lib, m[1], unquote(m[2]), user)
+                if found is None:
+                    return self.send_json({"error": "not found"}, 404)
+                return self.send_json(found)
             if path in ("/api/mylist", "/api/hidden"):
                 user = self.user()
                 if not user:

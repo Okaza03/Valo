@@ -6,7 +6,7 @@ This guide has moved to **[docs/api/](api/README.md)**, split into one page per 
 - [The server check](api/server-check.md)
 - [Sign-in](api/auth.md): `/api/info`, `/api/login`, `/api/logout`, `/api/me`
 - [The library](api/library.md): `/api/library` and its JSON
-- [Watch progress](api/progress.md): `/api/progress`
+- [Watch progress](api/progress.md): `/api/progress`, `/api/watchers/movie/<id>`, `/api/watchers/series/<id>`
 - [Streams and images](api/streams.md)
 - [Admin API](api/admin.md): `/api/admin/...`
 - [Examples](api/examples.md): Laravel, Express, Flask

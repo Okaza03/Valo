@@ -1,6 +1,6 @@
 //! Admin › Analytics: plays per day, the most watched titles and each
-//! user's watching, from `GET /api/admin/analytics`. Clicking a user opens
-//! their page, from `GET /api/admin/analytics/users/<name>`.
+//! user's watching, from `GET /api/admin/analytics`. Clicking a user (here
+//! or under Users) opens their page, from `GET /api/admin/analytics/users/<name>`.
 use eframe::egui::{
     self, pos2, vec2, Align2, Color32, CursorIcon, FontFamily, FontId, Rect, RichText, Sense,
     Stroke, Ui,
@@ -10,7 +10,7 @@ use super::super::details::{caps, column, kv_rows, link, padded, panel, placed, 
 use super::super::people::{ago, bar, columns, columns_with, section_title, stats};
 use super::super::{Click, View};
 use super::{needs_note, not_set_up, Cx, Remote, Section};
-use crate::api::{Analytics, DayStat, UserAnalytics};
+use crate::api::{Analytics, DayStat, UserAnalytics, UserStat};
 use crate::ui::{black_font, bold, chrome, gradient, image_cover, mono, placeholder, segmented};
 use crate::ui::{BG, ERROR, LINE, MUTED, TEXT};
 use crate::util::{color_for, fmt_runtime};
@@ -27,6 +27,8 @@ pub(in super::super) struct State {
     person: Remote<UserAnalytics>,
     /// The user and range `person` is for.
     person_for: Option<(String, u32)>,
+    /// The open user's page came from this section (Users), so Back goes there.
+    from: Option<Section>,
 }
 
 impl Default for State {
@@ -39,6 +41,7 @@ impl Default for State {
             user: None,
             person: Remote::default(),
             person_for: None,
+            from: None,
         }
     }
 }
@@ -51,6 +54,12 @@ impl State {
 
     pub fn missing(&self) -> bool {
         self.data.missing
+    }
+
+    /// Open a user's page, from section `from`.
+    pub fn open(&mut self, name: String, from: Section) {
+        self.user = Some(name);
+        self.from = (from != Section::Analytics).then_some(from);
     }
 
     pub fn ui(&mut self, ui: &mut Ui, cx: &mut Cx) {
@@ -114,6 +123,7 @@ impl State {
         });
         ui.add_space(24.0);
 
+        let everyone = with_accounts(a, cx.accounts);
         let kind = &mut self.kind;
         let fits =
             |k: &Option<String>, want: Option<&str>| want.is_none_or(|w| k.as_deref() == Some(w));
@@ -187,10 +197,10 @@ impl State {
                 panel(ui, |ui| {
                     caps(ui, "By user", TEAL());
                     ui.add_space(10.0);
-                    if a.users.is_empty() {
+                    if everyone.is_empty() {
                         ui.label(RichText::new("No one watched in this range.").color(MUTED()));
                     }
-                    for u in &a.users {
+                    for (u, watched) in &everyone {
                         let row = ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
                             crate::ui::chrome::avatar(ui.painter(), r.center(), 13.0, &u.name);
@@ -200,6 +210,12 @@ impl State {
                                 let mut line = format!("{} plays · {:.1} h", u.plays, u.hours);
                                 if let (Some(m), Some(e)) = (u.movies, u.episodes) {
                                     line = format!("{m} movies · {e} episodes · {:.1} h", u.hours);
+                                }
+                                match watched {
+                                    Some(true) => {}
+                                    Some(false) => line = "Nothing watched in this range".into(),
+                                    // the server listed only some: don't claim they watched nothing
+                                    None => line = "Not in the server's list".into(),
                                 }
                                 if let Some(t) = u.last_active {
                                     line.push_str(&format!(" · {}", ago(t)));
@@ -228,7 +244,7 @@ impl State {
             },
         );
         if let Some(name) = open {
-            self.user = Some(name);
+            self.open(name, Section::Analytics);
             cx.to_top = true;
         }
     }
@@ -253,8 +269,13 @@ impl State {
         }
 
         let mut back = false;
+        let back_to = if self.from == Some(Section::Users) {
+            "‹  Users"
+        } else {
+            "‹  All users"
+        };
         padded(ui, |ui| {
-            if link(ui, "‹  All users", 14.0, MUTED(), None).clicked() {
+            if link(ui, back_to, 14.0, MUTED(), None).clicked() {
                 back = true;
             }
         });
@@ -292,6 +313,9 @@ impl State {
         });
         if back {
             self.user = None;
+            if let Some(s) = self.from.take() {
+                cx.goto = Some((s, None));
+            }
             cx.to_top = true;
             return;
         }
@@ -488,6 +512,38 @@ impl State {
             cx.goto = Some((Section::Users, None));
         }
     }
+}
+
+/// Everyone under By user: who watched, most hours first, then the accounts
+/// that aren't in the analytics, A to Z. With each, whether they watched in
+/// the range: `None` when the server's list looks cut short (fewer users than
+/// `active_users`), so it can't be told.
+fn with_accounts(
+    a: &Analytics,
+    accounts: &[crate::api::AdminUser],
+) -> Vec<(UserStat, Option<bool>)> {
+    let mut out: Vec<_> = a.users.iter().map(|u| (u.clone(), Some(true))).collect();
+    out.sort_by(|x, y| y.0.hours.total_cmp(&x.0.hours));
+    let complete = a.users.len() as u32 >= a.active_users;
+    let mut rest: Vec<_> = accounts
+        .iter()
+        .filter(|acc| {
+            !a.users
+                .iter()
+                .any(|u| u.name.eq_ignore_ascii_case(&acc.name))
+        })
+        .map(|acc| {
+            let u = UserStat {
+                name: acc.name.clone(),
+                last_active: acc.last_active,
+                ..Default::default()
+            };
+            (u, complete.then_some(false))
+        })
+        .collect();
+    rest.sort_by_key(|(u, _)| u.name.to_lowercase());
+    out.extend(rest);
+    out
 }
 
 /// The 7 days … Year picker, with a spinner while loading.
@@ -779,5 +835,55 @@ fn day_chart(ui: &mut Ui, days: &[DayStat]) {
             "{}\n{} plays, {:.1} hours",
             d.day, d.plays, d.hours
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::AdminUser;
+
+    fn account(name: &str) -> AdminUser {
+        serde_json::from_value(serde_json::json!({ "name": name })).unwrap()
+    }
+
+    fn stat(name: &str, hours: f64) -> UserStat {
+        UserStat {
+            name: name.into(),
+            hours,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn lists_every_account() {
+        let mut a = Analytics {
+            active_users: 2,
+            users: vec![stat("ann", 1.0), stat("Bob", 5.0)],
+            ..Default::default()
+        };
+        let accounts = [
+            account("zoe"),
+            account("bob"),
+            account("cat"),
+            account("ann"),
+        ];
+        let names = |a: &Analytics| -> Vec<(String, Option<bool>)> {
+            with_accounts(a, &accounts)
+                .into_iter()
+                .map(|(u, w)| (u.name, w))
+                .collect()
+        };
+        let got = names(&a);
+        let want = [
+            ("Bob", Some(true)),
+            ("ann", Some(true)),
+            ("cat", Some(false)),
+            ("zoe", Some(false)),
+        ];
+        assert_eq!(got, want.map(|(n, w)| (n.to_owned(), w)));
+        // the server sent fewer users than watched: can't tell about the rest
+        a.active_users = 4;
+        assert_eq!(names(&a)[2].1, None);
     }
 }

@@ -11,7 +11,7 @@ use super::{
     clamp_text, fill_button, minutes, people_links, placed, play_colors, play_look, similar, tag,
     title_art, years, GOLD,
 };
-use crate::api::{FileInfo, Item, Kind, Library};
+use crate::api::{FileInfo, Item, Kind, Library, Watcher};
 use crate::config::Progress;
 use crate::images::Images;
 use crate::ui::chrome::{self, Icon};
@@ -41,6 +41,7 @@ impl Browse {
         progress: &Progress,
         file: Option<&FileInfo>,
         runtime: Option<f64>,
+        watchers: &[Watcher],
     ) -> Option<Click> {
         let mut click = None;
         let split = theme::spec().layout.details == Details::Split;
@@ -204,6 +205,10 @@ impl Browse {
                     }
                     self.bookmark(ui, item);
                 });
+                if !watchers.is_empty() {
+                    ui.add_space(14.0);
+                    super::watchers_row(ui, watchers);
+                }
                 if !item.overview.is_empty() {
                     ui.add_space(18.0);
                     clamp_text(
