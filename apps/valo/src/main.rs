@@ -6,6 +6,7 @@ mod api;
 mod audio;
 mod config;
 mod filmography;
+mod fullscreen;
 mod images;
 mod inhibit;
 mod integrate;
@@ -74,6 +75,7 @@ fn main() -> eframe::Result<()> {
         "Valo",
         options,
         Box::new(move |cc| {
+            fullscreen::install(cc);
             ui::apply_theme(&cc.egui_ctx);
             Ok(Box::new(App::new(&cc.egui_ctx, paths)))
         }),
@@ -396,7 +398,7 @@ impl App {
             }
             Action::Play(items) => {
                 if self.cfg.fullscreen_on_play {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                    chrome::set_fullscreen(ctx, true);
                 }
                 self.watch = Some(Watch::new(items));
             }
