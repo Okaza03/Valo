@@ -14,7 +14,7 @@ use crate::ui::{ERROR, MUTED};
 
 /// The home page's own rows: (key, name, what it is). The first two always
 /// sit at the top; the rest go in the admin's order.
-const HOME_ROWS: [(&str, &str, &str); 9] = [
+const HOME_ROWS: [(&str, &str, &str); 10] = [
     (
         "featured",
         "Featured banner",
@@ -35,6 +35,11 @@ const HOME_ROWS: [(&str, &str, &str); 9] = [
         "recent",
         "Recently added",
         "The newest titles on the server",
+    ),
+    (
+        "others",
+        "Viewed by other users",
+        "What everyone else watched lately, with who under each poster",
     ),
     (
         "top",
@@ -152,12 +157,12 @@ impl State {
                 caps(ui, "Rows, top to bottom", MUTED());
                 ui.add_space(8.0);
                 // the usual order, as the home page has it
-                let mut keys: Vec<String> = super::super::HOME_ROWS[..4]
+                let mut keys: Vec<String> = super::super::HOME_ROWS[..5]
                     .iter()
                     .map(|k| k.to_string())
                     .collect();
                 keys.extend(catalogs.iter().map(|c| c.0.clone()));
-                keys.extend(super::super::HOME_ROWS[4..].iter().map(|k| k.to_string()));
+                keys.extend(super::super::HOME_ROWS[5..].iter().map(|k| k.to_string()));
                 let order = l.ordered(&keys);
                 let mut shift = None;
                 // where each row sits, for dropping a dragged one

@@ -63,3 +63,28 @@ Who else played a movie, or any episode of a series, for the row of faces under 
 | `updated`      | int    | Unix time they last played it                                |
 
 The app shows up to three faces, the two latest names ("Jo Ann, sam and 2 others watched this") and the rest on hover. An empty list, `401`, `404`, `405` or `501` hide the row. It's asked for when a title's page opens, and again every minute while it stays open.
+
+## `GET /api/watchers`: optional
+
+What everyone but the signed-in user played lately, for the home page's _Viewed by other users_ row and the page its _See all_ opens. Latest first, up to about 100 titles. A series counts when someone played any of its episodes.
+
+```json
+[
+  {
+    "type": "series",
+    "id": "S:Arcane",
+    "updated": 1760400000,
+    "watchers": [{ "name": "jo", "display_name": "Jo Ann", "completed": false, "updated": 1760400000 }]
+  },
+  { "type": "movie", "id": "42", "updated": 1760300000, "watchers": [{ "name": "sam", "completed": true, "updated": 1760300000 }] }
+]
+```
+
+| Field      | Type          |                                                                       |
+| ---------- | ------------- | --------------------------------------------------------------------- |
+| `type`     | string        | `"movie"` or `"series"`                                               |
+| `id`       | string or int | The movie's or series' [library](library.md) `id`                     |
+| `updated`  | int           | Unix time anyone last played it                                       |
+| `watchers` | array         | Who played it, latest first, as for `GET /api/watchers/movie/<id>` above |
+
+Each poster shows the latest name ("Jo Ann +2"). The app asks while the home page or the list is open, once a minute. An empty list, `401`, `404`, `405` or `501` hide the row.

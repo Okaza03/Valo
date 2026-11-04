@@ -494,6 +494,32 @@ pub struct Watcher {
     pub updated: i64,
 }
 
+/// A title other users played lately (`GET /api/watchers`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Viewed {
+    /// "movie" or "series"
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The library's id for it; a number or a string.
+    pub id: Value,
+    /// Who played it, latest first.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub watchers: Vec<Watcher>,
+}
+
+impl Viewed {
+    /// Our id for it ("movie:42").
+    pub fn key(&self) -> Option<String> {
+        let id = match &self.id {
+            Value::String(s) if !s.is_empty() => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => return None,
+        };
+        matches!(self.kind.as_str(), "movie" | "series").then(|| format!("{}:{id}", self.kind))
+    }
+}
+
 impl Watcher {
     /// Their display name, or the username.
     pub fn shown(&self) -> &str {
@@ -800,10 +826,18 @@ impl SyncReport {
         if movies + series > 0 {
             self.split = Some((movies, series));
         }
-        self.added.append(&mut self.added_movies);
-        self.added.append(&mut self.added_series);
-        self.removed.append(&mut self.removed_movies);
-        self.removed.append(&mut self.removed_series);
+        // servers that send both shapes list each file twice: once is enough
+        let fold = |all: &mut Vec<String>, more: Vec<String>| {
+            for f in more {
+                if !all.contains(&f) {
+                    all.push(f);
+                }
+            }
+        };
+        fold(&mut self.added, std::mem::take(&mut self.added_movies));
+        fold(&mut self.added, std::mem::take(&mut self.added_series));
+        fold(&mut self.removed, std::mem::take(&mut self.removed_movies));
+        fold(&mut self.removed, std::mem::take(&mut self.removed_series));
         if let Some(dry) = self.dry_run {
             self.applied = !dry;
         }
@@ -1835,6 +1869,20 @@ impl Client {
             Ok(r) => Ok(r.into_json().unwrap_or_default()),
             Err(ureq::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(Vec::new()),
             Err(e) => Err(status_err(e, "can't load who watched this")),
+        }
+    }
+
+    /// What other users played lately, latest first (`GET /api/watchers`).
+    /// `Ok(None)`: the server doesn't say.
+    pub fn viewed(&self) -> Result<Option<Vec<Viewed>>> {
+        if self.info.mode != Mode::Api {
+            return Ok(None);
+        }
+        let url = format!("{}/api/watchers", self.base);
+        match self.get(&url).set("Accept", "application/json").call() {
+            Ok(r) => Ok(r.into_json().ok()),
+            Err(ureq::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(None),
+            Err(e) => Err(status_err(e, "can't load what others watched")),
         }
     }
 
@@ -2888,6 +2936,14 @@ mod tests {
             (r.added, r.removed, r.applied, r.running),
             (vec!["a".into(), "b".into()], vec!["c".into()], false, false)
         );
+        // both shapes at once: each file counts once
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":["a","b"],"added_movies":["a"],"added_series":["b"],"removed":["c"],"removed_series":["c"]}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert_eq!((r.added.len(), r.removed.len()), (2, 1));
+        assert!(r.has_work(Kind::Movie) && r.has_work(Kind::Series));
         let r: SyncReport = serde_json::from_str(r#"{"started":true,"target":"movies"}"#).unwrap();
         assert!(r.tidy(false).running);
         assert!(SyncReport::default().tidy(true).running);

@@ -1116,6 +1116,42 @@ def watchers(progress, users, lib, kind, id, me):
     return sorted(out, key=lambda w: -w["updated"])
 
 
+def viewed(progress, users, lib, me, limit=100):
+    """What everyone but `me` played lately, the latest first: movies, and
+    series for any of their episodes, each with who played it."""
+    data = lib.get()
+    owner = {f"movie:{m['id']}": ("movie", m["id"]) for m in data["movies"]}
+    for s in data["series"]:
+        for se in s["seasons"]:
+            for e in se["episodes"]:
+                owner[f"episode:{e['id']}"] = ("series", s["id"])
+    done = lambda e: e["duration"] > 0 and e["position"] >= 0.95 * e["duration"]
+    titles = {}
+    for user, entries in progress.data.items():
+        if user == me or user not in users.users:
+            continue
+        mine = {}
+        for key, e in entries.items():
+            title = owner.get(key)
+            if not title:
+                continue
+            w = mine.setdefault(title, {
+                "name": user,
+                "display_name": users.users[user].get("display_name"),
+                "completed": title[0] == "movie" and done(e),
+                "updated": 0,
+            })
+            w["updated"] = max(w["updated"], e["updated"])
+        for title, w in mine.items():
+            titles.setdefault(title, []).append(w)
+    out = [
+        {"type": kind, "id": id, "updated": max(w["updated"] for w in ws),
+         "watchers": sorted(ws, key=lambda w: -w["updated"])}
+        for (kind, id), ws in titles.items()
+    ]
+    return sorted(out, key=lambda t: -t["updated"])[:limit]
+
+
 def download(url, folder, name):
     """Save an image from `url` as folder/name.<ext>, replacing other formats."""
     req = urllib.request.Request(url, headers={"User-Agent": "valo-server"})
@@ -2025,6 +2061,11 @@ def make_handler(
                 if not user:
                     return self.send_json({"error": "sign in required"}, 401)
                 return self.send_json(progress.list(user))
+            if path == "/api/watchers":
+                user = self.user()
+                if not user:
+                    return self.send_json({"error": "sign in required"}, 401)
+                return self.send_json(viewed(progress, users, lib, user))
             m = re.fullmatch(r"/api/watchers/(movie|series)/([^/]+)", path)
             if m:
                 user = self.user()

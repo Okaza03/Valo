@@ -7,6 +7,7 @@ mod discover;
 mod layouts;
 mod password;
 mod people;
+mod viewed;
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, RandomState};
@@ -44,9 +45,9 @@ const GAP: f32 = 14.0;
 const SIDE: f32 = 40.0;
 const HERO_ROTATE: Duration = Duration::from_secs(9);
 /// The home page's own rows in their usual order (their layout keys). The
-/// addon catalogs go between the first four and the rest.
-const HOME_ROWS: [&str; 7] = [
-    "continue", "mylist", "recent", "top", "movies", "series", "genres",
+/// addon catalogs go between the first five and the rest.
+const HOME_ROWS: [&str; 8] = [
+    "continue", "mylist", "recent", "others", "top", "movies", "series", "genres",
 ];
 
 #[derive(Clone, PartialEq)]
@@ -65,6 +66,8 @@ enum View {
     Admin,
     /// What's on Netflix, HBO Max, …: the addons' catalogs, one at a time.
     Streaming,
+    /// What other users watched lately; only the home row's See all opens it.
+    Viewed,
 }
 
 /// Background probe of a stream's file info (see `player::probe`).
@@ -178,6 +181,8 @@ pub struct Browse {
     probes: HashMap<String, Probe>,
     /// Who else watched each movie, by id.
     watchers: HashMap<String, details::Watchers>,
+    /// What other users watched lately.
+    viewed: viewed::State,
     /// Re-checking a remembered session's admin rights (`GET /api/me`).
     me: Option<Task<Option<Me>>>,
     /// Asking for a new password, when an admin wants one.
@@ -233,6 +238,7 @@ impl Browse {
             shuffle: RandomState::new(),
             probes: HashMap::new(),
             watchers: HashMap::new(),
+            viewed: viewed::State::default(),
             me: None,
             password: password::Prompt::default(),
             admin: admin::AdminState::default(),
@@ -299,6 +305,7 @@ impl Browse {
                     | View::Person(_)
                     | View::Profile
                     | View::Admin
+                    | View::Viewed
             ) {
                 self.history.push(self.view.clone());
                 if let View::Details(_) = v {
@@ -547,6 +554,7 @@ impl Browse {
                             }
                             View::Admin => self.admin_page(ui, &lib, images, &mut action),
                             View::Streaming => self.streaming_page(ui, &lib, images, progress),
+                            View::Viewed => self.viewed_page(ui, &lib, images, progress),
                         }
                     };
                     ui.add_space(40.0);
@@ -601,7 +609,12 @@ impl Browse {
         let mut back = false;
         let in_details = matches!(
             self.view,
-            View::Details(_) | View::Episode(..) | View::Person(_) | View::Profile | View::Admin
+            View::Details(_)
+                | View::Episode(..)
+                | View::Person(_)
+                | View::Profile
+                | View::Admin
+                | View::Viewed
         );
         let (current, searching) = (self.view.clone(), !self.search.is_empty());
         let streaming = !self.discover.shown.is_empty();
@@ -850,9 +863,9 @@ impl Browse {
         }
         // the admin's addon catalogs; titles we have play, the rest can be requested
         let catalogs = self.catalog_rows(lib, progress);
-        let mut keys: Vec<String> = HOME_ROWS[..4].iter().map(|k| k.to_string()).collect();
+        let mut keys: Vec<String> = HOME_ROWS[..5].iter().map(|k| k.to_string()).collect();
         keys.extend(catalogs.iter().map(|c| c.0.clone()));
-        keys.extend(HOME_ROWS[4..].iter().map(|k| k.to_string()));
+        keys.extend(HOME_ROWS[5..].iter().map(|k| k.to_string()));
         for key in self.layout.ordered(&keys) {
             if !shows(self, &key) {
                 continue;
@@ -882,6 +895,14 @@ impl Browse {
                     recent.sort_by_key(|i| std::cmp::Reverse(i.added));
                     let cards = self.poster_cards(recent.into_iter().take(24), progress);
                     click = click.or(self.row(ui, "Recently added", &cards, false, None, images));
+                }
+                "others" => {
+                    let cards = self.viewed_cards(ui.ctx(), lib, progress);
+                    if !cards.is_empty() {
+                        let title = viewed::TITLE;
+                        let all = Some(View::Viewed);
+                        click = click.or(self.row(ui, title, &cards, false, all, images));
+                    }
                 }
                 "top" => {
                     // best rated first, from the server's scores
@@ -1711,6 +1732,7 @@ fn view_index(v: &View) -> usize {
         View::Profile => 4,
         View::Admin => 5,
         View::Streaming => 6,
+        View::Viewed => 7,
     }
 }
 

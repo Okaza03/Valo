@@ -20,6 +20,7 @@ There are two parts:
 | `continue`                         | Continue watching                                                        |
 | `mylist`                           | My list                                                                  |
 | `recent`                           | Recently added                                                           |
+| `others`                           | Viewed by other users (needs [`GET /api/watchers`](progress.md#get-apiwatchers-optional)) |
 | `top`                              | Top rated (or Top 10)                                                    |
 | `movies`                           | Movies                                                                   |
 | `series`                           | TV shows                                                                 |
@@ -31,7 +32,7 @@ The server should keep keys it doesn't know, so newer apps can add more.
 
 ## Row order
 
-`home_order` lists the rows top to bottom, by the same keys. The featured banner and genre tiles always stay at the top, so only `continue`, `mylist`, `recent`, `top`, `movies`, `series`, `genres` and the `catalog:…` keys count here. Empty means the usual order: the first four, then the addon catalogs, then the last three. A row missing from the list, like a newly added addon's catalog, goes right after the row it usually follows.
+`home_order` lists the rows top to bottom, by the same keys. The featured banner and genre tiles always stay at the top, so only `continue`, `mylist`, `recent`, `others`, `top`, `movies`, `series`, `genres` and the `catalog:…` keys count here. Empty means the usual order: the first five, then the addon catalogs, then the last three. A row missing from the list, like a newly added addon's catalog, goes right after the row it usually follows.
 
 ## `GET /api/layout`
 

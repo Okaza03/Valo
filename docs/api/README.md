@@ -41,7 +41,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | `GET /api/library`                      | required                     | [The library](library.md)             |
 | `GET /api/progress`, `POST /api/progress` | optional                   | [Watch progress](progress.md)         |
 | `GET`/`POST /api/mylist`, `/api/hidden`   | optional                   | [My list and Continue watching](lists.md) |
-| `GET /api/watchers/movie/<id>`, `/series/<id>` | optional              | [Watch progress](progress.md#get-apiwatchersmovieid-get-apiwatchersseriesid-optional) |
+| `GET /api/watchers`, `/api/watchers/movie/<id>`, `/series/<id>` | optional | [Watch progress](progress.md#get-apiwatchersmovieid-get-apiwatchersseriesid-optional) |
 | Stream URLs (named by the library)      | required                     | [Streams and images](streams.md)      |
 | `/api/admin/users`, `/api/admin/rescan` | optional                     | [Admin API](admin.md)                 |
 | `/api/admin/status`, `/sync/…`, `/logs` | optional                     | [Dashboard](admin-dashboard.md)       |
