@@ -523,6 +523,13 @@ pub fn status_bar(ctx: &egui::Context, left: &str, right: &str, refresh: bool) -
         .inner
 }
 
+/// Enter or leave fullscreen. Always use this instead of sending
+/// `ViewportCommand::Fullscreen` directly: see `crate::fullscreen`.
+pub fn set_fullscreen(ctx: &egui::Context, on: bool) {
+    crate::fullscreen::set(on);
+    ctx.send_viewport_cmd(ViewportCommand::Fullscreen(on));
+}
+
 /// Resize from the window edges (the window has no system frame), plus a hairline border.
 pub fn window_frame(ctx: &egui::Context) {
     let (max, fs) = ctx.input(|i| {

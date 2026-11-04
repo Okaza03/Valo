@@ -323,7 +323,7 @@ impl Watch {
 
     fn toggle_fullscreen(ctx: &egui::Context) {
         let fs = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fs));
+        chrome::set_fullscreen(ctx, !fs);
     }
 
     /// Draws the player; returns true when the user wants to leave it.
@@ -499,7 +499,7 @@ impl Watch {
         if esc && self.menu.is_some() {
             self.menu = None;
         } else if (esc || back) && fullscreen {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            chrome::set_fullscreen(ctx, false);
         } else if back {
             close = true;
         }
@@ -1472,7 +1472,7 @@ impl Watch {
             self.save_progress(progress);
             progress.flush();
             if fullscreen {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                chrome::set_fullscreen(ctx, false);
             }
         }
         if let Some(t) = sub_pick {

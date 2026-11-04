@@ -3655,11 +3655,13 @@ dependencies = [
  "eframe",
  "ffmpeg-next",
  "image",
+ "raw-window-handle",
  "rfd",
  "serde",
  "serde_json",
  "sha2",
  "ureq",
+ "windows-sys 0.59.0",
  "winresource",
  "zbus 5.19.0",
 ]

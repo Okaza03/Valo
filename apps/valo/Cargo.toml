@@ -26,6 +26,9 @@ zbus = "5"
 # (`cargo xtask ffmpeg` downloads it to target/ffmpeg) and ships its DLLs next to the exe.
 [target.'cfg(windows)'.dependencies]
 ffmpeg-next = "9.0"
+# hooks the window's WM_NCCALCSIZE for fullscreen (see src/fullscreen.rs)
+raw-window-handle = "0.6"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
