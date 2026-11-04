@@ -11,6 +11,7 @@ mod inhibit;
 mod integrate;
 mod player;
 mod presence;
+mod specs;
 mod subs;
 mod sync;
 mod ui;

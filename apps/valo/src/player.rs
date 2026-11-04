@@ -58,6 +58,8 @@ pub struct VFrame {
 pub struct Meta {
     pub duration: f64,
     pub has_audio: bool,
+    /// What's in the file, for the Info panel.
+    pub specs: crate::specs::Specs,
 }
 
 enum Cmd {
@@ -218,6 +220,7 @@ struct Decoder {
     audio: Option<ADec>,
     duration: f64,
     need_base: bool,
+    specs: Option<crate::specs::Specs>,
 }
 
 fn decode_thread(
@@ -235,6 +238,7 @@ fn decode_thread(
             let _ = mtx.send(Ok(Meta {
                 duration: d.duration,
                 has_audio: d.audio.is_some(),
+                specs: d.specs.take().unwrap_or_default(),
             }));
             if let Err(e) = d.run(&sh, &audio, &rx) {
                 eprintln!("decoder stopped: {e:#}");
@@ -341,17 +345,10 @@ pub fn probe(src: &Source) -> Result<(crate::api::FileInfo, Option<f64>)> {
     ffmpeg::init()?;
     let sh = Arc::new(Shared::new());
     let ictx = open_input(src, &sh)?;
-    let mut info = crate::api::FileInfo::default();
-    // "mov,mp4,m4a,…" lists every name of the demuxer; prefer the file's extension
-    let names = ictx.format().name().to_owned();
-    let name = src.name();
-    let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase());
-    info.container = Some(match ext {
-        Some(e) if names.split(',').any(|n| n == e) => e,
-        _ if names.starts_with("matroska") => "mkv".into(),
-        _ if names.starts_with("mov,mp4") => "mp4".into(),
-        _ => names.split(',').next().unwrap_or(&names).to_owned(),
-    });
+    let mut info = crate::api::FileInfo {
+        container: Some(crate::specs::container(&ictx, &src.name())),
+        ..Default::default()
+    };
     if let Some(v) = ictx.streams().best(Type::Video) {
         let par = v.parameters();
         info.video_codec = Some(par.id().name().to_owned());
@@ -369,16 +366,7 @@ pub fn probe(src: &Source) -> Result<(crate::api::FileInfo, Option<f64>)> {
         info.audio_channels = u32::try_from(ch).ok().filter(|c| *c > 0);
     }
     info.bitrate = u64::try_from(ictx.bit_rate()).ok().filter(|b| *b > 0);
-    // SAFETY: pb is the open input's I/O context (null for some protocols)
-    let size = unsafe {
-        let pb = (*ictx.as_ptr()).pb;
-        if pb.is_null() {
-            -1
-        } else {
-            ffmpeg::sys::avio_size(pb)
-        }
-    };
-    info.size = u64::try_from(size).ok().filter(|s| *s > 0);
+    info.size = crate::specs::size(&ictx);
     let d = ictx.duration();
     let duration = (d > 0).then(|| d as f64 / f64::from(ffmpeg::sys::AV_TIME_BASE));
     Ok((info, duration))
@@ -404,7 +392,9 @@ impl Decoder {
             None
         };
         let d = ictx.duration();
+        let specs = crate::specs::read(&ictx, &src.name());
         Ok(Self {
+            specs: Some(specs),
             duration: if d > 0 { d as f64 / 1e6 } else { 0.0 },
             ictx,
             vidx,

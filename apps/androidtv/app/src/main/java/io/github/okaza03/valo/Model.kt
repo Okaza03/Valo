@@ -650,6 +650,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
         return when {
             seen == null -> at(0, null, false)
             seen.second.inProgress -> at(seen.first, seen.second, true)
+            // opened and left within its first seconds: that one again, not the next
+            !seen.second.watched -> at(seen.first, null, true)
             seen.first + 1 < eps.size -> at(seen.first + 1, null, true)
             else -> at(0, null, true)
         }

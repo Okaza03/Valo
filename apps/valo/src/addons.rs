@@ -881,6 +881,11 @@ pub fn lang_code(lang: &str) -> String {
     language(lang).0
 }
 
+/// A language's name: "eng" and "en" are "English"; unknown codes come back as they are.
+pub fn lang_name(lang: &str) -> String {
+    language(lang).1
+}
+
 /// Stremio's language ("eng", "pob", "en") as our code ("en", "pt-BR") and a name.
 fn language(lang: &str) -> (String, String) {
     const LANGS: &[(&str, &str, &str)] = &[

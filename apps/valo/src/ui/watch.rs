@@ -47,6 +47,8 @@ fn ctl_button(ui: &mut egui::Ui, r: Rect, icon: Icon, tip: &str, disc: bool) -> 
 enum Menu {
     Settings,
     Subtitles,
+    /// What's in the file: container, video and audio formats.
+    Info,
 }
 
 pub struct PlayItem {
@@ -56,6 +58,8 @@ pub struct PlayItem {
     /// An episode of a series (the next button says "Next Episode").
     pub episode: bool,
     pub source: Source,
+    /// The video's file name, when the server sent it (a stream URL doesn't say).
+    pub file_name: Option<String>,
     /// Progress key; None for local files.
     pub key: Option<String>,
     /// Resume position in seconds.
@@ -74,6 +78,7 @@ impl PlayItem {
             subtitle: String::new(),
             episode: false,
             source,
+            file_name: None,
             key: None,
             start: 0.0,
             subtitles: Vec::new(),
@@ -597,6 +602,20 @@ impl Watch {
             .as_ref()
             .map_or((0.0, 0.0), |p| (p.clock(), p.meta.duration));
         let has_audio = self.player.as_ref().is_some_and(|p| p.meta.has_audio);
+        let info = match (self.menu, self.player.as_ref(), self.current) {
+            (Some(Menu::Info), Some(p), Some(i)) => {
+                let it = &self.items[i];
+                let title = if it.subtitle.is_empty() || !it.episode {
+                    it.title.clone()
+                } else {
+                    format!("{} · {}", it.title, it.subtitle)
+                };
+                p.meta
+                    .specs
+                    .sections(p.clock(), it.file_name.as_deref(), &title)
+            }
+            _ => Vec::new(),
+        };
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::BLACK))
             .show(ctx, |ui| {
@@ -862,12 +881,16 @@ impl Watch {
 
                     // ---- menus (opening upward from the bottom row)
                     if let Some(m) = self.menu {
-                        let anchor = if m == Menu::Settings { more_r } else { sub_r };
-                        let w = 280.0;
+                        let anchor = if m == Menu::Subtitles { sub_r } else { more_r };
+                        let room = rect.height() - TOP_H - BOTTOM_H;
+                        let w = if m == Menu::Info { 440.0 } else { 280.0 };
                         let h = if m == Menu::Settings {
-                            44.0 + MENU_ROW + 22.0 + 44.0 + 14.0
+                            44.0 + MENU_ROW + 22.0 + 44.0 + 22.0 + 22.0 + MENU_ROW + 8.0
+                        } else if m == Menu::Info {
+                            let rows: usize = info.iter().map(|(_, r)| r.len()).sum();
+                            (12.0 + info.len() as f32 * 44.0 + rows as f32 * INFO_ROW)
+                                .min(room.max(160.0))
                         } else {
-                            let room = rect.height() - TOP_H - BOTTOM_H;
                             (44.0 + MENU_ROW * (tracks.len() + 1) as f32 + 10.0)
                                 .min(room.max(140.0))
                         };
@@ -940,6 +963,31 @@ impl Watch {
                                         FontId::proportional(14.0),
                                         Color32::from_gray(200),
                                     );
+                                    ui.add_space(14.0);
+                                    let y = ui.cursor().top() + 9.0;
+                                    ui.painter().hline(
+                                        mr.x_range().shrink(18.0),
+                                        y,
+                                        egui::Stroke::new(1.0f32, Color32::from_gray(48)),
+                                    );
+                                    ui.add_space(22.0);
+                                    if menu_row(ui, w, "Info", None, true).clicked() {
+                                        self.menu = Some(Menu::Info);
+                                    }
+                                } else if m == Menu::Info {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(h - 4.0)
+                                        .auto_shrink([false, true])
+                                        .show(ui, |ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                            for (name, rows) in &info {
+                                                heading(ui, name);
+                                                for (label, value) in rows {
+                                                    info_row(ui, w, label, value);
+                                                }
+                                            }
+                                            ui.add_space(12.0);
+                                        });
                                 } else {
                                     heading(ui, "SUBTITLES");
                                     if tracks.is_empty() {
@@ -1067,10 +1115,15 @@ impl Watch {
                                 }
                             });
                         let area_r = area.response.rect.union(mr);
-                        on_controls |= ui.rect_contains_pointer(area_r);
-                        let clicked_away = ui.input(|i| i.pointer.any_click())
-                            && !ui.rect_contains_pointer(area_r)
-                            && !ui.rect_contains_pointer(anchor);
+                        // by position: the menu is a layer above this one, and
+                        // rect_contains_pointer says no for anything covered by it
+                        let over = |r: Rect| {
+                            ui.input(|i| i.pointer.interact_pos())
+                                .is_some_and(|p| r.contains(p))
+                        };
+                        on_controls |= over(area_r);
+                        let clicked_away =
+                            ui.input(|i| i.pointer.any_click()) && !over(area_r) && !over(anchor);
                         if clicked_away {
                             self.menu = None;
                         }
@@ -1437,6 +1490,51 @@ impl Watch {
         ctx.request_repaint_after(Duration::from_millis(if playing { 8 } else { 100 }));
         close
     }
+}
+
+/// A line of the Info panel; long values wrap.
+const INFO_ROW: f32 = 24.0;
+
+/// A label and its value in the Info panel, selectable to copy.
+fn info_row(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
+    // the values line up in a column, clear of the longest label
+    const LABEL_W: f32 = 150.0;
+    ui.horizontal_top(|ui| {
+        ui.set_width(w);
+        ui.add_space(18.0);
+        let used = ui
+            .allocate_ui_with_layout(
+                vec2(LABEL_W, INFO_ROW),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    ui.label(
+                        egui::RichText::new(label)
+                            .size(13.0)
+                            .color(Color32::from_gray(150)),
+                    );
+                },
+            )
+            .response
+            .rect
+            .width();
+        ui.add_space((LABEL_W - used).max(16.0));
+        ui.allocate_ui_with_layout(
+            vec2(w - 18.0 - LABEL_W - 18.0, INFO_ROW),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(value)
+                            .size(13.0)
+                            .color(Color32::from_gray(225)),
+                    )
+                    .wrap()
+                    .selectable(true),
+                );
+            },
+        );
+    });
+    ui.add_space(6.0);
 }
 
 /// A clickable line in a player menu: a check when `checked` is Some(true),

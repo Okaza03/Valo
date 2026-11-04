@@ -1159,6 +1159,8 @@ impl Browse {
             .max_by_key(|(_, e)| e.updated);
         Some(match last_seen {
             Some((i, e)) if e.in_progress() => at(i, Some(e), true),
+            // opened and left within its first seconds: that one again, not the next
+            Some((i, e)) if !e.watched() => at(i, None, true),
             Some((i, _)) if i + 1 < eps.len() => at(i + 1, None, true),
             Some(_) => at(0, None, true),
             None => at(0, None, false),
@@ -1643,6 +1645,7 @@ impl Browse {
                         url: item.stream.clone()?,
                         auth,
                     },
+                    file_name: item.file.as_ref().and_then(|f| f.name.clone()),
                     start: resume(&key),
                     key: Some(key),
                     subtitles: item.subtitles.clone(),
@@ -1677,6 +1680,7 @@ impl Browse {
                                 url: e.stream.clone(),
                                 auth: auth.clone(),
                             },
+                            file_name: e.file.as_ref().and_then(|f| f.name.clone()),
                             start: if queue.is_empty() { resume(&key) } else { 0.0 },
                             key: Some(key),
                             subtitles: e.subtitles.clone(),
