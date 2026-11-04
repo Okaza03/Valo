@@ -33,7 +33,7 @@ Settings and resume points are stored in `~/.config/valo/` (`%APPDATA%\valo\` on
 Each [release](https://github.com/Okaza03/Valo/releases) has:
 
 - **AppImage**: `chmod +x` it and run it. The first launch adds Valo to your app menu (you can turn this off in Settings). Updates are one click: the app downloads the new AppImage, verifies it against `SHA256SUMS.txt`, replaces itself and restarts.
-- **Flatpak**: `flatpak install --user valo-vX.Y.Z-x86_64.flatpak`. To update, install the newer file the same way, since sandboxed apps can't replace themselves. The manifest is in `packaging/flatpak/`.
+- **Flatpak**: `flatpak install --user valo-vX.Y.Z-x86_64.flatpak`. From v0.9.4 it updates itself: **Update now** downloads the new bundle and has the host's `flatpak` install it (the manifest grants `org.freedesktop.Flatpak` for this). Older copies need the newer file installed once the same way. The manifest is in `packaging/flatpak/`.
 - **.deb** and **.tar.gz**: the app tells you when an update is out and opens the release page.
 - **Windows installer** (`valo-vX.Y.Z-x86_64-setup.exe`, or `-aarch64-setup.exe` for ARM64 PCs such as Snapdragon laptops): installs for your user only, so no admin prompt. Adds a Start menu entry and _Open with → Valo_ for video files. Updates are one click: the app downloads the next installer, verifies it against `SHA256SUMS.txt`, and runs it, which restarts Valo. Windows SmartScreen may warn on the first run because the installer isn't code-signed.
 - **Windows zip**: portable. Unzip and run `valo.exe`, keeping the FFmpeg DLLs next to it. Updates open the release page.

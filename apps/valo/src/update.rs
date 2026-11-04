@@ -1,6 +1,6 @@
 //! "Is there a newer Valo?" — asks GitHub for the latest release, and
-//! when running as an AppImage or from the Windows installer, installs it in
-//! place and restarts.
+//! when running as an AppImage, a Flatpak or from the Windows installer,
+//! installs it in place and restarts.
 use std::fs;
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -26,10 +26,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct Release {
     pub version: String,
     pub url: String,
-    /// (file name, download URL) of this machine's AppImage, or of the
-    /// installer on Windows.
+    /// (file name, download URL) of this machine's AppImage, of the
+    /// installer on Windows, or of the .flatpak bundle.
     package: Option<(String, String)>,
-    /// Download URL of SHA256SUMS.txt.
+    /// Download URL of the checksums file that lists `package`.
     sums: Option<String>,
     /// The notes of every release since this build, newest first, so
     /// someone a few versions behind sees everything they'd get.
@@ -74,7 +74,8 @@ pub enum Install {
     /// Installed by the Windows installer: run the new one, which replaces
     /// this copy and starts it again.
     WindowsSetup,
-    /// Read-only sandbox: the user installs the new .flatpak.
+    /// Read-only sandbox: the host's `flatpak` installs the new bundle, when
+    /// the manifest lets us talk to it; otherwise the user does.
     Flatpak,
     /// .deb, tarball, from source: send them to the release page.
     Other,
@@ -102,10 +103,12 @@ fn installed_by_setup() -> bool {
         .unwrap_or(false)
 }
 
-/// End of the name of the release file this platform updates itself from.
-fn package_suffix() -> String {
+/// End of the name of the release file this copy updates itself from.
+fn package_suffix(flatpak: bool) -> String {
     let arch = std::env::consts::ARCH;
-    if cfg!(windows) {
+    if flatpak {
+        format!("-{arch}.flatpak")
+    } else if cfg!(windows) {
         format!("-{arch}-setup.exe")
     } else {
         format!("-{arch}.AppImage")
@@ -138,8 +141,18 @@ fn agent(timeout: Option<Duration>) -> ureq::Agent {
     b.build()
 }
 
+/// The checksums file that lists this copy's package. The Flatpak is built
+/// after the release is published, so it gets a file of its own.
+fn sums_name(flatpak: bool) -> &'static str {
+    if flatpak {
+        "SHA256SUMS-flatpak.txt"
+    } else {
+        "SHA256SUMS.txt"
+    }
+}
+
 /// The latest release if it's newer than this build, None if we're current.
-fn latest() -> Result<Option<Release>> {
+fn latest(flatpak: bool) -> Result<Option<Release>> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let r: GhRelease = match agent(Some(Duration::from_secs(10)))
         .get(&url)
@@ -152,7 +165,7 @@ fn latest() -> Result<Option<Release>> {
         Err(e) => return Err(anyhow!("can't reach GitHub ({e})")),
     };
     let version = r.tag_name.trim_start_matches(['v', 'V']).to_owned();
-    let suffix = package_suffix();
+    let suffix = package_suffix(flatpak);
     let asset = |f: &dyn Fn(&str) -> bool| {
         r.assets
             .iter()
@@ -160,7 +173,7 @@ fn latest() -> Result<Option<Release>> {
             .map(|a| (a.name.clone(), a.browser_download_url.clone()))
     };
     let package = asset(&|n| n.ends_with(&suffix));
-    let sums = asset(&|n| n == "SHA256SUMS.txt").map(|(_, u)| u);
+    let sums = asset(&|n| n == sums_name(flatpak)).map(|(_, u)| u);
     if !newer(&version, VERSION) {
         return Ok(None);
     }
@@ -256,8 +269,8 @@ fn expected_hash(sums: &str, name: &str) -> Option<String> {
     })
 }
 
-/// Download the release's package into `dir` as `name.part`, check it
-/// against SHA256SUMS.txt, and rename it to `name`. `progress` is per-mille.
+/// Download the release's package into `dir` as `.name.part` and check it
+/// against the checksums file. `progress` is per-mille.
 fn download(rel: &Release, dir: &Path, progress: &AtomicU32) -> Result<PathBuf> {
     let (Some((name, url)), Some(sums_url)) = (&rel.package, &rel.sums) else {
         bail!("this release has nothing to update this copy with");
@@ -266,10 +279,10 @@ fn download(rel: &Release, dir: &Path, progress: &AtomicU32) -> Result<PathBuf> 
     let sums = agent
         .get(sums_url)
         .call()
-        .context("can't download SHA256SUMS.txt")?
+        .context("can't download the checksums")?
         .into_string()?;
     let want = expected_hash(&sums, name)
-        .ok_or_else(|| anyhow!("{name} isn't listed in SHA256SUMS.txt"))?;
+        .ok_or_else(|| anyhow!("{name} isn't listed in the checksums"))?;
 
     let r = agent
         .get(url)
@@ -366,6 +379,111 @@ fn run_setup(rel: &Release, progress: &AtomicU32) -> Result<()> {
     Ok(())
 }
 
+/// Whether the manifest lets us run `flatpak` on the host (through
+/// `flatpak-spawn --host`). Copies built before it did can't update themselves.
+fn flatpak_can_spawn() -> bool {
+    fs::read_to_string("/.flatpak-info").is_ok_and(|info| can_spawn(&info))
+}
+
+fn can_spawn(info: &str) -> bool {
+    let mut in_session = false;
+    info.lines().map(str::trim).any(|l| {
+        if l.starts_with('[') {
+            in_session = l == "[Session Bus Policy]";
+            false
+        } else {
+            in_session && l == "org.freedesktop.Flatpak=talk"
+        }
+    })
+}
+
+/// The value of `key` in /.flatpak-info.
+fn info_value<'a>(info: &'a str, key: &str) -> Option<&'a str> {
+    info.lines()
+        .filter_map(|l| l.split_once('='))
+        .find_map(|(k, v)| (k.trim() == key && !v.trim().is_empty()).then(|| v.trim()))
+}
+
+/// Run `flatpak` on the host and return its stdout.
+fn host_flatpak(args: &[&str]) -> Result<String> {
+    let out = Command::new("flatpak-spawn")
+        .arg("--host")
+        .arg("flatpak")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("can't run flatpak-spawn")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        bail!(
+            "flatpak {} failed: {}",
+            args.first().unwrap_or(&""),
+            err.trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// "--user" or "--system": where this copy is installed. The deployment
+/// we run from (`app-path`) is inside the user installation's folder for it.
+fn flatpak_scope(info: &str, app_id: &str) -> &'static str {
+    let app_path = info_value(info, "app-path").map(Path::new);
+    let user = host_flatpak(&["info", "--user", "--show-location", app_id]).ok();
+    match (app_path, user) {
+        (Some(p), Some(loc)) if p.starts_with(loc.trim()) => "--user",
+        _ => "--system",
+    }
+}
+
+/// Download the new bundle, have the host's flatpak install it over this
+/// copy (the app's data in ~/.var/app is left alone), and start it.
+fn install_flatpak(rel: &Release, progress: &AtomicU32) -> Result<()> {
+    let app_id = std::env::var("FLATPAK_ID").context("not running as a Flatpak")?;
+    let info = fs::read_to_string("/.flatpak-info").context("can't read /.flatpak-info")?;
+    // the sandbox's /tmp is private; the app's cache folder has the same path
+    // on the host, so the host's flatpak can read the bundle from there
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .context("no cache folder")?;
+    fs::create_dir_all(&cache).with_context(|| format!("can't create {}", cache.display()))?;
+    let bundle = download(rel, &cache, progress)?;
+    let scope = flatpak_scope(&info, &app_id);
+    let bundle_path = bundle.to_string_lossy().into_owned();
+    // --reinstall: a bundle can't be installed over the copy it came from
+    // otherwise. The bundle's checksum was checked before getting here.
+    let res = host_flatpak(&[
+        "install",
+        scope,
+        "--reinstall",
+        "--noninteractive",
+        // the download is named .part, so flatpak wouldn't take it for a bundle
+        "--bundle",
+        &bundle_path,
+    ]);
+    let _ = fs::remove_file(&bundle);
+    res?;
+    // Starting /app/bin/valo again would run the old deployment from inside
+    // this sandbox, so the host starts the new one. The shell backgrounds it
+    // and returns, so it outlives this copy.
+    let out = Command::new("flatpak-spawn")
+        .args([
+            "--host",
+            "sh",
+            "-c",
+            r#"flatpak run "$@" </dev/null >/dev/null 2>&1 &"#,
+            "valo-relaunch",
+            scope,
+            &app_id,
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("can't start the new version")?;
+    if !out.status.success() {
+        bail!("the update is installed; start Valo again to use it");
+    }
+    Ok(())
+}
+
 /// Start the (new) AppImage with our arguments; the caller then closes this window.
 fn relaunch(appimage: &Path) -> Result<()> {
     let mut cmd = Command::new(appimage);
@@ -421,7 +539,8 @@ impl Updates {
     /// `manual` checks always report back; automatic ones only when there's an update.
     pub fn check(&mut self, ctx: &egui::Context, manual: bool) {
         if self.task.is_none() {
-            self.task = Some((manual, Task::spawn(ctx, latest)));
+            let flatpak = self.install == Install::Flatpak;
+            self.task = Some((manual, Task::spawn(ctx, move || latest(flatpak))));
         }
     }
 
@@ -438,9 +557,12 @@ impl Updates {
 
     /// Whether the update button installs in place (vs. opening the release page).
     fn in_place(&self, rel: &Release) -> bool {
-        matches!(self.install, Install::AppImage(_) | Install::WindowsSetup)
-            && rel.package.is_some()
-            && rel.sums.is_some()
+        let can = match self.install {
+            Install::AppImage(_) | Install::WindowsSetup => true,
+            Install::Flatpak => flatpak_can_spawn(),
+            Install::Other => false,
+        };
+        can && rel.package.is_some() && rel.sums.is_some()
     }
 
     fn start_install(&mut self, ctx: &egui::Context) {
@@ -457,7 +579,8 @@ impl Updates {
                     relaunch(&new)
                 }
                 Install::WindowsSetup => run_setup(&rel, &p),
-                Install::Flatpak | Install::Other => bail!("this copy can't update itself"),
+                Install::Flatpak => install_flatpak(&rel, &p),
+                Install::Other => bail!("this copy can't update itself"),
             }),
             progress,
         ));
@@ -509,7 +632,7 @@ impl Updates {
                     ctx,
                     r,
                     self.in_place(r),
-                    self.install == Install::Flatpak,
+                    self.install == Install::Flatpak && !self.in_place(r),
                 );
                 match choice {
                     Some(crate::ui::whats_new::UpdateChoice::Update) => {
@@ -698,6 +821,23 @@ mod tests {
             (only.len(), only[0].summary.as_str()),
             (1, "Summary v0.8.7.")
         );
+    }
+
+    #[test]
+    fn flatpak_info() {
+        let info = "[Application]\nname=io.github.okaza03.Valo\n\n\
+            [Instance]\napp-path=/home/u/.local/share/flatpak/app/io.github.okaza03.Valo/x86_64/master/abc/files\n\n\
+            [Session Bus Policy]\norg.freedesktop.ScreenSaver=talk\norg.freedesktop.Flatpak=talk\n";
+        assert!(can_spawn(info));
+        assert_eq!(
+            info_value(info, "app-path"),
+            Some("/home/u/.local/share/flatpak/app/io.github.okaza03.Valo/x86_64/master/abc/files")
+        );
+        // the same name outside the session bus policy doesn't count
+        assert!(!can_spawn(
+            "[System Bus Policy]\norg.freedesktop.Flatpak=talk\n[Session Bus Policy]\nfoo=talk\n"
+        ));
+        assert!(!can_spawn(""));
     }
 
     #[test]

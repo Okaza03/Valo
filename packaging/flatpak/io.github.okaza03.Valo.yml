@@ -16,6 +16,7 @@ finish-args:
   - --device=dri
   - --talk-name=org.freedesktop.ScreenSaver   # keep the screen awake while playing
   - --talk-name=org.gnome.SessionManager      # same, on GNOME
+  - --talk-name=org.freedesktop.Flatpak       # update: the host's flatpak installs the new bundle
   - --filesystem=xdg-videos:ro   # other files come in via the file-chooser portal
   - --filesystem=xdg-run/discord-ipc-0                    # Discord status ("Watching Valo")
   - --filesystem=xdg-run/app/com.discordapp.Discord:ro   # same, with Discord as a Flatpak

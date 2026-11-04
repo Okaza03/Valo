@@ -208,7 +208,12 @@ jobs:
           bundle: valo-${{ github.ref_name }}-x86_64.flatpak
           cache: false
 
+      # its own checksums file: SHA256SUMS.txt is already published by now
+      - run: sha256sum valo-*.flatpak > SHA256SUMS-flatpak.txt
+
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: valo-*.flatpak
+          files: |
+            valo-*.flatpak
+            SHA256SUMS-flatpak.txt
