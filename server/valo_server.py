@@ -10,6 +10,7 @@ Expected layout (anything else is ignored):
     Movies/Inception (2010)/Inception.mkv   (+ poster.jpg, fanart.jpg, info.json)
     Series/The Office/Season 1/The.Office.S01E01.Pilot.mkv   (+ poster.jpg, fanart.jpg, info.json)
     Series/The Office/Featurettes/Bloopers.mkv   (any name: a "Featurettes" season)
+    Series/The Office/Season 2/Episode 3.mkv     (no SxxEyy: numbered from the folder)
 
 Subtitles (.srt, .vtt, .ass, .ssa) go in a Subs folder in the movie's or the
 series' folder (or a season folder): Subs/English.srt for a movie; for an
@@ -119,6 +120,10 @@ FEATURETTES = 999
 EPISODE = re.compile(
     r"(?i)(?:^|[^a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,3})(.*)$|(?:^|\D)(\d{1,2})x(\d{2,3})(.*)$"
 )
+# a season folder: "Season 2", "S02", "Series 2"; "Specials" is season 0
+SEASON_DIR = re.compile(r"(?i)^(?:season|series|s)[ ._-]*(\d{1,2})\b|^(specials?)$")
+# an episode number in a name without SxxEyy: "Episode 3", "Ep.03", "E03", "03 - Title"
+EPISODE_NO = re.compile(r"(?i)(?:^|[^a-z0-9])(?:episode|ep|e)[ ._-]*(\d{1,3})(?!\d)|^(\d{1,3})(?!\d)(?:[ ._-]|$)")
 JUNK = re.compile(
     r"(?i)\b(19\d\d|20\d\d|2160p|1080p|720p|480p|4k|bluray|webrip|web-dl|hdtv|x26[45]|h26[45]|hevc)\b.*$"
 )
@@ -257,6 +262,31 @@ EXTRAS = (
 )
 
 
+def guess_episode(show, f):
+    """(season, episode, rest of the name) for a file without SxxEyy in its
+    name, from its season folder ("Season 2/Episode 3.mkv", "Season 1/04.mkv");
+    a file right in the series' folder is season 1. None when there's no telling."""
+    season = None
+    for p in f.parents:
+        if p == show:
+            break
+        m = SEASON_DIR.search(p.name)
+        if m:
+            season = 0 if m.group(2) else int(m.group(1))
+            break
+    if season is None and f.parent != show:
+        return None
+    if season is None:
+        season = 1
+    m = EPISODE_NO.search(f.stem)
+    if not m:
+        nums = re.findall(r"(?<![0-9])\d{1,3}(?![0-9])", re.sub(r"\b(19|20)\d\d\b", "", f.stem))
+        if len(nums) != 1:
+            return None
+        return season, int(nums[0]), re.sub(r"\d+", "", f.stem, count=1)
+    return season, int(m.group(1) or m.group(2)), f.stem[m.end():]
+
+
 def file_info(lib, f):
     q = QUALITY.search(f.stem)
     return {
@@ -317,7 +347,7 @@ def show_folders(lib, name=None):
 
 
 class Library:
-    def __init__(self, roots, collections=None, moving=None):
+    def __init__(self, roots, collections=None, moving=None, data=None):
         # one folder per disk; the first one's names have no prefix, so a
         # library that grows a second disk keeps its ids
         self.roots = list(roots)
@@ -326,10 +356,19 @@ class Library:
         self.blocked = set()
         self.collections = collections
         self.skipped = []  # video files the scan couldn't place
+        # episode files without SxxEyy, numbered from their folder: {file: "S01E03"}
+        self.guessed = {}
         self.cache, self.stamp, self.lock = None, 0, threading.Lock()
-        # the library as of the last sync: what the syncs compare against,
-        # since the cache rescans on its own every minute
+        # the library's files as of the last sync, what the syncs compare
+        # against since the cache rescans on its own every minute:
+        # {"movies": {file: title id}, "series": {file: [series id, season]}}.
+        # Kept in .valo/synced.json, so files added while the server was off
+        # still count as new.
+        self.synced_path = data and data / "synced.json"
         self.synced = None
+        saved = read_info(self.synced_path) if self.synced_path else {}
+        if isinstance(saved.get("movies"), dict) and isinstance(saved.get("series"), dict):
+            self.synced = {"movies": saved["movies"], "series": saved["series"]}
 
     def rel(self, path):
         """A path's name in the library: relative to its disk, with "@1/" in
@@ -362,7 +401,7 @@ class Library:
                 self.cache, self.stamp = self.scan(), time.time()
                 self.mark(self.cache)
                 if self.synced is None:
-                    self.synced = self.cache
+                    self.save_synced(self.snapshot(self.cache))
             return self.cache
 
     def mark(self, data):
@@ -418,7 +457,7 @@ class Library:
 
     def scan(self):
         movies, series = [], []
-        self.skipped = []
+        self.skipped, self.guessed = [], {}
         for top in self.category(MOVIE_DIRS):
             for f in sorted(top.rglob("*")):
                 if f.suffix.lower() not in VIDEO:
@@ -488,8 +527,12 @@ class Library:
                         )
                         s, e = int(s), int(e)
                     else:
-                        self.skipped.append(self.rel(f))
-                        continue
+                        g = guess_episode(show, f)
+                        if not g:
+                            self.skipped.append(self.rel(f))
+                            continue
+                        s, e, rest = g
+                        self.guessed[self.rel(f)] = f"S{s:02d}E{e:02d}"
                     meta = eps_info.get(f"S{s:02d}E{e:02d}", {})
                     still = find_art(f.parent, [f.stem, f"{f.stem}-thumb"])
                     seasons.setdefault(s, []).append(
@@ -543,7 +586,7 @@ class Library:
                     "backdrop": backdrop and self.url("art", backdrop),
                     "thumb": thumb and self.url("art", thumb),
                     "seasons": [
-                        {"number": n, "episodes": eps}
+                        {"number": n, "episodes": sorted(eps, key=lambda e: e["number"])}
                         | ({"title": "Featurettes"} if n == FEATURETTES else {})
                         for n, eps in sorted(seasons.items())
                     ],
@@ -554,36 +597,79 @@ class Library:
             self.collections.apply(movies, series)
         return {"movies": movies, "series": series}
 
-    def files(self, data, kind):
-        """Every video file of `kind` ("movies"/"series") as a relative path."""
-        if kind == "movies":
-            return {m["id"][2:] for m in data["movies"]}
+    @staticmethod
+    def snapshot(data):
+        """The files of a scan, as the syncs keep them (see `synced`)."""
         return {
-            e["id"][2:] for s in data["series"] for se in s["seasons"] for e in se["episodes"]
+            "movies": {m["id"][2:]: m["id"] for m in data["movies"]},
+            "series": {
+                e["id"][2:]: [s["id"], se["number"]]
+                for s in data["series"]
+                for se in s["seasons"]
+                for e in se["episodes"]
+            },
         }
 
+    def save_synced(self, snap):
+        self.synced = snap
+        if self.synced_path:
+            try:
+                self.synced_path.parent.mkdir(parents=True, exist_ok=True)
+                self.synced_path.write_text(json.dumps(snap, ensure_ascii=False))
+            except OSError as e:
+                log(f"couldn't save {self.synced_path}: {e}", "error")
+
+    @staticmethod
+    def summary(old, new, added, removed):
+        """"2 new movies, 1 new series, 1 new season, 3 new episodes, 1 removed"."""
+        old_series = {v[0] for v in old["series"].values()}
+        old_seasons = {tuple(v) for v in old["series"].values()}
+        movies = sum(1 for f in added if f in new["movies"])
+        eps = [tuple(new["series"][f]) for f in added if f in new["series"]]
+        series = {s for s, _ in eps if s not in old_series}
+        seasons = {k for k in eps if k not in old_seasons and k[0] not in series}
+        parts = []
+        for n, what, many in (
+            (movies, "new movie", "new movies"),
+            (len(series), "new series", "new series"),
+            (len(seasons), "new season", "new seasons"),
+            (len(eps), "new episode", "new episodes"),
+            (len(removed), "removed", "removed"),
+        ):
+            if n:
+                parts.append(f"{n} {what if n == 1 else many}")
+        return ", ".join(parts) or None
+
     def sync(self, what, apply=False):
-        """Compare the folders with the cached library; apply for movies/series."""
+        """Compare the folders with the library as of the last sync; apply for movies/series."""
         with self.lock:
-            old = self.synced or self.cache or self.scan()
             fresh = self.scan()
+            self.mark(fresh)
+            new = self.snapshot(fresh)
+            old = self.synced or self.snapshot(self.cache or fresh)
             kinds = ["movies", "series"] if what == "folders" else [what]
             added, removed = [], []
             for k in kinds:
-                a, b = self.files(old, k), self.files(fresh, k)
-                added += sorted(b - a)
-                removed += sorted(a - b)
-            added, removed = [self.show(p) for p in added], [self.show(p) for p in removed]
+                added += sorted(new[k].keys() - old[k].keys())
+                removed += sorted(old[k].keys() - new[k].keys())
+            r = {
+                "added": [self.show(p) for p in added],
+                "removed": [self.show(p) for p in removed],
+                "message": self.summary(old, new, added, removed),
+            }
+            if "series" in kinds:
+                # files without SxxEyy in the name: numbered from their folder, or not placed at all
+                r["unnamed"] = [
+                    f"{self.show(p)}  →  {code}" for p, code in sorted(self.guessed.items())
+                ] + [f"{self.show(p)}  (can't tell the episode: rename it to S01E01…)" for p in self.skipped]
+            self.cache, self.stamp = fresh, time.time()
             if what == "folders" and not apply:
-                return {"added": added, "removed": removed, "applied": False}
+                return {**r, "applied": False}
             if what == "folders":
-                self.cache = self.synced = fresh
+                self.save_synced(new)
             else:
-                self.cache = dict(self.cache or fresh, **{what: fresh[what]})
-                self.synced = dict(old, **{what: fresh[what]})
-            self.mark(self.cache)
-            self.stamp = time.time()
-            return {"added": added, "removed": removed, "applied": True}
+                self.save_synced({**old, what: new[what]})
+            return {**r, "applied": True}
 
 
 class Collections:
@@ -2191,7 +2277,7 @@ def main():
     layout = Layout(data)
     moving = Moving(data)
     handler = make_handler(
-        Library(roots, cols, moving),
+        Library(roots, cols, moving, data),
         users,
         progress,
         name,

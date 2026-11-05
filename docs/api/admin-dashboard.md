@@ -77,6 +77,7 @@ Answer:
 | `applied` | bool     | `false` for `folders` (a dry run); `true` when the database was changed. The app then reloads the library |
 | `running` | bool     | `true` when the work carries on in the background. The app points the admin at the live log      |
 | `message` | string   | One line shown above the lists                                                                   |
+| `unnamed` | string[] | Episode files without `S01E02` in the name: ones the server numbered from their season folder, and ones it couldn't place. Shown as a warning, so the admin knows what to rename |
 | `missing_images` | object | `folders` only: titles whose image files are gone (see below). `missing_art` works too |
 
 ### Missing images

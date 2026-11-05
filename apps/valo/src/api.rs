@@ -796,6 +796,10 @@ pub struct SyncReport {
     /// It carries on in the background; follow the log.
     pub running: bool,
     pub message: Option<String>,
+    /// Episode files without `SxxEyy` in the name: numbered from their
+    /// season folder, or ones the server couldn't place. Shown as a warning.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub unnamed: Vec<String>,
     /// Titles whose image files are gone, which the next movie or series
     /// sync downloads again (`missing_images`, or `missing_art`).
     #[serde(alias = "missing_art")]

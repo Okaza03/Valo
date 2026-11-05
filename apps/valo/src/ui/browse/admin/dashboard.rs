@@ -561,6 +561,24 @@ impl State {
                             }
                         });
                 }
+                if !rep.unnamed.is_empty() {
+                    egui::CollapsingHeader::new(format!("Not renamed: {}", rep.unnamed.len()))
+                        .id_salt(("sync", "unnamed"))
+                        .default_open(rep.unnamed.len() <= 10)
+                        .show(ui, |ui| {
+                            for f in rep.unnamed.iter().take(200) {
+                                ui.label(mono(f, 10.0).color(WARN()));
+                            }
+                            ui.label(
+                                RichText::new(
+                                    "No SxxEyy in the name: numbered from the season folder \
+                                     where possible. Rename them to be sure.",
+                                )
+                                .small()
+                                .color(MUTED()),
+                            );
+                        });
+                }
                 let missing = &rep.missing_images;
                 if !missing.is_empty() {
                     egui::CollapsingHeader::new(format!("Missing images: {}", missing.len()))
