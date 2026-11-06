@@ -208,10 +208,9 @@ class Bot(discord.Client):
             rid, status = str(r["id"]), r.get("status", "pending")
             if self.state["seen"].get(rid) == status:
                 continue
-            first_time = rid not in self.state["seen"]
             self.state["seen"][rid] = status
             self.state["since"] = max(self.state["since"], r.get("updated") or 0)
-            if first_time and status == "pending":
+            if status == "pending":  # new, or an admin put an answered one back to pending
                 await self.announce(r)
             elif status in ANSWERS and r.get("requester_id"):
                 await self.tell(r, status)
