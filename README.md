@@ -53,7 +53,7 @@ Windows builds are made with `cargo xtask dist [arch]` (zip) and `cargo xtask in
 1. Bump `version` in `Cargo.toml`.
 2. Rewrite `notes.md` for the new version. Its first line must name it (`# Valo vX.Y.Z`). It becomes the release description.
 3. Add `<release version="X.Y.Z" …/>` to `packaging/flatpak/io.github.okaza03.Valo.metainfo.xml`.
-4. Open a pull request with these changes. Once it's merged, tag the merge: `git checkout main && git pull && git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. Open a pull request with these changes from a branch named `release-X.Y.Z`. Merging it tags the merge as `vX.Y.Z` and starts the release (`.github/workflows/tag-release.yml`). The branch name has to match the version in `Cargo.toml`.
 
 The release workflow refuses to publish if any of these are out of sync with the tag. It also publishes the Flatpak repository to GitHub Pages; the one-time setup for that is in [packaging/flatpak/README.md](packaging/flatpak/README.md).
 
