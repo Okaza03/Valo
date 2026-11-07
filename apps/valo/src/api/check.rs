@@ -6,8 +6,6 @@
 //! no sign-in) are warnings the user can accept.
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use eframe::egui;
-
 use super::{
     agent, normalize, Client, Episode, InfoJson, Item, Library, Missing, Mode, ServerInfo, Session,
     Unauthorized,
@@ -70,11 +68,13 @@ pub enum Job {
     SignedIn(Client),
 }
 
-pub fn start(ctx: &egui::Context, job: Job) -> Receiver<Event> {
+/// Run `job` on a background thread. `wake` is called after each event, so
+/// the UI can redraw (egui) or knows to poll (Iced polls on its own ticks).
+pub fn start(wake: impl Fn() + Send + 'static, job: Job) -> Receiver<Event> {
     let (tx, rx) = mpsc::channel();
     let mut run = Run {
         tx,
-        ctx: ctx.clone(),
+        wake: Box::new(wake),
         failed: false,
     };
     std::thread::spawn(move || {
@@ -104,14 +104,14 @@ fn has(s: &Option<String>) -> bool {
 
 struct Run {
     tx: Sender<Event>,
-    ctx: egui::Context,
+    wake: Box<dyn Fn() + Send>,
     failed: bool,
 }
 
 impl Run {
     fn send(&self, e: Event) {
         let _ = self.tx.send(e);
-        self.ctx.request_repaint();
+        (self.wake)();
     }
 
     fn step<T>(&mut self, title: &'static str, f: impl FnOnce() -> (Level, String, T)) -> T {

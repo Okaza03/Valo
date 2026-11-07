@@ -147,3 +147,31 @@ pub fn frame<'a>(content: Element<'a, Message>, size: Size, framed: bool) -> Ele
     ]
     .into()
 }
+
+/// The strip along the bottom: small monospace text on both sides.
+pub fn status_bar<'a>(left: String, right: String) -> Element<'a, Message> {
+    container(
+        row![
+            text(left)
+                .font(style::MONO)
+                .size(10.5)
+                .color(style::MUTED())
+                .wrapping(text::Wrapping::None),
+            space::horizontal(),
+            text(right)
+                .font(style::MONO)
+                .size(10.5)
+                .color(style::MUTED())
+                .wrapping(text::Wrapping::None),
+        ]
+        .align_y(Vertical::Center)
+        .height(30),
+    )
+    .padding([0, 18])
+    .width(Length::Fill)
+    .style(|_| container::Style {
+        background: Some(Background::Color(style::BG())),
+        ..container::Style::default()
+    })
+    .into()
+}
