@@ -2,7 +2,7 @@
 
 - `io.github.okaza03.Valo.yml`: the manifest. It packages the binary the release workflow builds on Ubuntu 22.04, instead of compiling inside flatpak-builder.
 - `io.github.okaza03.Valo.metainfo.xml`: the app's metadata. Every release adds a `<release>` line here.
-- `publish-repo.sh`: turns flatpak-builder's repository into Valo's Flatpak remote, and builds the release's `.flatpak` bundle from it.
+- `publish-repo.sh`: turns flatpak-builder's repository into Valo's Flatpak remote, builds the release's `.flatpak` bundle from it, and puts the website from `packaging/site/` next to it with the release's version and download links filled in.
 
 ## The repository
 
