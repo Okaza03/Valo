@@ -33,7 +33,13 @@ Settings and resume points are stored in `~/.config/valo/` (`%APPDATA%\valo\` on
 Each [release](https://github.com/Okaza03/Valo/releases) has:
 
 - **AppImage**: `chmod +x` it and run it. The first launch adds Valo to your app menu (you can turn this off in Settings). Updates are one click: the app downloads the new AppImage, verifies it against `SHA256SUMS.txt`, replaces itself and restarts.
-- **Flatpak**: `flatpak install --user valo-vX.Y.Z-x86_64.flatpak`. From v0.9.4 it updates itself: **Update now** downloads the new bundle and has the host's `flatpak` install it (the manifest grants `org.freedesktop.Flatpak` for this). Older copies need the newer file installed once the same way. The manifest is in `packaging/flatpak/`.
+- **Flatpak**: from Valo's own Flatpak repository, in one command:
+
+  ```
+  flatpak install --user https://okaza03.github.io/Valo/valo.flatpakref
+  ```
+
+  That adds the repository as `valo` (the runtime comes from Flathub), so from then on `flatpak install io.github.okaza03.Valo` and `flatpak update` work like for any other app. To add only the repository, add Flathub for the runtime too: `flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo`, then `flatpak remote-add --user --if-not-exists valo https://okaza03.github.io/Valo/valo.flatpakrepo`. Each release also attaches the bundle (`flatpak install --user valo-vX.Y.Z-x86_64.flatpak`), which updates from the same repository. Inside the app, **Update now** installs the new version through the host's `flatpak` (the manifest grants `org.freedesktop.Flatpak` for this). The manifest and the repository script are in `packaging/flatpak/`.
 - **.deb** and **.tar.gz**: the app tells you when an update is out and opens the release page.
 - **Windows installer** (`valo-vX.Y.Z-x86_64-setup.exe`, or `-aarch64-setup.exe` for ARM64 PCs such as Snapdragon laptops): installs for your user only, so no admin prompt. Adds a Start menu entry and _Open with → Valo_ for video files. Updates are one click: the app downloads the next installer, verifies it against `SHA256SUMS.txt`, and runs it, which restarts Valo. Windows SmartScreen may warn on the first run because the installer isn't code-signed.
 - **Windows zip**: portable. Unzip and run `valo.exe`, keeping the FFmpeg DLLs next to it. Updates open the release page.
@@ -47,9 +53,9 @@ Windows builds are made with `cargo xtask dist [arch]` (zip) and `cargo xtask in
 1. Bump `version` in `Cargo.toml`.
 2. Rewrite `notes.md` for the new version. Its first line must name it (`# Valo vX.Y.Z`). It becomes the release description.
 3. Add `<release version="X.Y.Z" …/>` to `packaging/flatpak/io.github.okaza03.Valo.metainfo.xml`.
-4. Commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
+4. Open a pull request with these changes. Once it's merged, tag the merge: `git checkout main && git pull && git tag vX.Y.Z && git push origin vX.Y.Z`.
 
-The release workflow refuses to publish if any of these are out of sync with the tag.
+The release workflow refuses to publish if any of these are out of sync with the tag. It also publishes the Flatpak repository to GitHub Pages; the one-time setup for that is in [packaging/flatpak/README.md](packaging/flatpak/README.md).
 
 ## Supported servers
 
