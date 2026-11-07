@@ -205,13 +205,23 @@ impl Watch {
         }
     }
 
+    /// Files chosen in the file picker: they play next, from the first.
     pub fn add_files(&mut self, files: Vec<PathBuf>) {
+        self.add(files, true);
+    }
+
+    /// A dropped file. Iced sends one event per file, so dropping several
+    /// arrives as several calls: playback starts from the first of them.
+    pub fn add_dropped(&mut self, file: PathBuf) {
+        self.add(vec![file], false);
+    }
+
+    /// `replace`: play from these files even when another start is pending.
+    fn add(&mut self, files: Vec<PathBuf>, replace: bool) {
         let first = self.items.len();
         self.items.extend(files.into_iter().map(PlayItem::local));
         if self.items.len() > first {
-            // Iced drops files one event at a time: keep playing from the
-            // first of them, not whichever came last
-            if self.queued.is_none() {
+            if replace || self.queued.is_none() {
                 self.queued = Some(first);
             }
             self.show_list = true;
@@ -1771,19 +1781,28 @@ mod tests {
     fn dropped_files_play_from_the_first() {
         // one FileDropped event per file, as Iced sends them
         let mut w = Watch::new(vec![PlayItem::local("a.mkv".into())]);
-        w.add_files(vec!["b.mkv".into()]);
-        w.add_files(vec!["c.mkv".into()]);
+        w.add_dropped("b.mkv".into());
+        w.add_dropped("c.mkv".into());
         assert_eq!(w.queued, Some(0));
         assert!(w.show_list);
 
         // once the first has started, a new drop plays the first file it added
         let mut w = Watch::new(Vec::new());
-        w.add_files(vec!["a.mkv".into()]);
-        w.add_files(vec!["b.mkv".into()]);
+        w.add_dropped("a.mkv".into());
+        w.add_dropped("b.mkv".into());
         assert_eq!(w.queued, Some(0));
         w.queued = None; // opened
-        w.add_files(vec!["c.mkv".into()]);
-        w.add_files(vec!["d.mkv".into()]);
+        w.add_dropped("c.mkv".into());
+        w.add_dropped("d.mkv".into());
         assert_eq!(w.queued, Some(2));
+    }
+
+    #[test]
+    fn picked_files_replace_a_pending_start() {
+        let mut w = Watch::new(vec![PlayItem::local("a.mkv".into())]);
+        assert_eq!(w.queued, Some(0));
+        w.add_files(vec!["b.mkv".into(), "c.mkv".into()]);
+        assert_eq!(w.queued, Some(1));
+        assert!(w.show_list);
     }
 }

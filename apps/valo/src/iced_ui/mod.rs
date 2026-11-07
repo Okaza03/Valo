@@ -272,7 +272,7 @@ impl App {
                 }
                 window::Event::FileDropped(path) => {
                     match self.watch.as_mut() {
-                        Some(w) => w.add_files(vec![path]),
+                        Some(w) => w.add_dropped(path),
                         None => self.watch = Some(Watch::new(vec![PlayItem::local(path)])),
                     }
                     Task::none()
