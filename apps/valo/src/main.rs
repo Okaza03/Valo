@@ -7,6 +7,8 @@ mod audio;
 mod config;
 mod filmography;
 mod fullscreen;
+#[cfg(feature = "iced")]
+mod iced_ui;
 mod images;
 mod inhibit;
 mod integrate;
@@ -38,12 +40,23 @@ use ui::watch::{PlayItem, Watch};
 use ui::Action;
 use update::Updates;
 
+// with the `iced` feature the egui UI still builds, unused, while the port goes on
+#[cfg_attr(feature = "iced", allow(unreachable_code))]
 fn main() -> eframe::Result<()> {
     let paths: Vec<PathBuf> = std::env::args_os()
         .skip(1)
         .map(PathBuf::from)
         .filter(|p| p.is_file())
         .collect();
+    // the Iced UI being ported (see src/iced_ui)
+    #[cfg(feature = "iced")]
+    {
+        if let Err(e) = iced_ui::run(paths) {
+            eprintln!("valo: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     // Linux desktops take the icon from the .desktop file named by the app id
     #[cfg(windows)]
     let viewport = egui::ViewportBuilder::default().with_icon(window_icon());
