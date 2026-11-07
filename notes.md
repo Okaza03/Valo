@@ -1,24 +1,24 @@
-# Valo v0.9.8
+# Valo v0.9.9
 
-Smoother playback, and fullscreen that plays nicely with the rest of your desktop.
+Install and update the Flatpak with `flatpak`, like any other app.
 
-### Changed
-- **Drawing:** Valo now draws with Vulkan or DirectX 12 instead of OpenGL, and waits for your screen's refresh before showing each frame, so video doesn't tear.
-- **Fullscreen** is a borderless window covering the screen. On Windows it no longer risks turning into exclusive fullscreen, so Alt+Tab, notifications and overlays work while you watch.
+### New
+- **Flatpak repository:** Valo now has its own Flatpak repository. Install it with `flatpak install --user https://okaza03.github.io/Valo/valo.flatpakref`, which adds the `valo` repository for your user (the runtime comes from Flathub). From then on, `flatpak install io.github.okaza03.Valo` and `flatpak update` work like for any other app. More at https://okaza03.github.io/Valo/
+- **Flatpak bundle:** the `.flatpak` file below now points at the same repository, so a copy installed from it also gets updates through `flatpak update`. If you installed an older bundle, install this one once (or click **Update** in the app) to switch over.
 
 ### Downloads
 | File | For |
 |---|---|
-| `valo-v0.9.8-x86_64-setup.exe` | Windows 10/11 (updates itself) |
-| `valo-v0.9.8-aarch64-setup.exe` | Windows 11 on ARM64 (updates itself) |
-| `valo-0.9.8-windows-x86_64.zip` | Windows, portable |
-| `valo-0.9.8-windows-aarch64.zip` | Windows on ARM64, portable |
-| `valo-v0.9.8-x86_64.AppImage` | any Linux distro (`chmod +x` and run, updates itself) |
-| `valo-v0.9.8-x86_64.flatpak` | any distro with Flatpak (updates itself; added a few minutes after the others) |
-| `valo_0.9.8-1_amd64.deb` | Debian / Ubuntu / Mint |
-| `valo-0.9.8-linux-x86_64.tar.gz` | manual install |
-| `valo-v0.9.8-androidtv.apk` | Android TV and Google TV (updates itself) |
-| `valo-v0.9.8-android.apk` | Android phones and tablets (updates itself) |
+| `valo-v0.9.9-x86_64-setup.exe` | Windows 10/11 (updates itself) |
+| `valo-v0.9.9-aarch64-setup.exe` | Windows 11 on ARM64 (updates itself) |
+| `valo-0.9.9-windows-x86_64.zip` | Windows, portable |
+| `valo-0.9.9-windows-aarch64.zip` | Windows on ARM64, portable |
+| `valo-v0.9.9-x86_64.AppImage` | any Linux distro (`chmod +x` and run, updates itself) |
+| `valo-v0.9.9-x86_64.flatpak` | any distro with Flatpak (updates itself and through `flatpak update`; added a few minutes after the others) |
+| `valo_0.9.9-1_amd64.deb` | Debian / Ubuntu / Mint |
+| `valo-0.9.9-linux-x86_64.tar.gz` | manual install |
+| `valo-v0.9.9-androidtv.apk` | Android TV and Google TV (updates itself) |
+| `valo-v0.9.9-android.apk` | Android phones and tablets (updates itself) |
 
 If you're using the Windows installer, the AppImage, the Flatpak or the TV app, click **Update** to get this version.
 
