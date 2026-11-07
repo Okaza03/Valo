@@ -54,7 +54,8 @@ mkdir -p "$SITE"
 cp -a "$REPO" "$SITE/repo"
 rm -rf "$SITE/repo/tmp"
 
-# `flatpak remote-add valo $BASE/valo.flatpakrepo`
+# `flatpak remote-add valo $BASE/valo.flatpakrepo`. A .flatpakrepo can't name
+# the runtime's repository, so the instructions add Flathub before it.
 cat > "$SITE/valo.flatpakrepo" <<EOF
 [Flatpak Repo]
 Title=$TITLE
@@ -95,8 +96,9 @@ cat > "$SITE/index.html" <<EOF
 <h1>Valo for Flatpak</h1>
 <p>Install Valo and keep it up to date with <code>flatpak</code>:</p>
 <pre>flatpak install --user $BASE/valo.flatpakref</pre>
-<p>Or add the repository once, then install by name:</p>
-<pre>flatpak remote-add --user --if-not-exists valo $BASE/valo.flatpakrepo
+<p>Or add the repository once, with Flathub for the runtime, then install by name:</p>
+<pre>flatpak remote-add --user --if-not-exists flathub $RUNTIME_REPO
+flatpak remote-add --user --if-not-exists valo $BASE/valo.flatpakrepo
 flatpak install --user io.github.okaza03.Valo</pre>
 <p><code>flatpak update</code> gets new versions. The runtime comes from Flathub.</p>
 <p><a href="$HOMEPAGE">Valo on GitHub</a></p>

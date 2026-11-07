@@ -12,7 +12,7 @@ Each release publishes a signed Flatpak repository to GitHub Pages, at <https://
 |---|---|
 | `repo/` | the OSTree repository `flatpak` reads (only the latest release) |
 | `valo.flatpakref` | `flatpak install --user https://okaza03.github.io/Valo/valo.flatpakref`: adds the remote and installs |
-| `valo.flatpakrepo` | `flatpak remote-add --user valo https://okaza03.github.io/Valo/valo.flatpakrepo` |
+| `valo.flatpakrepo` | `flatpak remote-add --user valo https://okaza03.github.io/Valo/valo.flatpakrepo`, after adding Flathub for the runtime (a `.flatpakrepo` can't name it) |
 
 The bundle attached to each release names the same repository, so copies installed from a bundle also get `flatpak update`. The bundle is attached only after Pages has the new version, so the app's **Update now** never finds a release that `flatpak update` can't install yet.
 
