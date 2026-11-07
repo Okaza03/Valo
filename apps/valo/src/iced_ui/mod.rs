@@ -1,31 +1,77 @@
 //! The Iced UI, built with `--features iced`. It's being ported from the egui
-//! UI (`crate::ui`) one screen at a time; so far it has the window chrome and
-//! the player. The library, sign-in and settings screens are still egui-only.
+//! UI (`crate::ui`) one screen at a time; so far it has the window chrome, the
+//! player, and setup, the server check and sign-in. The library, settings and
+//! updates are still egui-only: after signing in, this build shows a stand-in.
 //!
 //! Frames are presented with `PresentMode::Fifo` (vsync, no tearing), and
 //! fullscreen is a borderless window covering the screen, never exclusive mode.
+mod check;
 mod chrome;
 mod icon;
+mod login;
 mod seekbar;
+mod setup;
 mod style;
 mod video;
 mod watch;
+mod widgets;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use iced::alignment::Horizontal;
+use iced::alignment::Vertical;
 use iced::keyboard::{self, Key, Modifiers};
-use iced::widget::{button, column, container, text};
+use iced::widget::{column, container, operation, responsive, row, space, text};
 use iced::window::{self, Direction};
 use iced::{event, Background, Element, Length, Point, Size, Subscription, Task, Theme};
 
+use crate::api::{Client, Mode};
 use crate::audio::AudioOut;
 use crate::config::{self, Config, Progress};
 use crate::presence;
 use crate::ui::watch::PlayItem;
+use crate::ui::Action;
+use crate::update;
+use check::Check;
+use login::Login;
+use setup::Setup;
 use watch::Watch;
+
+/// What a screen asks the app to do after a message or a tick.
+pub enum Out {
+    None,
+    Act(Action),
+    /// Put this on the clipboard.
+    Copy(String),
+    /// Move the keyboard to this field.
+    Focus(&'static str),
+}
+
+/// The screen under the player.
+enum Stage {
+    Setup(Setup),
+    Check(Check),
+    Login(Login),
+    /// Connected (and signed in when the server wants it). The library isn't
+    /// ported yet, so this is a stand-in that says so.
+    Library {
+        client: Client,
+        user: Option<String>,
+    },
+}
+
+impl Stage {
+    /// Waiting on the network: the app ticks to poll it and turn spinners.
+    fn busy(&self) -> bool {
+        match self {
+            Stage::Setup(s) => s.busy(),
+            Stage::Check(c) => c.busy(),
+            Stage::Login(l) => l.busy(),
+            Stage::Library { .. } => false,
+        }
+    }
+}
 
 /// A value computed on a background thread; polled on the app's ticks.
 pub struct Job<T>(Receiver<T>);
@@ -112,6 +158,9 @@ struct App {
     audio: AudioOut,
     muted: bool,
     watch: Option<Watch>,
+    stage: Stage,
+    /// A server check waiting for the user to sign in.
+    pending_check: Option<Check>,
     window: Option<window::Id>,
     size: Size,
     fullscreen: bool,
@@ -126,6 +175,13 @@ struct App {
 pub enum Message {
     WindowId(Option<window::Id>),
     Watch(watch::Msg),
+    Setup(setup::Msg),
+    Check(check::Msg),
+    Login(login::Msg),
+    /// Poll the screen's background work.
+    Tick,
+    SignOut,
+    ChangeServer,
     Key(Key, Modifiers),
     Window(window::Event),
     Maximized(bool),
@@ -140,10 +196,25 @@ pub enum Message {
 
 impl App {
     fn new(files: Vec<PathBuf>) -> (Self, Task<Message>) {
-        let cfg = Config::load();
+        let mut cfg = Config::load();
+        if cfg.server.is_empty() && cfg.seen_version.is_empty() {
+            // a new install: nothing is new to this user
+            cfg.seen_version = update::VERSION.to_owned();
+            cfg.save();
+        }
+        crate::integrate::sync(cfg.app_menu);
+        // reconnect to the saved server; files on the command line play first
+        let setup = Setup::new(cfg.server.clone(), files.is_empty());
+        let focus = if setup.wants_focus() {
+            operation::focus(setup::FIELD)
+        } else {
+            Task::none()
+        };
         let watch = (!files.is_empty())
             .then(|| Watch::new(files.into_iter().map(PlayItem::local).collect()));
         let app = Self {
+            stage: Stage::Setup(setup),
+            pending_check: None,
             maximized: cfg.window.is_some_and(|w| w.maximized),
             cfg,
             progress: Progress::load(),
@@ -156,7 +227,10 @@ impl App {
             placed: (None, None),
             presence: presence::Presence::new(),
         };
-        (app, window::oldest().map(Message::WindowId))
+        (
+            app,
+            Task::batch([window::oldest().map(Message::WindowId), focus]),
+        )
     }
 
     fn title(&self) -> String {
@@ -192,6 +266,9 @@ impl App {
             Some(w) if w.playing() => window::frames().map(|_| Message::Watch(watch::Msg::Tick)),
             Some(_) => iced::time::every(Duration::from_millis(50))
                 .map(|_| Message::Watch(watch::Msg::Tick)),
+            None if self.stage.busy() => {
+                iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
+            }
             None => Subscription::none(),
         };
         Subscription::batch([keys, window, ticks])
@@ -247,6 +324,44 @@ impl App {
                 }
             }
             Message::Watch(msg) => self.update_watch(msg),
+            Message::Setup(msg) => match &mut self.stage {
+                Stage::Setup(s) => {
+                    let out = s.update(msg);
+                    self.out(out)
+                }
+                _ => Task::none(),
+            },
+            Message::Check(msg) => match &mut self.stage {
+                Stage::Check(c) => {
+                    let out = c.update(msg);
+                    self.out(out)
+                }
+                _ => Task::none(),
+            },
+            Message::Login(msg) => match &mut self.stage {
+                Stage::Login(l) => {
+                    let out = l.update(msg);
+                    self.out(out)
+                }
+                _ => Task::none(),
+            },
+            Message::Tick => {
+                let out = match &mut self.stage {
+                    Stage::Setup(s) => s.tick(),
+                    Stage::Check(c) => c.tick(),
+                    Stage::Login(l) => l.tick(),
+                    Stage::Library { .. } => Out::None,
+                };
+                self.out(out)
+            }
+            Message::SignOut => match &self.stage {
+                Stage::Library { client, .. } => {
+                    let c = client.clone();
+                    self.handle(Action::SignOut(c))
+                }
+                _ => Task::none(),
+            },
+            Message::ChangeServer => self.handle(Action::ChangeServer),
             Message::Key(key, mods) => {
                 if self.watch.is_some() {
                     self.update_watch(watch::Msg::Key(key, mods))
@@ -289,12 +404,7 @@ impl App {
                 self.note_window();
                 Task::none()
             }
-            Message::OpenFiles => {
-                if let Some(files) = crate::pick_files() {
-                    self.watch = Some(Watch::new(files.into_iter().map(PlayItem::local).collect()));
-                }
-                Task::none()
-            }
+            Message::OpenFiles => self.handle(Action::OpenFiles),
             Message::Drag => self.window.map_or_else(Task::none, window::drag),
             Message::ToggleMaximize => self.window.map_or_else(Task::none, window::toggle_maximize),
             Message::Minimize => self
@@ -313,6 +423,161 @@ impl App {
         };
         self.update_presence();
         task
+    }
+
+    fn out(&mut self, out: Out) -> Task<Message> {
+        match out {
+            Out::None => Task::none(),
+            Out::Act(a) => self.handle(a),
+            Out::Copy(t) => iced::clipboard::write(t),
+            Out::Focus(id) => operation::focus(id),
+        }
+    }
+
+    /// Save the address from the setup or check screen. A different server
+    /// forgets the old one's session.
+    fn remember_server(&mut self) {
+        let address = match &self.stage {
+            Stage::Setup(s) => s.address(),
+            Stage::Check(c) => c.address(),
+            _ => return,
+        }
+        .trim()
+        .to_owned();
+        if address != self.cfg.server {
+            self.cfg.server = address;
+            self.cfg.token = None; // belonged to the old server
+            self.cfg.admin = false;
+        }
+        self.cfg.save();
+    }
+
+    /// Sign in to `client`'s server, the keyboard in the first empty field.
+    fn login(&mut self, client: Client, error: Option<String>) -> Task<Message> {
+        let l = Login::new(client, self.cfg.username.clone(), error);
+        let focus = operation::focus(l.first_field());
+        self.stage = Stage::Login(l);
+        focus
+    }
+
+    /// What the screens ask for: the same steps as the egui app's `handle`.
+    fn handle(&mut self, action: Action) -> Task<Message> {
+        match action {
+            Action::CheckServer(address) => {
+                self.pending_check = None;
+                self.stage = Stage::Check(Check::new(address));
+            }
+            Action::Connected(mut client) => {
+                self.remember_server();
+                if matches!(self.stage, Stage::Check(_)) {
+                    // a newly added server: sign in, then finish the check
+                    let check = std::mem::replace(
+                        &mut self.stage,
+                        Stage::Library {
+                            client: client.clone(),
+                            user: None,
+                        },
+                    );
+                    if let Stage::Check(c) = check {
+                        self.pending_check = Some(c);
+                    }
+                    return self.login(client, None);
+                } else if !client.info.auth {
+                    self.stage = Stage::Library { client, user: None };
+                } else if let Some(t) = self.cfg.token.clone() {
+                    client.token = Some(t);
+                    client.admin = self.cfg.admin;
+                    let user = Some(self.cfg.username.clone()).filter(|u| !u.is_empty());
+                    self.stage = Stage::Library { client, user };
+                } else {
+                    return self.login(client, None);
+                }
+            }
+            Action::SignedIn {
+                client,
+                user,
+                remember,
+            } => {
+                self.cfg.username = user.clone();
+                self.cfg.token = if remember { client.token.clone() } else { None };
+                self.cfg.admin = remember && client.admin;
+                self.cfg.save();
+                match self.pending_check.take() {
+                    Some(mut c) => {
+                        c.signed_in(client, Some(user));
+                        self.stage = Stage::Check(c);
+                    }
+                    None => {
+                        self.stage = Stage::Library {
+                            client,
+                            user: Some(user),
+                        }
+                    }
+                }
+            }
+            Action::Ready { client, user } => {
+                self.remember_server();
+                self.stage = Stage::Library { client, user };
+            }
+            Action::NeedLogin(mut client) => {
+                client.token = None;
+                client.admin = false;
+                self.cfg.token = None;
+                self.cfg.admin = false;
+                self.cfg.save();
+                let msg = (client.info.mode == Mode::Api)
+                    .then(|| "Your session has expired. Please sign in again.".to_owned());
+                return self.login(client, msg);
+            }
+            Action::AdminChanged(admin) => {
+                if self.cfg.token.is_some() {
+                    self.cfg.admin = admin;
+                    self.cfg.save();
+                }
+            }
+            Action::SignOut(mut client) => {
+                let c = client.clone();
+                std::thread::spawn(move || c.logout());
+                client.token = None;
+                client.admin = false;
+                self.cfg.token = None;
+                self.cfg.admin = false;
+                self.cfg.save();
+                return self.login(client, None);
+            }
+            Action::ChangeServer => {
+                // keep what the user typed if they're backing out of a check
+                let pending = self.pending_check.take();
+                let address = match (&self.stage, &pending) {
+                    (Stage::Check(c), _) | (_, Some(c)) => c.address().to_owned(),
+                    _ => self.cfg.server.clone(),
+                };
+                self.stage = Stage::Setup(Setup::new(address, false));
+                return operation::focus(setup::FIELD);
+            }
+            Action::OpenFiles => {
+                if let Some(files) = crate::pick_files() {
+                    self.watch = Some(Watch::new(files.into_iter().map(PlayItem::local).collect()));
+                }
+            }
+            Action::Play(items) => {
+                let fs = if self.cfg.fullscreen_on_play {
+                    self.set_fullscreen(true)
+                } else {
+                    Task::none()
+                };
+                self.watch = Some(Watch::new(items));
+                return fs;
+            }
+            Action::Quit => return self.update(Message::Close),
+            // not in the Iced build yet: the library, settings and updates
+            Action::None
+            | Action::Refresh
+            | Action::CheckUpdates
+            | Action::ShowUpdate
+            | Action::OpenSettings => {}
+        }
+        Task::none()
     }
 
     fn check_maximized(&self) -> Task<Message> {
@@ -384,43 +649,84 @@ impl App {
                     fullscreen: self.fullscreen,
                 })
                 .map(Message::Watch),
-            None => self.home(),
+            None => self.screen(),
         };
         chrome::frame(content, self.size, framed)
     }
 
-    /// Nothing playing: what this build can do so far.
-    fn home(&self) -> Element<'_, Message> {
-        let bar = chrome::title_bar("Valo", self.maximized, column![].into());
-        let open = button(text("Open videos…").size(15))
-            .padding([10, 22])
-            .style(|_, s| button::Style {
-                background: Some(Background::Color(if matches!(s, button::Status::Hovered) {
-                    style::c(crate::ui::theme::pal().primary).scale_alpha(0.85)
-                } else {
-                    style::c(crate::ui::theme::pal().primary)
-                })),
-                text_color: style::c(crate::ui::theme::pal().ink),
-                border: iced::border::rounded(f32::from(crate::ui::theme::spec().button_radius)),
-                ..button::Style::default()
-            })
-            .on_press(Message::OpenFiles);
-        let body = container(
-            column![
-                text("Drop a video here or press Ctrl+O")
-                    .size(18)
-                    .color(style::MUTED()),
-                open,
+    /// The title bar, the current screen, and the status line.
+    fn screen(&self) -> Element<'_, Message> {
+        let name = match &self.stage {
+            Stage::Login(l) => l.client().info.name.clone(),
+            Stage::Library { client, .. } => client.info.name.clone(),
+            _ => "Valo".to_owned(),
+        };
+        let bar = chrome::title_bar(&name, self.maximized, column![].into());
+        let body: Element<Message> = match &self.stage {
+            Stage::Setup(s) => s.view().map(Message::Setup),
+            Stage::Check(c) => c.view().map(Message::Check),
+            Stage::Login(l) => l.view().map(Message::Login),
+            Stage::Library { client, user } => self.library(client, user.as_deref()),
+        };
+        let body = container(body)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(style::BG())),
+                ..container::Style::default()
+            });
+        let left = match &self.stage {
+            Stage::Login(l) => {
+                format!("Connected to {}  ·  sign-in required", l.client().info.name)
+            }
+            Stage::Check(c) => format!("Checking {}", c.address()),
+            Stage::Library { client, user } => match user {
+                Some(u) => format!("Connected to {} as {u}", client.info.name),
+                None => format!("Connected to {}", client.info.name),
+            },
+            Stage::Setup(_) => "Not connected".to_owned(),
+        };
+        let right = format!(
+            "Valo {}  ·  {} {}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        column![bar, body, chrome::status_bar(left, right)].into()
+    }
+
+    /// Connected: the library isn't in the Iced build yet, so say so, and
+    /// offer what works.
+    fn library(&self, client: &Client, user: Option<&str>) -> Element<'_, Message> {
+        let who = match user {
+            Some(u) => format!("Signed in to {} as {u}.", client.info.name),
+            None => format!("Connected to {}.", client.info.name),
+        };
+        let signed_in = client.token.is_some();
+        responsive(move |size| {
+            let mut actions = row![widgets::small("Open videos…", Message::OpenFiles)]
+                .spacing(10)
+                .align_y(Vertical::Center);
+            if signed_in {
+                actions = actions.push(widgets::small("Sign out", Message::SignOut));
+            }
+            actions = actions.push(widgets::small("Change server", Message::ChangeServer));
+            let body = column![
+                text("Your library").font(style::BOLD).size(20),
+                text(who.clone()).color(style::MUTED()),
+                space().height(10),
+                text(
+                    "The library isn't in this build of Valo yet: it's being moved to \
+                     a new interface one screen at a time. Use a release build to \
+                     browse, or open videos from this computer."
+                ),
+                space().height(14),
+                actions,
             ]
-            .spacing(18)
-            .align_x(Horizontal::Center),
-        )
-        .center(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(style::BG())),
-            ..container::Style::default()
-        });
-        column![bar, body].into()
+            .spacing(4);
+            widgets::card(size.height, body)
+        })
+        .into()
     }
 }
 

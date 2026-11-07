@@ -30,6 +30,12 @@ pub struct Check {
     signed_in_at: Option<usize>,
 }
 
+/// Redraw when the check has news.
+fn repaint(ctx: &egui::Context) -> impl Fn() + Send + 'static {
+    let ctx = ctx.clone();
+    move || ctx.request_repaint()
+}
+
 fn color(l: Level) -> egui::Color32 {
     match l {
         Level::Pass => OK(),
@@ -103,7 +109,7 @@ fn bar(ui: &mut Ui, f: &check::Field) {
 
 impl Check {
     pub fn new(ctx: &egui::Context, address: String) -> Self {
-        let rx = check::start(ctx, Job::Address(address.clone()));
+        let rx = check::start(repaint(ctx), Job::Address(address.clone()));
         Self {
             address,
             rows: Vec::new(),
@@ -120,7 +126,7 @@ impl Check {
         self.user = user;
         self.client = None;
         self.signed_in_at = Some(self.rows.len());
-        self.rx = Some(check::start(ctx, Job::SignedIn(client)));
+        self.rx = Some(check::start(repaint(ctx), Job::SignedIn(client)));
     }
 
     pub fn address(&self) -> &str {
