@@ -36,6 +36,16 @@ pub fn install(cc: &eframe::CreationContext<'_>) {
     }
 }
 
+/// The same, for a window that isn't eframe's (the Iced UI).
+#[cfg(all(windows, feature = "iced"))]
+pub fn install_hwnd(hwnd: isize) {
+    use windows_sys::Win32::UI::Shell::SetWindowSubclass;
+    // SAFETY: the HWND is our live main window, and Iced runs this on the thread that owns it.
+    unsafe {
+        SetWindowSubclass(hwnd as _, Some(subclass_proc), 1, 0);
+    }
+}
+
 #[cfg(not(windows))]
 pub fn install(_cc: &eframe::CreationContext<'_>) {}
 
