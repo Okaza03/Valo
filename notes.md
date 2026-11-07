@@ -3,13 +3,7 @@
 Install and update the Flatpak with `flatpak`, like any other app.
 
 ### New
-- **Flatpak repository:** Valo now has its own Flatpak repository. Install it with one command:
-
-  ```
-  flatpak install --user https://okaza03.github.io/Valo/valo.flatpakref
-  ```
-
-  That adds the `valo` repository for your user (the runtime comes from Flathub). From then on, `flatpak install io.github.okaza03.Valo` and `flatpak update` work like for any other app. More at [okaza03.github.io/Valo](https://okaza03.github.io/Valo/).
+- **Flatpak repository:** Valo now has its own Flatpak repository. Install it with `flatpak install --user https://okaza03.github.io/Valo/valo.flatpakref`, which adds the `valo` repository for your user (the runtime comes from Flathub). From then on, `flatpak install io.github.okaza03.Valo` and `flatpak update` work like for any other app. More at https://okaza03.github.io/Valo/
 - **Flatpak bundle:** the `.flatpak` file below now points at the same repository, so a copy installed from it also gets updates through `flatpak update`. If you installed an older bundle, install this one once (or click **Update** in the app) to switch over.
 
 ### Downloads
