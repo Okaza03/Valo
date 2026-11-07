@@ -209,7 +209,11 @@ impl Watch {
         let first = self.items.len();
         self.items.extend(files.into_iter().map(PlayItem::local));
         if self.items.len() > first {
-            self.queued = Some(first);
+            // Iced drops files one event at a time: keep playing from the
+            // first of them, not whichever came last
+            if self.queued.is_none() {
+                self.queued = Some(first);
+            }
             self.show_list = true;
         }
     }
@@ -1756,5 +1760,30 @@ fn delay_text(d: f64) -> String {
         format!("{:.1} s earlier", -d)
     } else {
         format!("{d:.1} s later")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_files_play_from_the_first() {
+        // one FileDropped event per file, as Iced sends them
+        let mut w = Watch::new(vec![PlayItem::local("a.mkv".into())]);
+        w.add_files(vec!["b.mkv".into()]);
+        w.add_files(vec!["c.mkv".into()]);
+        assert_eq!(w.queued, Some(0));
+        assert!(w.show_list);
+
+        // once the first has started, a new drop plays the first file it added
+        let mut w = Watch::new(Vec::new());
+        w.add_files(vec!["a.mkv".into()]);
+        w.add_files(vec!["b.mkv".into()]);
+        assert_eq!(w.queued, Some(0));
+        w.queued = None; // opened
+        w.add_files(vec!["c.mkv".into()]);
+        w.add_files(vec!["d.mkv".into()]);
+        assert_eq!(w.queued, Some(2));
     }
 }
