@@ -69,6 +69,14 @@ fn main() -> eframe::Result<()> {
             .with_decorations(false) // we draw our own title bar
             .with_transparent(false)
             .with_app_id(app_id()),
+        renderer: eframe::Renderer::Wgpu,
+        // Vsync'd presentation, without tearing. Fullscreen is winit's borderless
+        // window (ViewportCommand::Fullscreen), never exclusive mode, so overlays,
+        // Alt+Tab and notifications keep working.
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            present_mode: eframe::wgpu::PresentMode::Fifo,
+            ..Default::default()
+        },
         ..Default::default()
     };
     eframe::run_native(
@@ -556,7 +564,7 @@ impl eframe::App for App {
         chrome::window_frame(ctx);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         if let Some(w) = self.watch.as_mut() {
             w.save_progress(&mut self.progress);
         }

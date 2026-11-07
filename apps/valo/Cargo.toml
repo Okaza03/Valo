@@ -6,7 +6,15 @@ license.workspace = true
 description = "A small, fast video player and media library client"
 
 [dependencies]
-eframe = "0.31"
+# wgpu instead of the default glow renderer, for a Fifo swapchain (see main.rs)
+eframe = { version = "0.31", default-features = false, features = [
+  "accesskit",
+  "default_fonts",
+  "wayland",
+  "web_screen_reader",
+  "wgpu",
+  "x11",
+] }
 cpal = "0.18"
 rfd = "0.17"
 anyhow = "1"
