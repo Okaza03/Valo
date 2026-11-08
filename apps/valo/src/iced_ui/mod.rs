@@ -438,6 +438,10 @@ impl App {
                     // the new version is starting; it takes over from here
                     return self.update(Message::Close);
                 }
+                let quiet = self.splash.is_none() && self.modal().is_none();
+                if let Stage::Library(l) = &mut self.stage {
+                    l.set_quiet(quiet);
+                }
                 if let Some(sp) = &mut self.splash {
                     let (ready, hold) = match &self.stage {
                         Stage::Library(l) => (l.settled(), l.has_library()),
@@ -473,6 +477,11 @@ impl App {
                 self.update_dialog(dialogs::Msg::Close)
             }
             Message::Escape => match (&self.watch, &mut self.stage) {
+                (None, Stage::Library(l)) if l.popup_close().is_some() => {
+                    let msg = l.popup_close().expect("checked");
+                    let out = l.update(msg, &self.progress, &self.cfg);
+                    self.out(out)
+                }
                 (None, Stage::Library(l)) => {
                     let out = l.escape();
                     self.out(out)
@@ -956,6 +965,22 @@ impl App {
                 self.size,
                 Message::Dialog(dialogs::Msg::Close),
             );
+        }
+        if let (None, Stage::Library(l)) = (self.modal(), &self.stage) {
+            let env = library::Env {
+                images: &self.images,
+                progress: &self.progress,
+                cfg: &self.cfg,
+            };
+            if let Some((content, width, close)) = l.popup(env) {
+                page = dialogs::modal(
+                    page,
+                    content.map(Message::Library),
+                    width,
+                    self.size,
+                    Message::Library(close),
+                );
+            }
         }
         if let Some(t) = self.updates.toast() {
             page = iced::widget::stack![page, dialogs::toast(&t, spin_secs()).map(Message::Dialog)]

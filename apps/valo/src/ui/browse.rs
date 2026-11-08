@@ -1,13 +1,13 @@
 //! The media library: home page, movie/series grids, search and details.
 mod admin;
-mod arrivals;
+pub(crate) mod arrivals;
 pub(crate) mod details;
 mod devices;
 mod discover;
 mod layouts;
 mod password;
 pub(crate) mod people;
-mod viewed;
+pub(crate) mod viewed;
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, RandomState};
@@ -196,13 +196,8 @@ pub struct Browse {
     layout_task: Option<Task<Result<ServerLayout>>>,
     /// Titles each library had when the user last saw it.
     known: Known,
-    /// Newly added titles, by id, waiting to be announced.
-    arrivals: Vec<String>,
-    /// Seasons added to series the user already knew, by series id.
-    new_seasons: HashMap<String, Vec<u32>>,
-    /// Titles taken off the server since, as (id, name), waiting to be announced.
-    departures: Vec<(String, String)>,
-    arrivals_open: bool,
+    /// What's new or gone since the user last looked, waiting to be announced.
+    arrivals: arrivals::Queue,
     /// The window had focus last frame.
     focused: bool,
 }
@@ -247,10 +242,7 @@ impl Browse {
             layout: ServerLayout::default(),
             layout_task: None,
             known: Known::load(),
-            arrivals: Vec::new(),
-            new_seasons: HashMap::new(),
-            departures: Vec::new(),
-            arrivals_open: false,
+            arrivals: arrivals::Queue::default(),
             focused: true,
         };
         if b.client.token.is_some() {

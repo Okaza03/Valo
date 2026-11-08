@@ -6,6 +6,7 @@
 mod cards;
 mod details;
 mod marks;
+mod profile;
 
 use std::hash::RandomState;
 use std::sync::Arc;
@@ -42,7 +43,9 @@ const PAGE: &str = "library-page";
 pub const SEARCH: &str = "library-search";
 const HERO_ROTATE: Duration = Duration::from_secs(9);
 /// The home page's own rows in their usual order (their layout keys).
-const HOME_ROWS: [&str; 6] = ["continue", "mylist", "recent", "top", "movies", "series"];
+const HOME_ROWS: [&str; 7] = [
+    "continue", "mylist", "recent", "others", "top", "movies", "series",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum View {
@@ -54,12 +57,19 @@ pub enum View {
     Episode(String, String),
     /// A director's or creator's titles, by name.
     Person(String),
+    /// The signed-in user's watching stats and devices.
+    Profile,
+    /// What other users watched lately; only the home row's See all opens it.
+    Viewed,
 }
 
 impl View {
     /// Pages opened from another page: Back returns to it.
     fn nested(&self) -> bool {
-        matches!(self, View::Details(_) | View::Episode(..) | View::Person(_))
+        matches!(
+            self,
+            View::Details(_) | View::Episode(..) | View::Person(_) | View::Profile | View::Viewed
+        )
     }
 }
 
@@ -153,6 +163,12 @@ pub enum Msg {
     Hero(isize),
     Retry,
     ChangeServer,
+    Settings,
+    /// Sign a device out (by session id), or all the others.
+    EndSession(Option<String>),
+    Password(profile::PwMsg),
+    CloseArrivals,
+    OpenUrl(String),
     /// Open or close the profile menu.
     Menu(bool),
     SignOut,
@@ -206,6 +222,16 @@ pub struct Library {
     watchers: std::collections::HashMap<String, details::Watchers>,
     /// File info probed from streams, by stream URL.
     probes: std::collections::HashMap<String, details::Probe>,
+    viewed: profile::ViewedList,
+    devices: profile::Devices,
+    /// Asking for a new password, when an admin wants one.
+    password: profile::Prompt,
+    /// Titles each library had when the user last saw it.
+    known: crate::config::Known,
+    /// What's new or gone since, waiting to be announced.
+    arrivals: crate::ui::browse::arrivals::Queue,
+    /// No other dialog or the splash is up: this page's popups may show.
+    quiet: bool,
     watchlist: Watchlist,
     hidden: Hidden,
     /// My list and Continue watching removals, kept in step with the server.
@@ -252,6 +278,12 @@ impl Library {
             card_menu: None,
             watchers: std::collections::HashMap::new(),
             probes: std::collections::HashMap::new(),
+            viewed: profile::ViewedList::default(),
+            devices: profile::Devices::default(),
+            password: profile::Prompt::default(),
+            known: crate::config::Known::load(),
+            arrivals: crate::ui::browse::arrivals::Queue::default(),
+            quiet: false,
             watchlist: Watchlist::load(),
             hidden: Hidden::load(),
             lists: ListSync::default(),
@@ -297,6 +329,7 @@ impl Library {
             || self.me.is_some()
             || self.layout_task.is_some()
             || self.details_busy()
+            || self.people_busy()
     }
 
     fn prefix(&self) -> String {
@@ -378,6 +411,7 @@ impl Library {
         if let Some(r) = self.me.as_mut().and_then(Job::poll) {
             self.me = None;
             if let Some(me) = r {
+                self.password.open |= me.must_change_password;
                 if me.admin != self.client.admin {
                     self.client.admin = me.admin;
                     out = Out::Act(Action::AdminChanged(me.admin));
@@ -405,6 +439,10 @@ impl Library {
                         self.history.clear();
                         out = Out::Top(PAGE);
                     }
+                    let prefix = self.prefix();
+                    let before = self.lib.clone();
+                    self.arrivals
+                        .note(&mut self.known, &prefix, &lib, before.as_deref());
                     crate::ui::set_moving_art(lib.moving_art());
                     if self.lib.is_none() {
                         images.set_client(Some(self.client.clone()));
@@ -434,7 +472,24 @@ impl Library {
             self.hero_since = Instant::now();
         }
         self.details_work();
+        if self.people_work() {
+            return Out::Act(Action::NeedLogin(self.client.clone()));
+        }
         out
+    }
+
+    /// Whether this page's popups may show (no splash or other dialog).
+    /// New arrivals open once the user is on Home, Movies or TV Shows.
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.quiet = quiet;
+        let browsing =
+            matches!(self.view, View::Home | View::Movies | View::Series) && self.search.is_empty();
+        if quiet && browsing && !self.password.open && !self.arrivals.is_empty() {
+            if let Some(lib) = self.lib.clone() {
+                let prefix = self.prefix();
+                self.arrivals.opening(&mut self.known, &prefix, &lib);
+            }
+        }
     }
 
     /// The window got focus back: titles may have been added or removed since.
@@ -452,7 +507,17 @@ impl Library {
         match msg {
             Msg::Nav(v) => return self.go(v),
             Msg::Back => return self.key_back(),
-            Msg::Open(id) => return self.go(View::Details(id)),
+            Msg::Open(id) => {
+                if self.arrivals.open {
+                    self.arrivals.clear();
+                }
+                return self.go(View::Details(id));
+            }
+            Msg::Settings => return Out::Act(Action::OpenSettings),
+            Msg::EndSession(which) => return self.end_sessions(which),
+            Msg::Password(m) => return self.update_password(m),
+            Msg::CloseArrivals => self.arrivals.clear(),
+            Msg::OpenUrl(u) => crate::ui::chrome::open_url(&u),
             Msg::Play(id, ep, _) if self.moving(&id, ep.as_deref()) => {
                 // its page says why it can't play
                 return self.go(View::Details(id));
@@ -675,6 +740,8 @@ impl Library {
             .align_y(Vertical::Center)
             .padding([4, 2]),
             separator(),
+            widgets::menu_item("Profile", Msg::Nav(View::Profile)),
+            separator(),
         ]
         .spacing(2)
         .width(250);
@@ -784,6 +851,8 @@ impl Library {
                     View::Movies => self.grid_page(lib, Kind::Movie, env, w),
                     View::Series => self.grid_page(lib, Kind::Series, env, w),
                     View::Person(name) => self.person_page(lib, name, env, w),
+                    View::Profile => self.profile_page(lib, env, w),
+                    View::Viewed => self.viewed_page(lib, env, w),
                     View::Details(id) => match lib.find(id) {
                         Some(item) if item.kind == Kind::Movie => {
                             self.movie_page(lib, item, env, w)
@@ -913,6 +982,13 @@ impl Library {
                     recent.sort_by_key(|i| std::cmp::Reverse(i.added));
                     let cards = self.poster_cards(recent.into_iter().take(24), env.progress);
                     page = page.push(row_of("Recently added", &cards, false, None));
+                }
+                "others" => {
+                    let cards = self.viewed_cards(lib, env);
+                    if !cards.is_empty() {
+                        page =
+                            page.push(row_of(profile::VIEWED, &cards, false, Some(View::Viewed)));
+                    }
                 }
                 "top" => {
                     // best rated first; ties in a random order
