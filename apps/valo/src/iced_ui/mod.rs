@@ -7,6 +7,7 @@
 //! fullscreen is a borderless window covering the screen, never exclusive mode.
 mod check;
 mod chrome;
+mod dialogs;
 mod icon;
 mod images;
 mod library;
@@ -178,6 +179,23 @@ struct App {
     images: Images,
     /// Watch progress, kept in step with the server.
     sync: crate::sync::Sync,
+    /// Checking for, offering and installing a newer Valo.
+    updates: update::Updates,
+    /// Settings is open.
+    settings: bool,
+    /// The wordmark over the window after signing in.
+    splash: Option<dialogs::Splash>,
+    /// The desktop is set to light (for the System theme).
+    system_light: bool,
+}
+
+/// The dialog over the page, if any: Settings first, then the update
+/// popup, then "What's new" (as egui orders them).
+#[derive(Clone, Copy, PartialEq)]
+enum Modal {
+    Settings,
+    Update,
+    WhatsNew,
 }
 
 #[derive(Clone, Debug)]
@@ -188,12 +206,18 @@ pub enum Message {
     Check(check::Msg),
     Login(login::Msg),
     Library(library::Msg),
+    Dialog(dialogs::Msg),
+    /// The desktop's light or dark setting, at start and when it changes.
+    SystemTheme(iced::theme::Mode),
+    /// A click on the splash: nothing happens.
+    Swallow,
     /// Poll the screen's background work.
     Tick,
     /// Reload the library (the status line was clicked).
     Refresh,
     OpenSettings,
     CheckUpdates,
+    ShowUpdate,
     /// Escape, even one a text field took.
     Escape,
     Key(Key, Modifiers),
@@ -242,10 +266,23 @@ impl App {
             presence: presence::Presence::new(),
             images: Images::new(),
             sync: crate::sync::Sync::default(),
+            updates: {
+                let mut u = update::Updates::default();
+                u.check(crate::util::Waker::none(), false); // quietly, once per start
+                u
+            },
+            settings: false,
+            splash: None,
+            system_light: false,
         };
+        app.apply_look();
         (
             app,
-            Task::batch([window::oldest().map(Message::WindowId), focus]),
+            Task::batch([
+                window::oldest().map(Message::WindowId),
+                focus,
+                iced::system::theme().map(Message::SystemTheme),
+            ]),
         )
     }
 
@@ -299,7 +336,16 @@ impl App {
             }
             None => Subscription::none(),
         };
-        Subscription::batch([keys, escape, window, ticks])
+        let system = iced::system::theme_changes().map(Message::SystemTheme);
+        // the splash fades a frame at a time; checks and installs report back
+        let extra = if self.splash.is_some() && self.watch.is_none() {
+            window::frames().map(|_| Message::Tick)
+        } else if self.updates.busy() && self.watch.is_none() {
+            iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([keys, escape, window, ticks, system, extra])
     }
 
     fn set_fullscreen(&mut self, on: bool) -> Task<Message> {
@@ -380,7 +426,27 @@ impl App {
                 }
                 _ => Task::none(),
             },
+            Message::Dialog(msg) => self.update_dialog(msg),
+            Message::SystemTheme(m) => {
+                self.system_light = m == iced::theme::Mode::Light;
+                self.apply_look();
+                Task::none()
+            }
+            Message::Swallow => Task::none(),
             Message::Tick => {
+                if self.updates.poll() {
+                    // the new version is starting; it takes over from here
+                    return self.update(Message::Close);
+                }
+                if let Some(sp) = &mut self.splash {
+                    let (ready, hold) = match &self.stage {
+                        Stage::Library(l) => (l.settled(), l.has_library()),
+                        _ => (true, false),
+                    };
+                    if !sp.tick(ready, hold) {
+                        self.splash = None;
+                    }
+                }
                 self.images.poll();
                 let out = match &mut self.stage {
                     Stage::Setup(s) => s.tick(),
@@ -402,6 +468,10 @@ impl App {
             Message::Refresh => self.handle(Action::Refresh),
             Message::OpenSettings => self.handle(Action::OpenSettings),
             Message::CheckUpdates => self.handle(Action::CheckUpdates),
+            Message::ShowUpdate => self.handle(Action::ShowUpdate),
+            Message::Escape if self.watch.is_none() && self.modal().is_some() => {
+                self.update_dialog(dialogs::Msg::Close)
+            }
             Message::Escape => match (&self.watch, &mut self.stage) {
                 (None, Stage::Library(l)) => {
                     let out = l.escape();
@@ -520,16 +590,137 @@ impl App {
         self.cfg.save();
     }
 
-    /// The update control: the refresh icon that checks for a new Valo
-    /// (egui's `chrome::update_button`).
+    /// The update control: the refresh icon that checks for a new Valo, a
+    /// spinner while it does, and an "Update" tab when one is out (egui's
+    /// `chrome::update_button`).
     fn update_button(&self) -> Element<'_, Message> {
-        chrome::bar_button(Icon::Refresh, "Check for updates", Message::CheckUpdates)
+        let mut r = row![].align_y(iced::alignment::Vertical::Center);
+        if let Some(rel) = &self.updates.available {
+            r = r.push(space().width(8)).push(chrome::tip_below(
+                widgets::tab(
+                    &format!("Update {}", rel.version),
+                    true,
+                    Message::ShowUpdate,
+                ),
+                &format!("Valo {} is available — click to update", rel.version),
+            ));
+            r = r.push(space().width(8));
+        }
+        if self.updates.checking() {
+            r = r.push(
+                container(icon::spinner(spin_secs(), style::TEXT(), 16.0)).center(chrome::BAR_H),
+            );
+        } else {
+            r = r.push(chrome::bar_button(
+                Icon::Refresh,
+                "Check for updates",
+                Message::CheckUpdates,
+            ));
+        }
+        r.into()
     }
 
-    /// Show the library of `client`'s server.
+    /// Show the library of `client`'s server, the wordmark over it while it loads.
     fn open_library(&mut self, client: Client, user: Option<String>) {
         self.images.set_client(Some(client.clone()));
         self.stage = Stage::Library(Box::new(Library::new(client, user)));
+        self.splash = Some(dialogs::Splash::new());
+    }
+
+    /// Show the style and theme from the settings (System: as the desktop is).
+    fn apply_look(&self) {
+        crate::ui::theme::set(
+            self.cfg.style,
+            dialogs::resolved(self.cfg.theme, self.system_light),
+        );
+    }
+
+    /// The dialog to show now, if any.
+    fn modal(&self) -> Option<Modal> {
+        if self.settings {
+            return Some(Modal::Settings);
+        }
+        if self.splash.is_some() {
+            return None;
+        }
+        if self.updates.popup().is_some() {
+            return Some(Modal::Update);
+        }
+        match &self.stage {
+            Stage::Library(l) if l.settled() && self.cfg.seen_version != update::VERSION => {
+                Some(Modal::WhatsNew)
+            }
+            _ => None,
+        }
+    }
+
+    fn update_dialog(&mut self, msg: dialogs::Msg) -> Task<Message> {
+        use dialogs::Msg as D;
+        if dialogs::apply(&mut self.cfg, &msg) {
+            self.cfg.save();
+            self.apply_look();
+            return Task::none();
+        }
+        match msg {
+            D::Close => match self.modal() {
+                Some(Modal::Settings) => self.settings = false,
+                Some(Modal::Update) => self
+                    .updates
+                    .choose(update::UpdateChoice::Later, crate::util::Waker::none()),
+                Some(Modal::WhatsNew) => {
+                    self.cfg.seen_version = update::VERSION.to_owned();
+                    self.cfg.save();
+                }
+                None => {}
+            },
+            D::Update(pick) => self.updates.choose(
+                match pick {
+                    dialogs::UpdatePick::Update => update::UpdateChoice::Update,
+                    dialogs::UpdatePick::Download => update::UpdateChoice::Download,
+                    dialogs::UpdatePick::Later => update::UpdateChoice::Later,
+                },
+                crate::util::Waker::none(),
+            ),
+            D::Dismiss(download) => self.updates.dismiss(download),
+            D::Open(url) => crate::ui::chrome::open_url(&url),
+            D::ChangeServer => {
+                self.settings = false;
+                return self.handle(Action::ChangeServer);
+            }
+            D::SignOut => {
+                self.settings = false;
+                if let Stage::Library(l) = &self.stage {
+                    let c = l.client().clone();
+                    return self.handle(Action::SignOut(c));
+                }
+            }
+            D::OpenFiles => {
+                self.settings = false;
+                return self.handle(Action::OpenFiles);
+            }
+            D::RefreshNow => {
+                self.settings = false;
+                return self.handle(Action::Refresh);
+            }
+            D::Quit => return self.update(Message::Close),
+            _ => {}
+        }
+        Task::none()
+    }
+
+    /// The connection Settings describes.
+    fn conn(&self) -> Option<dialogs::Conn> {
+        let conn = |c: &Client, user: Option<&str>| dialogs::Conn {
+            name: c.info.name.clone(),
+            base: c.base.clone(),
+            user: user.map(str::to_owned),
+            signed_in: c.token.is_some(),
+        };
+        match &self.stage {
+            Stage::Library(l) => Some(conn(l.client(), l.user())),
+            Stage::Login(l) => Some(conn(l.client(), None)),
+            Stage::Setup(_) | Stage::Check(_) => None,
+        }
     }
 
     /// Sign in to `client`'s server, the keyboard in the first empty field.
@@ -650,8 +841,10 @@ impl App {
                 }
                 self.sync.pull_now();
             }
-            // not in the Iced build yet: settings and updates
-            Action::None | Action::CheckUpdates | Action::ShowUpdate | Action::OpenSettings => {}
+            Action::OpenSettings => self.settings = true,
+            Action::CheckUpdates => self.updates.check(crate::util::Waker::none(), true),
+            Action::ShowUpdate => self.updates.show(),
+            Action::None => {}
         }
         Task::none()
     }
@@ -722,6 +915,10 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         let framed = !self.maximized && !self.fullscreen;
+        if self.watch.is_none() {
+            let page = self.with_dialogs(self.screen());
+            return chrome::frame(page, self.size, framed);
+        }
         let content: Element<Message> = match &self.watch {
             Some(w) => w
                 .view(watch::View {
@@ -734,6 +931,40 @@ impl App {
             None => self.screen(),
         };
         chrome::frame(content, self.size, framed)
+    }
+
+    /// `page` with the open dialog, the update notice and the splash over it.
+    fn with_dialogs<'a>(&'a self, page: Element<'a, Message>) -> Element<'a, Message> {
+        let mut page = page;
+        if let Some(m) = self.modal() {
+            let conn = self.conn();
+            let (content, width) = match m {
+                Modal::Settings => (
+                    dialogs::settings(&self.cfg, conn.as_ref(), self.system_light),
+                    500.0,
+                ),
+                Modal::Update => {
+                    let (rel, in_place, flatpak) = self.updates.popup().expect("popup is up");
+                    (dialogs::update_available(rel, in_place, flatpak), 460.0)
+                }
+                Modal::WhatsNew => (dialogs::whats_new(&self.cfg.seen_version), 460.0),
+            };
+            page = dialogs::modal(
+                page,
+                content.map(Message::Dialog),
+                width,
+                self.size,
+                Message::Dialog(dialogs::Msg::Close),
+            );
+        }
+        if let Some(t) = self.updates.toast() {
+            page = iced::widget::stack![page, dialogs::toast(&t, spin_secs()).map(Message::Dialog)]
+                .into();
+        }
+        if let Some(sp) = &self.splash {
+            page = iced::widget::stack![page, sp.view(self.size, Message::Swallow)].into();
+        }
+        page
     }
 
     /// The title bar, the current screen, and the status line.
@@ -819,6 +1050,15 @@ impl App {
             _ => page,
         }
     }
+}
+
+/// How long the app has run, for spinners.
+fn spin_secs() -> f32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f32()
 }
 
 /// On Windows, keep the taskbar's strip from showing white when a maximized

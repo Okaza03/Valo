@@ -374,6 +374,48 @@ pub fn button_with<'a, M: Clone + 'a>(
         .into()
 }
 
+/// A [`button_with`] as wide as its parent and `h` high, the label centered
+/// (egui's `add_sized` buttons in dialogs).
+pub fn button_wide<'a, M: Clone + 'a>(
+    kind: Kind,
+    t: &str,
+    h: f32,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let enabled = msg.is_some();
+    let size = if kind == Kind::Small { 11.5 } else { 12.5 };
+    button(
+        container(mono(t.trim(), size))
+            .center_x(Length::Fill)
+            .center_y(h),
+    )
+    .width(Length::Fill)
+    .height(h)
+    .padding(0)
+    .style(move |_, s| {
+        let mut st = paint_button(kind, hot(s) && enabled, enabled, h);
+        if !enabled {
+            st.text_color = st.text_color.scale_alpha(0.5);
+        }
+        st
+    })
+    .on_press_maybe(msg)
+    .into()
+}
+
+/// A square 30px small button with a drawn icon (the "⋮" menu, close),
+/// egui's `small_icon_button`.
+pub fn small_icon_button<'a, M: Clone + 'a>(ic: icon::Icon, msg: M) -> Element<'a, M> {
+    let col = style::TEXT();
+    button(container(icon::icon(ic, col, 30.0)).center(30))
+        .width(30)
+        .height(30)
+        .padding(0)
+        .style(|_, s| paint_button(Kind::Small, hot(s), true, 30.0))
+        .on_press(msg)
+        .into()
+}
+
 /// A top-bar tab in the current style: a filled block, bold text, an
 /// underline or a pill when selected (egui's `ui::tab`).
 pub fn tab<'a, M: Clone + 'a>(t: &str, selected: bool, msg: M) -> Element<'a, M> {
