@@ -8,9 +8,9 @@ use super::settings::{dialog, header};
 use super::{bold, mono, primary_button, ACCENT, MUTED, TEXT};
 use crate::update::{newer, Release, VERSION};
 
-struct Note {
-    title: &'static str,
-    text: &'static str,
+pub(crate) struct Note {
+    pub title: &'static str,
+    pub text: &'static str,
 }
 
 /// Newest last. Add an entry when a release brings something users would
@@ -169,7 +169,7 @@ const NOTES: &[(&str, &[Note])] = &[
 ];
 
 /// The notes for versions after `seen`, up to `current`, newest first.
-fn between(seen: &str, current: &str) -> Vec<(&'static str, &'static [Note])> {
+pub(crate) fn between(seen: &str, current: &str) -> Vec<(&'static str, &'static [Note])> {
     NOTES
         .iter()
         .rev()
@@ -230,13 +230,7 @@ pub fn ui(ctx: &egui::Context, seen: &str) -> bool {
     done || close
 }
 
-/// What the "update available" popup asked for.
-pub enum UpdateChoice {
-    Update,
-    Download,
-    /// Closed: "Later", a click outside or Escape.
-    Later,
-}
+pub use crate::update::UpdateChoice;
 
 /// The popup shown when a newer Valo is out: its release notes and a way to
 /// get it. `in_place`: the button installs and restarts; else it downloads.

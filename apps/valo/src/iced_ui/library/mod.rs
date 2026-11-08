@@ -282,6 +282,15 @@ impl Library {
         self.user.as_deref()
     }
 
+    pub fn has_library(&self) -> bool {
+        self.lib.is_some()
+    }
+
+    /// The library has loaded, or failed to.
+    pub fn settled(&self) -> bool {
+        self.lib.is_some() || self.error.is_some()
+    }
+
     /// Loading the library: tick quickly.
     pub fn busy(&self) -> bool {
         self.loading.is_some()

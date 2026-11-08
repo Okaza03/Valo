@@ -17,7 +17,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::ui::{chrome, mono, small_button, BG, LINE, MUTED, TEXT};
-use crate::util::Task;
+use crate::util::{Task, Waker};
 
 const REPO: &str = "Okaza03/Valo";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -535,17 +535,42 @@ impl Default for Updates {
     }
 }
 
+/// What the "update available" popup asked for.
+pub enum UpdateChoice {
+    Update,
+    Download,
+    /// Closed: "Later", a click outside or Escape.
+    Later,
+}
+
+/// The notice in the corner: a check's result, or an install under way.
+pub struct ToastView {
+    /// Small capitals: "Up to date", "Updating to 0.9.10… 40%".
+    pub title: String,
+    pub body: String,
+    /// Installing: a spinner, and it can't be dismissed.
+    pub busy: bool,
+    /// The install failed: offer the download.
+    pub download: bool,
+}
+
 impl Updates {
     /// `manual` checks always report back; automatic ones only when there's an update.
-    pub fn check(&mut self, ctx: &egui::Context, manual: bool) {
+    pub fn check(&mut self, wake: impl Into<Waker>, manual: bool) {
         if self.task.is_none() {
             let flatpak = self.install == Install::Flatpak;
-            self.task = Some((manual, Task::spawn(ctx, move || latest(flatpak))));
+            self.task = Some((manual, Task::spawn(wake, move || latest(flatpak))));
         }
     }
 
     pub fn checking(&self) -> bool {
         self.task.is_some()
+    }
+
+    /// A check or an install is running, or a notice is up: poll often.
+    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
+    pub fn busy(&self) -> bool {
+        self.task.is_some() || self.installing.is_some() || self.toast.is_some()
     }
 
     /// Bring the "update available" popup back.
@@ -565,7 +590,7 @@ impl Updates {
         can && rel.package.is_some() && rel.sums.is_some()
     }
 
-    fn start_install(&mut self, ctx: &egui::Context) {
+    fn start_install(&mut self, wake: Waker) {
         let Some(rel) = self.available.clone() else {
             return;
         };
@@ -573,7 +598,7 @@ impl Updates {
         let progress = Arc::new(AtomicU32::new(0));
         let p = progress.clone();
         self.installing = Some((
-            Task::spawn(ctx, move || match install {
+            Task::spawn(wake, move || match install {
                 Install::AppImage(dest) => {
                     let new = install_appimage(&rel, &dest, &p)?;
                     relaunch(&new)
@@ -587,9 +612,9 @@ impl Updates {
         self.toast = Some((Toast::Installing, Instant::now()));
     }
 
-    /// Poll the check and draw its result: a popup with the release notes
-    /// once `quiet` (no splash or other dialog up), notices in the corner.
-    pub fn ui(&mut self, ctx: &egui::Context, quiet: bool) {
+    /// Take in a finished check or install, and let old notices go. True
+    /// once the new version is starting: close this window.
+    pub fn poll(&mut self) -> bool {
         if let Some((manual, mut t)) = self.task.take() {
             match t.poll() {
                 None => self.task = Some((manual, t)),
@@ -618,47 +643,111 @@ impl Updates {
                 self.installing = None;
                 match r {
                     // the new version is starting; it takes over from here
-                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Ok(()) => return true,
                     Err(e) => {
                         self.toast = Some((Toast::InstallFailed(format!("{e:#}")), Instant::now()))
                     }
                 }
             }
         }
+        if let Some((toast, since)) = &self.toast {
+            let keep = matches!(toast, Toast::Installing | Toast::InstallFailed(_))
+                || since.elapsed() < Duration::from_secs(6);
+            if !keep {
+                self.toast = None;
+            }
+        }
+        false
+    }
 
-        if self.popup && quiet && self.installing.is_none() {
+    /// The "update available" popup, when it's up: the release, whether
+    /// its button installs in place, and whether to say how to update a
+    /// Flatpak by hand.
+    pub fn popup(&self) -> Option<(&Release, bool, bool)> {
+        if !self.popup || self.installing.is_some() {
+            return None;
+        }
+        let r = self.available.as_ref()?;
+        let in_place = self.in_place(r);
+        Some((r, in_place, self.install == Install::Flatpak && !in_place))
+    }
+
+    /// The popup's answer.
+    pub fn choose(&mut self, choice: UpdateChoice, wake: impl Into<Waker>) {
+        match choice {
+            UpdateChoice::Update => {
+                self.popup = false;
+                self.start_install(wake.into());
+            }
+            UpdateChoice::Download => {
+                if let Some(r) = &self.available {
+                    chrome::open_url(&r.url);
+                }
+                self.popup = false;
+            }
+            UpdateChoice::Later => self.popup = false,
+        }
+    }
+
+    /// The corner notice, if there is one.
+    pub fn toast(&self) -> Option<ToastView> {
+        let (toast, _) = self.toast.as_ref()?;
+        let v = self.available.as_ref().map_or("", |r| r.version.as_str());
+        let (title, body) = match toast {
+            Toast::Installing => {
+                let p = self
+                    .installing
+                    .as_ref()
+                    .map_or(0, |(_, p)| p.load(Ordering::Relaxed));
+                (
+                    format!("Updating to {v}… {}%", p / 10),
+                    "Valo restarts by itself when it's done.".to_owned(),
+                )
+            }
+            Toast::UpToDate => (
+                "Up to date".to_owned(),
+                format!("Valo {VERSION} is the latest version."),
+            ),
+            Toast::Failed(e) => ("Couldn't check for updates".to_owned(), e.clone()),
+            Toast::InstallFailed(e) => ("Couldn't update".to_owned(), e.clone()),
+        };
+        Some(ToastView {
+            title,
+            body,
+            busy: matches!(toast, Toast::Installing),
+            download: matches!(toast, Toast::InstallFailed(_)) && self.available.is_some(),
+        })
+    }
+
+    /// Close the notice; `download`: open the release page first.
+    pub fn dismiss(&mut self, download: bool) {
+        if download {
             if let Some(r) = &self.available {
-                let choice = crate::ui::whats_new::update_available(
-                    ctx,
-                    r,
-                    self.in_place(r),
-                    self.install == Install::Flatpak && !self.in_place(r),
-                );
-                match choice {
-                    Some(crate::ui::whats_new::UpdateChoice::Update) => {
-                        self.popup = false;
-                        self.start_install(ctx);
-                    }
-                    Some(crate::ui::whats_new::UpdateChoice::Download) => {
-                        chrome::open_url(&r.url);
-                        self.popup = false;
-                    }
-                    Some(crate::ui::whats_new::UpdateChoice::Later) => self.popup = false,
-                    None => {}
+                chrome::open_url(&r.url);
+            }
+        }
+        self.toast = None;
+    }
+
+    /// Poll the check and draw its result: a popup with the release notes
+    /// once `quiet` (no splash or other dialog up), notices in the corner.
+    pub fn ui(&mut self, ctx: &egui::Context, quiet: bool) {
+        if self.poll() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if quiet {
+            if let Some((r, in_place, flatpak)) = self.popup() {
+                if let Some(choice) =
+                    crate::ui::whats_new::update_available(ctx, r, in_place, flatpak)
+                {
+                    self.choose(choice, ctx);
                 }
             }
         }
-
-        let Some((toast, since)) = &self.toast else {
+        let Some(toast) = self.toast() else {
             return;
         };
-        let keep = matches!(toast, Toast::Installing | Toast::InstallFailed(_))
-            || since.elapsed() < Duration::from_secs(6);
-        if !keep {
-            self.toast = None;
-            return;
-        }
-        let mut close = false;
+        let mut close = None;
         egui::Area::new(egui::Id::new("update_toast"))
             .anchor(Align2::RIGHT_BOTTOM, [-16.0, -46.0])
             .order(egui::Order::Foreground)
@@ -673,34 +762,11 @@ impl Updates {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
-                                let v = self.available.as_ref().map_or("", |r| r.version.as_str());
-                                let (title, body) = match toast {
-                                    Toast::Installing => {
-                                        let p = self
-                                            .installing
-                                            .as_ref()
-                                            .map_or(0, |(_, p)| p.load(Ordering::Relaxed));
-                                        (
-                                            format!("Updating to {v}… {}%", p / 10),
-                                            "Valo restarts by itself when it's done.".to_owned(),
-                                        )
-                                    }
-                                    Toast::UpToDate => (
-                                        "Up to date".to_owned(),
-                                        format!("Valo {VERSION} is the latest version."),
-                                    ),
-                                    Toast::Failed(e) => {
-                                        ("Couldn't check for updates".to_owned(), e.clone())
-                                    }
-                                    Toast::InstallFailed(e) => {
-                                        ("Couldn't update".to_owned(), e.clone())
-                                    }
-                                };
-                                ui.label(mono(&title, 11.0).color(MUTED()));
-                                ui.label(RichText::new(body).color(TEXT()));
+                                ui.label(mono(&toast.title, 11.0).color(MUTED()));
+                                ui.label(RichText::new(&toast.body).color(TEXT()));
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if matches!(toast, Toast::Installing) {
+                                if toast.busy {
                                     ui.spinner();
                                     return;
                                 }
@@ -711,21 +777,17 @@ impl Updates {
                                 )
                                 .clicked()
                                 {
-                                    close = true;
+                                    close = Some(false);
                                 }
-                                let Some(r) = &self.available else { return };
-                                if matches!(toast, Toast::InstallFailed(_))
-                                    && small_button(ui, "Download").clicked()
-                                {
-                                    chrome::open_url(&r.url);
-                                    close = true;
+                                if toast.download && small_button(ui, "Download").clicked() {
+                                    close = Some(true);
                                 }
                             });
                         });
                     });
             });
-        if close {
-            self.toast = None;
+        if let Some(download) = close {
+            self.dismiss(download);
         }
         let every = if self.installing.is_some() { 100 } else { 500 };
         ctx.request_repaint_after(Duration::from_millis(every));
