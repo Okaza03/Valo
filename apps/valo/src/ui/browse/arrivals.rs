@@ -1,19 +1,20 @@
 //! "New on the server": movies, series and seasons added since the user
 //! last saw the library, and titles taken off it, announced on the browse
 //! pages (never over the player).
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use eframe::egui::{self, RichText, Ui};
 
 use super::details::poster_tile;
 use super::{Browse, Click, View, GAP};
 use crate::api::{Item, Kind, Library, FEATURETTES};
+use crate::config::Known;
 use crate::images::Images;
 use crate::ui::settings::{dialog, header};
 use crate::ui::{primary_button, MUTED};
 
 /// At most this many posters; the rest are counted.
-const SHOWN: usize = 12;
+pub(crate) const SHOWN: usize = 12;
 
 /// A series' season as remembered next to the title ids: "<id>#S<n>".
 fn season_key(id: &str, n: u32) -> String {
@@ -118,14 +119,54 @@ fn subtitle(item: &Item, new_seasons: Option<&Vec<u32>>) -> String {
     }
 }
 
-impl Browse {
+/// What's waiting to be announced: titles and seasons added, titles gone.
+#[derive(Default)]
+pub(crate) struct Queue {
+    /// Newly added titles, by id.
+    pub arrivals: Vec<String>,
+    /// Seasons added to series the user already knew, by series id.
+    pub new_seasons: HashMap<String, Vec<u32>>,
+    /// Titles taken off the server since, as (id, name).
+    pub departures: Vec<(String, String)>,
+    /// The dialog is up.
+    pub open: bool,
+}
+
+/// The dialog's contents, worked out from a [`Queue`].
+pub(crate) struct Shown<'a> {
+    pub title: String,
+    pub summary: String,
+    /// (title, the line under its poster)
+    pub items: Vec<(&'a Item, String)>,
+    /// Names of the titles taken off, A to Z.
+    pub gone: Vec<&'a str>,
+}
+
+impl Queue {
+    pub fn is_empty(&self) -> bool {
+        self.arrivals.is_empty() && self.departures.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.arrivals.clear();
+        self.new_seasons.clear();
+        self.departures.clear();
+        self.open = false;
+    }
+
     /// A library (re)loaded: queue what's new and what's gone since last
-    /// time. The first load of a library only remembers it.
-    pub(super) fn note_arrivals(&mut self, lib: &Library) {
+    /// time. The first load of a library only remembers it. `before`: the
+    /// library as it was, to name a title that's gone.
+    pub fn note(
+        &mut self,
+        known: &mut Known,
+        prefix: &str,
+        lib: &Library,
+        before: Option<&Library>,
+    ) {
         let now = ids(lib);
-        let prefix = self.prefix();
-        match self.known.get(&prefix) {
-            None => self.known.set(&prefix, now),
+        match known.get(prefix) {
+            None => known.set(prefix, now),
             Some(old) => {
                 // series remembered before seasons were: their seasons all count as known
                 let with_seasons: HashSet<&str> = old
@@ -163,27 +204,72 @@ impl Browse {
                 let arrivals = &self.arrivals;
                 self.new_seasons.retain(|id, _| arrivals.contains(id));
                 // titles (not seasons) remembered but no longer on the server
-                for id in old
+                let gone_ids: Vec<String> = old
                     .iter()
                     .filter(|k| !k.contains("#S") && !now.contains(*k))
-                {
-                    if self.departures.iter().any(|(d, _)| d == id) {
+                    .cloned()
+                    .collect();
+                for id in gone_ids {
+                    if self.departures.iter().any(|(d, _)| *d == id) {
                         continue;
                     }
-                    let gone = self
-                        .known
-                        .name(&prefix, id)
+                    let gone = known
+                        .name(prefix, &id)
                         .map(str::to_owned)
-                        .or_else(|| self.lib.as_ref()?.find(id).map(name));
+                        .or_else(|| before?.find(&id).map(name));
                     if let Some(n) = gone {
-                        self.departures.push((id.clone(), n));
+                        self.departures.push((id, n));
                     }
                 }
                 self.departures.retain(|(id, _)| !now.contains(id));
             }
         }
-        self.known
-            .name_all(&prefix, lib.all().map(|i| (i.id.clone(), name(i))));
+        known.name_all(prefix, lib.all().map(|i| (i.id.clone(), name(i))));
+    }
+
+    /// The dialog is opening: everything in it counts as seen, even if the
+    /// app closes with it up.
+    pub fn opening(&mut self, known: &mut Known, prefix: &str, lib: &Library) {
+        if !self.open {
+            self.open = true;
+            known.set(prefix, ids(lib));
+        }
+    }
+
+    /// What the dialog shows for `server`.
+    pub fn shown<'a>(&'a self, lib: &'a Library, server: &str) -> Shown<'a> {
+        let items: Vec<&Item> = self.arrivals.iter().filter_map(|id| lib.find(id)).collect();
+        let movies = items.iter().filter(|i| i.kind == Kind::Movie).count();
+        let new_series = items
+            .iter()
+            .filter(|i| i.kind == Kind::Series && !self.new_seasons.contains_key(&i.id))
+            .count();
+        let seasons: usize = self.new_seasons.values().map(Vec::len).sum();
+        let mut gone: Vec<&str> = self.departures.iter().map(|(_, n)| n.as_str()).collect();
+        gone.sort_unstable_by_key(|n| n.to_lowercase());
+        Shown {
+            title: if items.is_empty() {
+                format!("Removed from {server}")
+            } else {
+                format!("New on {server}")
+            },
+            summary: summary(movies, new_series, seasons, gone.len()),
+            items: items
+                .into_iter()
+                .map(|i| (i, subtitle(i, self.new_seasons.get(&i.id))))
+                .collect(),
+            gone,
+        }
+    }
+}
+
+impl Browse {
+    /// A library (re)loaded: queue what's new and what's gone since last time.
+    pub(super) fn note_arrivals(&mut self, lib: &Library) {
+        let prefix = self.prefix();
+        let before = self.lib.clone();
+        self.arrivals
+            .note(&mut self.known, &prefix, lib, before.as_deref());
     }
 
     /// Show the queued arrivals once the user is on Home, Movies or TV Shows.
@@ -196,42 +282,21 @@ impl Browse {
     ) -> Option<Click> {
         let browsing =
             matches!(self.view, View::Home | View::Movies | View::Series) && self.search.is_empty();
-        if (self.arrivals.is_empty() && self.departures.is_empty()) || !allowed || !browsing {
+        if self.arrivals.is_empty() || !allowed || !browsing {
             return None;
         }
-        if !self.arrivals_open {
-            // seen now, even if the app closes with the dialog up
-            self.arrivals_open = true;
-            let prefix = self.prefix();
-            self.known.set(&prefix, ids(lib));
-        }
-        let items: Vec<_> = self.arrivals.iter().filter_map(|id| lib.find(id)).collect();
-        let movies = items.iter().filter(|i| i.kind == Kind::Movie).count();
-        let new_series = items
-            .iter()
-            .filter(|i| i.kind == Kind::Series && !self.new_seasons.contains_key(&i.id))
-            .count();
-        let seasons: usize = self.new_seasons.values().map(Vec::len).sum();
-        let mut gone: Vec<&str> = self.departures.iter().map(|(_, n)| n.as_str()).collect();
-        gone.sort_unstable_by_key(|n| n.to_lowercase());
-        let server = &self.client.info.name;
-        let title = if items.is_empty() {
-            format!("Removed from {server}")
-        } else {
-            format!("New on {server}")
-        };
+        let prefix = self.prefix();
+        self.arrivals.opening(&mut self.known, &prefix, lib);
+        let shown = self.arrivals.shown(lib, &self.client.info.name);
         let mut open = None;
         let (done, close) = dialog(ctx, "new-arrivals", 640.0, |ui: &mut Ui| {
-            header(
-                ui,
-                &title,
-                &summary(movies, new_series, seasons, gone.len()),
-            );
+            header(ui, &shown.title, &shown.summary);
             ui.add_space(8.0);
             let w = ui.available_width();
             let cols = ((w + GAP) / (140.0 + GAP)).floor().clamp(1.0, 4.0);
             let tw = (w - GAP * (cols - 1.0)) / cols;
-            for row in items
+            for row in shown
+                .items
                 .iter()
                 .take(SHOWN)
                 .collect::<Vec<_>>()
@@ -239,30 +304,29 @@ impl Browse {
             {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = GAP;
-                    for item in row {
-                        let sub = subtitle(item, self.new_seasons.get(&item.id));
-                        if poster_tile(ui, item, Some(&sub), tw, self.watched(item), images) {
+                    for (item, sub) in row {
+                        if poster_tile(ui, item, Some(sub), tw, self.watched(item), images) {
                             open = Some(item.id.clone());
                         }
                     }
                 });
                 ui.add_space(12.0);
             }
-            if items.len() > SHOWN {
-                let more = items.len() - SHOWN;
+            if shown.items.len() > SHOWN {
+                let more = shown.items.len() - SHOWN;
                 ui.label(RichText::new(format!("And {more} more.")).color(MUTED()));
                 ui.add_space(12.0);
             }
-            if !gone.is_empty() {
-                if !items.is_empty() {
+            if !shown.gone.is_empty() {
+                if !shown.items.is_empty() {
                     ui.label(RichText::new("No longer on the server").strong());
                     ui.add_space(4.0);
                 }
-                for n in gone.iter().take(SHOWN) {
+                for n in shown.gone.iter().take(SHOWN) {
                     ui.label(RichText::new(*n).color(MUTED()));
                 }
-                if gone.len() > SHOWN {
-                    let more = gone.len() - SHOWN;
+                if shown.gone.len() > SHOWN {
+                    let more = shown.gone.len() - SHOWN;
                     ui.label(RichText::new(format!("And {more} more.")).color(MUTED()));
                 }
                 ui.add_space(12.0);
@@ -272,11 +336,9 @@ impl Browse {
             });
             b.clicked()
         });
-        if done || close || open.is_some() || (items.is_empty() && gone.is_empty()) {
+        let empty = shown.items.is_empty() && shown.gone.is_empty();
+        if done || close || open.is_some() || empty {
             self.arrivals.clear();
-            self.new_seasons.clear();
-            self.departures.clear();
-            self.arrivals_open = false;
         }
         open.map(Click::Open)
     }

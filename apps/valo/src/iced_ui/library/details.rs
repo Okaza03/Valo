@@ -33,7 +33,7 @@ type Egui = eframe::egui::Color32;
 
 const MAX_W: f32 = 1420.0;
 /// Below this content width, side-by-side columns stack.
-const NARROW: f32 = 980.0;
+pub(super) const NARROW: f32 = 980.0;
 
 /// Who else watched a title, as last loaded from the server.
 #[derive(Default)]
@@ -51,18 +51,18 @@ pub(super) enum Probe {
 }
 
 /// Left margin and width of the centered content column.
-fn column_of(w: f32) -> (f32, f32) {
+pub(super) fn column_of(w: f32) -> (f32, f32) {
     let inner = (w - 2.0 * SIDE).clamp(200.0, MAX_W);
     ((w - inner) / 2.0, inner)
 }
 
 /// A gap as egui leaves it: `n` plus its 8px item spacing.
-fn gap<'a>(n: f32) -> Element<'a, Msg> {
+pub(super) fn gap<'a>(n: f32) -> Element<'a, Msg> {
     space().height(n + 8.0).into()
 }
 
 /// Small spaced capitals (egui's `caps`).
-fn caps<'a>(t: &str, color: Color) -> Element<'a, Msg> {
+pub(super) fn caps<'a>(t: &str, color: Color) -> Element<'a, Msg> {
     mono(t, 11.0).color(color).into()
 }
 
@@ -97,7 +97,7 @@ fn tag<'a>(t: &str) -> Element<'a, Msg> {
 }
 
 /// Text (with an icon before it, or after for `after`) that lights up on hover.
-fn link<'a>(
+pub(super) fn link<'a>(
     t: &str,
     size: f32,
     color: Color,
@@ -132,7 +132,7 @@ fn hot(s: button::Status) -> bool {
 }
 
 /// Names as links to their pages, separated by commas.
-fn people_links<'a>(names: &[&str], size: f32) -> Element<'a, Msg> {
+pub(super) fn people_links<'a>(names: &[&str], size: f32) -> Element<'a, Msg> {
     let mut r = row![].align_y(Vertical::Center);
     for (i, n) in names.iter().enumerate() {
         if i > 0 {
@@ -153,7 +153,7 @@ fn people_links<'a>(names: &[&str], size: f32) -> Element<'a, Msg> {
 }
 
 /// A rounded panel for metadata, critics, info.
-fn panel<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
+pub(super) fn panel<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
     container(content)
         .padding(24)
         .width(Length::Fill)
@@ -170,7 +170,7 @@ fn panel<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
 }
 
 /// A hairline across its parent.
-fn hline<'a>() -> Element<'a, Msg> {
+pub(super) fn hline<'a>() -> Element<'a, Msg> {
     container(space())
         .width(Length::Fill)
         .height(1)
@@ -182,7 +182,7 @@ fn hline<'a>() -> Element<'a, Msg> {
 }
 
 /// A key on the left, a value on the right, a hairline under it if `line`.
-fn kv_row<'a>(k: &str, value: Element<'a, Msg>, line: bool) -> Element<'a, Msg> {
+pub(super) fn kv_row<'a>(k: &str, value: Element<'a, Msg>, line: bool) -> Element<'a, Msg> {
     let r = row![
         text(k.to_owned()).size(14).color(style::MUTED()),
         space::horizontal(),
@@ -198,7 +198,7 @@ fn kv_row<'a>(k: &str, value: Element<'a, Msg>, line: bool) -> Element<'a, Msg> 
 }
 
 /// Rows of [`kv_row`], a hairline between each (egui's `kv_rows`).
-fn kv_rows<'a>(rows: Vec<(&str, String, Color, f32)>) -> Element<'a, Msg> {
+pub(super) fn kv_rows<'a>(rows: Vec<(&str, String, Color, f32)>) -> Element<'a, Msg> {
     let n = rows.len();
     let mut out = column![];
     for (i, (k, v, color, size)) in rows.into_iter().enumerate() {
@@ -309,7 +309,7 @@ fn title_art<'a>(item: &Item, env: Env<'a>, max: (f32, f32), size: f32) -> Eleme
 
 /// Full-width artwork darkened to `dim`, a shade along its left half, fading
 /// into the page at the bottom (egui's `backdrop`).
-fn backdrop<'a>(
+pub(super) fn backdrop<'a>(
     env: Env<'a>,
     art: Option<&str>,
     title: &str,
@@ -551,7 +551,11 @@ fn section_tab<'a>(label: &str, on: bool, msg: Msg) -> Element<'a, Msg> {
 }
 
 /// `content` that reports the pointer under `key` and does `msg` on a click.
-fn hover_area<'a>(content: impl Into<Element<'a, Msg>>, key: String, msg: Msg) -> Element<'a, Msg> {
+pub(super) fn hover_area<'a>(
+    content: impl Into<Element<'a, Msg>>,
+    key: String,
+    msg: Msg,
+) -> Element<'a, Msg> {
     mouse_area(content)
         .on_press(msg)
         .on_enter(Msg::Hover(Some(key)))
@@ -733,7 +737,7 @@ impl Library {
     }
 
     /// A poster with the title and `sub` under it (egui's `poster_tile`).
-    fn poster_tile<'a>(
+    pub(super) fn poster_tile<'a>(
         &self,
         item: &Item,
         sub: Option<String>,

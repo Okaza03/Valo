@@ -212,7 +212,7 @@ fn scroll_style(_: &Theme, s: scrollable::Status) -> scrollable::Style {
 
 /// The dialog's title: the accent badge with a play mark, the title and a
 /// line under it (egui's `settings::header`).
-fn header<'a>(title: &str, sub: &str) -> Element<'a, Msg> {
+pub fn header<'a, M: 'a>(title: &str, sub: &str) -> Element<'a, M> {
     let badge = container(icon::icon(Icon::Play, Color::WHITE, 24.0))
         .center(36)
         .style(|_| container::Style {
