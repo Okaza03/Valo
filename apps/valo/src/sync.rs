@@ -6,11 +6,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use eframe::egui;
 
 use crate::api::{Client, Listed, Watched};
 use crate::config::{Entry, Hidden, Progress, Watchlist};
-use crate::util::Task;
+use crate::util::{Task, Waker};
 
 /// Look for changes made elsewhere this often (not during playback).
 const PULL_EVERY: Duration = Duration::from_secs(60);
@@ -98,12 +97,13 @@ impl Sync {
     /// video is open, so leave its resume point alone.
     pub fn tick(
         &mut self,
-        ctx: &egui::Context,
+        wake: impl Into<Waker>,
         client: &Client,
         user: Option<&str>,
         progress: &mut Progress,
         watching: bool,
     ) {
+        let wake: Waker = wake.into();
         let session = Some((client.base.clone(), client.token.clone()));
         if self.session != session {
             *self = Self {
@@ -134,7 +134,10 @@ impl Sync {
         if self.pull.is_none() && !watching && due(self.last_pull, PULL_EVERY) {
             self.last_pull = Some(Instant::now());
             let c = client.clone();
-            self.pull = Some((prefix(client, user), Task::spawn(ctx, move || c.progress())));
+            self.pull = Some((
+                prefix(client, user),
+                Task::spawn(wake.clone(), move || c.progress()),
+            ));
         }
         let unsent = progress.unsent(&prefix(client, user));
         if self.push.is_none() && !unsent.is_empty() && due(self.last_push, PUSH_EVERY) {
@@ -142,10 +145,10 @@ impl Sync {
             let c = client.clone();
             self.push = Some((
                 prefix(client, user),
-                Task::spawn(ctx, move || send(&c, unsent)),
+                Task::spawn(wake.clone(), move || send(&c, unsent)),
             ));
         }
-        ctx.request_repaint_after(PUSH_EVERY);
+        wake.wake_after(PUSH_EVERY);
     }
 
     /// On quit: send what's left, waiting a few seconds at most.
@@ -225,12 +228,13 @@ impl ListSync {
     /// Call every frame while connected to `client` as `user`.
     pub fn tick(
         &mut self,
-        ctx: &egui::Context,
+        wake: impl Into<Waker>,
         client: &Client,
         user: Option<&str>,
         mylist: &mut Watchlist,
         hidden: &mut Hidden,
     ) {
+        let wake: Waker = wake.into();
         let session = Some((client.base.clone(), client.token.clone()));
         if self.session != session {
             *self = Self {
@@ -284,7 +288,7 @@ impl ListSync {
             let c = client.clone();
             self.pull = Some((
                 prefix.clone(),
-                Task::spawn(ctx, move || {
+                Task::spawn(wake.clone(), move || {
                     let Some(list) = c.lists("mylist")? else {
                         return Ok(None);
                     };
@@ -301,9 +305,12 @@ impl ListSync {
         if self.push.is_none() && !changes.is_empty() && due(self.last_push, LIST_RETRY) {
             self.last_push = Some(Instant::now());
             let c = client.clone();
-            self.push = Some((prefix, Task::spawn(ctx, move || send_lists(&c, changes))));
+            self.push = Some((
+                prefix,
+                Task::spawn(wake.clone(), move || send_lists(&c, changes)),
+            ));
         }
-        ctx.request_repaint_after(PULL_EVERY);
+        wake.wake_after(PULL_EVERY);
     }
 }
 

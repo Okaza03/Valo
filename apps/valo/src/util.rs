@@ -4,16 +4,49 @@ use std::thread;
 
 use eframe::egui;
 
+/// Wakes the UI when background work finishes: egui redraws; the Iced UI
+/// polls on its own ticks, so it passes [`Waker::none`].
+#[derive(Clone)]
+pub struct Waker(Option<std::sync::Arc<dyn Fn(std::time::Duration) + Send + Sync>>);
+
+impl Waker {
+    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
+    pub fn none() -> Self {
+        Self(None)
+    }
+
+    /// Now.
+    pub fn wake(&self) {
+        self.wake_after(std::time::Duration::ZERO);
+    }
+
+    /// Once `d` has passed, to do something then (egui only redraws when asked).
+    pub fn wake_after(&self, d: std::time::Duration) {
+        if let Some(f) = &self.0 {
+            f(d);
+        }
+    }
+}
+
+impl From<&egui::Context> for Waker {
+    fn from(ctx: &egui::Context) -> Self {
+        let ctx = ctx.clone();
+        Self(Some(std::sync::Arc::new(move |d| {
+            ctx.request_repaint_after(d)
+        })))
+    }
+}
+
 /// A value computed on a background thread; poll it once per frame.
 pub struct Task<T>(Receiver<T>);
 
 impl<T: Send + 'static> Task<T> {
-    pub fn spawn(ctx: &egui::Context, f: impl FnOnce() -> T + Send + 'static) -> Self {
+    pub fn spawn(wake: impl Into<Waker>, f: impl FnOnce() -> T + Send + 'static) -> Self {
         let (tx, rx) = mpsc::channel();
-        let ctx = ctx.clone();
+        let wake = wake.into();
         thread::spawn(move || {
             let _ = tx.send(f());
-            ctx.request_repaint();
+            wake.wake();
         });
         Self(rx)
     }

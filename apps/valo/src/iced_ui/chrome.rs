@@ -11,10 +11,11 @@ use super::Message;
 
 pub const BAR_H: f32 = 46.0;
 
-/// Top bar: word mark, `right` (buttons), and the window buttons.
+/// Top bar: word mark, `left` (tabs), `right` (buttons), and the window buttons.
 pub fn title_bar<'a>(
     name: &str,
     maximized: bool,
+    left: Element<'a, Message>,
     right: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let bar = row![
@@ -22,6 +23,8 @@ pub fn title_bar<'a>(
             .font(BLACK)
             .size(19)
             .color(style::TEXT()),
+        space().width(18),
+        left,
         space::horizontal(),
         right,
         vsep(),

@@ -1,13 +1,15 @@
 //! The Iced UI, built with `--features iced`. It's being ported from the egui
 //! UI (`crate::ui`) one screen at a time; so far it has the window chrome, the
-//! player, and setup, the server check and sign-in. The library, settings and
-//! updates are still egui-only: after signing in, this build shows a stand-in.
+//! player, setup, the server check and sign-in, and the library (home, grids,
+//! search, movie and series pages). Settings and updates are still egui-only.
 //!
 //! Frames are presented with `PresentMode::Fifo` (vsync, no tearing), and
 //! fullscreen is a borderless window covering the screen, never exclusive mode.
 mod check;
 mod chrome;
 mod icon;
+mod images;
+mod library;
 mod login;
 mod seekbar;
 mod setup;
@@ -20,9 +22,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use iced::alignment::Vertical;
-use iced::keyboard::{self, Key, Modifiers};
-use iced::widget::{column, container, operation, responsive, row, space, text};
+use iced::keyboard::{self, key::Named, Key, Modifiers};
+use iced::widget::{column, container, operation, row};
 use iced::window::{self, Direction};
 use iced::{event, Background, Element, Length, Point, Size, Subscription, Task, Theme};
 
@@ -34,6 +35,8 @@ use crate::ui::watch::PlayItem;
 use crate::ui::Action;
 use crate::update;
 use check::Check;
+use images::Images;
+use library::Library;
 use login::Login;
 use setup::Setup;
 use watch::Watch;
@@ -46,6 +49,10 @@ pub enum Out {
     Copy(String),
     /// Move the keyboard to this field.
     Focus(&'static str),
+    /// Put this scrollable back at the top.
+    Top(&'static str),
+    /// Scroll this scrollable sideways by this much.
+    ScrollBy(String, f32),
 }
 
 /// The screen under the player.
@@ -53,12 +60,8 @@ enum Stage {
     Setup(Setup),
     Check(Check),
     Login(Login),
-    /// Connected (and signed in when the server wants it). The library isn't
-    /// ported yet, so this is a stand-in that says so.
-    Library {
-        client: Client,
-        user: Option<String>,
-    },
+    /// Connected (and signed in when the server wants it).
+    Library(Box<Library>),
 }
 
 impl Stage {
@@ -68,7 +71,7 @@ impl Stage {
             Stage::Setup(s) => s.busy(),
             Stage::Check(c) => c.busy(),
             Stage::Login(l) => l.busy(),
-            Stage::Library { .. } => false,
+            Stage::Library(l) => l.busy(),
         }
     }
 }
@@ -169,6 +172,10 @@ struct App {
     placed: (Option<Size>, Option<Point>),
     /// Discord Rich Presence.
     presence: presence::Presence,
+    /// Posters and backdrops.
+    images: Images,
+    /// Watch progress, kept in step with the server.
+    sync: crate::sync::Sync,
 }
 
 #[derive(Clone, Debug)]
@@ -178,10 +185,10 @@ pub enum Message {
     Setup(setup::Msg),
     Check(check::Msg),
     Login(login::Msg),
+    Library(library::Msg),
     /// Poll the screen's background work.
     Tick,
     SignOut,
-    ChangeServer,
     Key(Key, Modifiers),
     Window(window::Event),
     Maximized(bool),
@@ -226,6 +233,8 @@ impl App {
             fullscreen: false,
             placed: (None, None),
             presence: presence::Presence::new(),
+            images: Images::new(),
+            sync: crate::sync::Sync::default(),
         };
         (
             app,
@@ -256,6 +265,7 @@ impl App {
                 e @ (window::Event::Resized(_)
                 | window::Event::Moved(_)
                 | window::Event::CloseRequested
+                | window::Event::Focused
                 | window::Event::FileDropped(_)),
             ) => Some(Message::Window(e)),
             _ => None,
@@ -266,8 +276,12 @@ impl App {
             Some(w) if w.playing() => window::frames().map(|_| Message::Watch(watch::Msg::Tick)),
             Some(_) => iced::time::every(Duration::from_millis(50))
                 .map(|_| Message::Watch(watch::Msg::Tick)),
-            None if self.stage.busy() => {
+            None if self.stage.busy() || self.images.busy() => {
                 iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
+            }
+            // the library: its sync, refreshes and the featured banner
+            None if matches!(self.stage, Stage::Library(_)) => {
+                iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick)
             }
             None => Subscription::none(),
         };
@@ -345,28 +359,55 @@ impl App {
                 }
                 _ => Task::none(),
             },
+            Message::Library(msg) => match &mut self.stage {
+                Stage::Library(l) => {
+                    let out = l.update(msg, &self.progress, &self.cfg);
+                    self.out(out)
+                }
+                _ => Task::none(),
+            },
             Message::Tick => {
+                self.images.poll();
                 let out = match &mut self.stage {
                     Stage::Setup(s) => s.tick(),
                     Stage::Check(c) => c.tick(),
                     Stage::Login(l) => l.tick(),
-                    Stage::Library { .. } => Out::None,
+                    Stage::Library(l) => {
+                        self.sync.tick(
+                            crate::util::Waker::none(),
+                            l.client(),
+                            l.user(),
+                            &mut self.progress,
+                            false,
+                        );
+                        l.tick(&self.cfg, &mut self.images)
+                    }
                 };
                 self.out(out)
             }
             Message::SignOut => match &self.stage {
-                Stage::Library { client, .. } => {
-                    let c = client.clone();
+                Stage::Library(l) => {
+                    let c = l.client().clone();
                     self.handle(Action::SignOut(c))
                 }
                 _ => Task::none(),
             },
-            Message::ChangeServer => self.handle(Action::ChangeServer),
             Message::Key(key, mods) => {
                 if self.watch.is_some() {
                     self.update_watch(watch::Msg::Key(key, mods))
                 } else if mods.command() && matches!(key.as_ref(), Key::Character("o" | "O")) {
                     self.update(Message::OpenFiles)
+                } else if let Stage::Library(l) = &mut self.stage {
+                    match key.as_ref() {
+                        Key::Character("f" | "F") if mods.command() => {
+                            operation::focus(library::SEARCH)
+                        }
+                        Key::Named(Named::Backspace) => {
+                            let out = l.key_back();
+                            self.out(out)
+                        }
+                        _ => Task::none(),
+                    }
                 } else {
                     Task::none()
                 }
@@ -393,6 +434,12 @@ impl App {
                     Task::none()
                 }
                 window::Event::CloseRequested => self.update(Message::Close),
+                window::Event::Focused => {
+                    if let Stage::Library(l) = &mut self.stage {
+                        l.focused();
+                    }
+                    Task::none()
+                }
                 _ => Task::none(),
             },
             Message::Maximized(m) => {
@@ -431,6 +478,10 @@ impl App {
             Out::Act(a) => self.handle(a),
             Out::Copy(t) => iced::clipboard::write(t),
             Out::Focus(id) => operation::focus(id),
+            Out::Top(id) => operation::snap_to(id, operation::RelativeOffset::START),
+            Out::ScrollBy(id, dx) => {
+                operation::scroll_by(id, operation::AbsoluteOffset { x: dx, y: 0.0 })
+            }
         }
     }
 
@@ -450,6 +501,12 @@ impl App {
             self.cfg.admin = false;
         }
         self.cfg.save();
+    }
+
+    /// Show the library of `client`'s server.
+    fn open_library(&mut self, client: Client, user: Option<String>) {
+        self.images.set_client(Some(client.clone()));
+        self.stage = Stage::Library(Box::new(Library::new(client, user)));
     }
 
     /// Sign in to `client`'s server, the keyboard in the first empty field.
@@ -473,22 +530,19 @@ impl App {
                     // a newly added server: sign in, then finish the check
                     let check = std::mem::replace(
                         &mut self.stage,
-                        Stage::Library {
-                            client: client.clone(),
-                            user: None,
-                        },
+                        Stage::Setup(Setup::new(String::new(), false)),
                     );
                     if let Stage::Check(c) = check {
                         self.pending_check = Some(c);
                     }
                     return self.login(client, None);
                 } else if !client.info.auth {
-                    self.stage = Stage::Library { client, user: None };
+                    self.open_library(client, None);
                 } else if let Some(t) = self.cfg.token.clone() {
                     client.token = Some(t);
                     client.admin = self.cfg.admin;
                     let user = Some(self.cfg.username.clone()).filter(|u| !u.is_empty());
-                    self.stage = Stage::Library { client, user };
+                    self.open_library(client, user);
                 } else {
                     return self.login(client, None);
                 }
@@ -507,17 +561,12 @@ impl App {
                         c.signed_in(client, Some(user));
                         self.stage = Stage::Check(c);
                     }
-                    None => {
-                        self.stage = Stage::Library {
-                            client,
-                            user: Some(user),
-                        }
-                    }
+                    None => self.open_library(client, Some(user)),
                 }
             }
             Action::Ready { client, user } => {
                 self.remember_server();
-                self.stage = Stage::Library { client, user };
+                self.open_library(client, user);
             }
             Action::NeedLogin(mut client) => {
                 client.token = None;
@@ -570,12 +619,14 @@ impl App {
                 return fs;
             }
             Action::Quit => return self.update(Message::Close),
-            // not in the Iced build yet: the library, settings and updates
-            Action::None
-            | Action::Refresh
-            | Action::CheckUpdates
-            | Action::ShowUpdate
-            | Action::OpenSettings => {}
+            Action::Refresh => {
+                if let Stage::Library(l) = &mut self.stage {
+                    l.reload();
+                }
+                self.sync.pull_now();
+            }
+            // not in the Iced build yet: settings and updates
+            Action::None | Action::CheckUpdates | Action::ShowUpdate | Action::OpenSettings => {}
         }
         Task::none()
     }
@@ -602,6 +653,7 @@ impl App {
             watch::Out::Close => {
                 self.watch = None;
                 self.cfg.save();
+                self.sync.push_now();
                 if self.fullscreen {
                     self.set_fullscreen(false)
                 } else {
@@ -614,16 +666,18 @@ impl App {
         }
     }
 
-    /// Discord: what's playing, else nothing.
+    /// Discord: what's playing, else browsing, else nothing.
     fn update_presence(&mut self) {
         let activity = if !self.cfg.discord_presence {
             None
+        } else if let Some(w) = &self.watch {
+            w.now_playing().map(|(title, sub, pos, dur, paused)| {
+                presence::Activity::watching(title, sub, pos, dur, paused)
+            })
+        } else if matches!(self.stage, Stage::Library(_)) {
+            Some(presence::Activity::browsing())
         } else {
-            self.watch.as_ref().and_then(Watch::now_playing).map(
-                |(title, sub, pos, dur, paused)| {
-                    presence::Activity::watching(title, sub, pos, dur, paused)
-                },
-            )
+            None
         };
         self.presence.set(activity);
     }
@@ -633,6 +687,9 @@ impl App {
             w.save_progress(&mut self.progress);
         }
         self.watch = None;
+        if let Stage::Library(l) = &self.stage {
+            self.sync.finish(l.client(), l.user(), &mut self.progress);
+        }
         self.progress.flush();
         self.note_window();
         self.cfg.save();
@@ -658,15 +715,37 @@ impl App {
     fn screen(&self) -> Element<'_, Message> {
         let name = match &self.stage {
             Stage::Login(l) => l.client().info.name.clone(),
-            Stage::Library { client, .. } => client.info.name.clone(),
+            Stage::Library(l) => l.client().info.name.clone(),
             _ => "Valo".to_owned(),
         };
-        let bar = chrome::title_bar(&name, self.maximized, column![].into());
+        let (left, right): (Element<Message>, Element<Message>) = match &self.stage {
+            Stage::Library(l) => {
+                let mut right = row![
+                    l.search_field().map(Message::Library),
+                    widgets::small("Open videos…", Message::OpenFiles),
+                ]
+                .spacing(10)
+                .padding([0, 12])
+                .align_y(iced::alignment::Vertical::Center);
+                if l.client().token.is_some() {
+                    right = right.push(widgets::small("Sign out", Message::SignOut));
+                }
+                (l.bar_left().map(Message::Library), right.into())
+            }
+            _ => (column![].into(), column![].into()),
+        };
+        let bar = chrome::title_bar(&name, self.maximized, left, right);
         let body: Element<Message> = match &self.stage {
             Stage::Setup(s) => s.view().map(Message::Setup),
             Stage::Check(c) => c.view().map(Message::Check),
             Stage::Login(l) => l.view().map(Message::Login),
-            Stage::Library { client, user } => self.library(client, user.as_deref()),
+            Stage::Library(l) => l
+                .view(library::Env {
+                    images: &self.images,
+                    progress: &self.progress,
+                    cfg: &self.cfg,
+                })
+                .map(Message::Library),
         };
         let body = container(body)
             .width(Length::Fill)
@@ -680,10 +759,7 @@ impl App {
                 format!("Connected to {}  ·  sign-in required", l.client().info.name)
             }
             Stage::Check(c) => format!("Checking {}", c.address()),
-            Stage::Library { client, user } => match user {
-                Some(u) => format!("Connected to {} as {u}", client.info.name),
-                None => format!("Connected to {}", client.info.name),
-            },
+            Stage::Library(l) => l.status(),
             Stage::Setup(_) => "Not connected".to_owned(),
         };
         let right = format!(
@@ -693,40 +769,6 @@ impl App {
             std::env::consts::ARCH
         );
         column![bar, body, chrome::status_bar(left, right)].into()
-    }
-
-    /// Connected: the library isn't in the Iced build yet, so say so, and
-    /// offer what works.
-    fn library(&self, client: &Client, user: Option<&str>) -> Element<'_, Message> {
-        let who = match user {
-            Some(u) => format!("Signed in to {} as {u}.", client.info.name),
-            None => format!("Connected to {}.", client.info.name),
-        };
-        let signed_in = client.token.is_some();
-        responsive(move |size| {
-            let mut actions = row![widgets::small("Open videos…", Message::OpenFiles)]
-                .spacing(10)
-                .align_y(Vertical::Center);
-            if signed_in {
-                actions = actions.push(widgets::small("Sign out", Message::SignOut));
-            }
-            actions = actions.push(widgets::small("Change server", Message::ChangeServer));
-            let body = column![
-                text("Your library").font(style::BOLD).size(20),
-                text(who.clone()).color(style::MUTED()),
-                space().height(10),
-                text(
-                    "The library isn't in this build of Valo yet: it's being moved to \
-                     a new interface one screen at a time. Use a release build to \
-                     browse, or open videos from this computer."
-                ),
-                space().height(14),
-                actions,
-            ]
-            .spacing(4);
-            widgets::card(size.height, body)
-        })
-        .into()
     }
 }
 
