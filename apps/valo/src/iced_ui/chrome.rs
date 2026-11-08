@@ -6,12 +6,15 @@ use iced::window::Direction;
 use iced::{mouse, Background, Border, Color, Element, Length, Padding, Size};
 
 use super::icon::{self, Icon};
-use super::style::{self, BLACK};
+use super::spaced::mono;
+use super::style;
+use super::widgets;
 use super::Message;
 
 pub const BAR_H: f32 = 46.0;
 
-/// Top bar: word mark, `left` (tabs), `right` (buttons), and the window buttons.
+/// Top bar: word mark, a divider, `left` (tabs), `right` (search and
+/// buttons), and the window buttons. Like egui's `chrome::title_bar`.
 pub fn title_bar<'a>(
     name: &str,
     maximized: bool,
@@ -19,11 +22,10 @@ pub fn title_bar<'a>(
     right: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let bar = row![
-        text(name.to_owned())
-            .font(BLACK)
-            .size(19)
-            .color(style::TEXT()),
-        space().width(18),
+        widgets::logo(name, 19.0),
+        space().width(14),
+        vsep(),
+        space().width(10),
         left,
         space::horizontal(),
         right,
@@ -75,29 +77,41 @@ fn window_buttons<'a>(maximized: bool) -> Element<'a, Message> {
     .into()
 }
 
-/// A square bar button with a drawn icon.
-pub fn bar_button<'a>(ic: Icon, tip: &str, msg: Message) -> Element<'a, Message> {
+/// A square bar button with a drawn icon (egui's `chrome::icon_button`).
+pub fn bar_button<'a, M: Clone + 'a>(ic: Icon, tip: &str, msg: M) -> Element<'a, M> {
     let close = matches!(ic, Icon::Close);
-    let b = button(icon::icon(ic, style::TEXT(), BAR_H))
-        .padding(0)
-        .width(BAR_H)
-        .height(BAR_H)
-        .style(move |_, s| {
-            let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: hot.then(|| {
-                    Background::Color(if close {
-                        Color::from_rgb8(196, 43, 28)
-                    } else {
-                        style::SURFACE_HI()
-                    })
-                }),
-                ..button::Style::default()
-            }
-        })
-        .on_press(msg);
+    let text_col = style::TEXT();
+    let hot_col = if close { Color::WHITE } else { text_col };
+    let b = button(icon::icon_hover(
+        ic,
+        text_col.scale_alpha(0.82),
+        hot_col,
+        BAR_H,
+    ))
+    .padding(0)
+    .width(BAR_H)
+    .height(BAR_H)
+    .style(move |_, s| {
+        let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: hot.then(|| {
+                Background::Color(if close {
+                    Color::from_rgb8(196, 43, 28)
+                } else {
+                    style::SURFACE_HI()
+                })
+            }),
+            ..button::Style::default()
+        }
+    })
+    .on_press(msg);
+    tip_below(b, tip)
+}
+
+/// `content` with a hover tip under it.
+pub fn tip_below<'a, M: 'a>(content: impl Into<Element<'a, M>>, tip: &str) -> Element<'a, M> {
     tooltip(
-        b,
+        content,
         container(text(tip.to_owned()).size(12.5))
             .padding([4, 8])
             .style(style::tip),
@@ -151,21 +165,36 @@ pub fn frame<'a>(content: Element<'a, Message>, size: Size, framed: bool) -> Ele
     .into()
 }
 
-/// The strip along the bottom: small monospace text on both sides.
-pub fn status_bar<'a>(left: String, right: String) -> Element<'a, Message> {
+/// The strip along the bottom: small labels on both sides. `refresh`:
+/// the left one reloads the library when clicked (egui's `status_bar`).
+pub fn status_bar<'a>(
+    left: String,
+    right: String,
+    refresh: Option<Message>,
+) -> Element<'a, Message> {
+    let l: Element<'a, Message> = match refresh {
+        Some(msg) => tip_below(
+            button(mono(&left, 10.5))
+                .padding(0)
+                .style(|_, s| button::Style {
+                    background: None,
+                    text_color: if matches!(s, button::Status::Hovered | button::Status::Pressed) {
+                        style::TEXT()
+                    } else {
+                        style::MUTED()
+                    },
+                    ..button::Style::default()
+                })
+                .on_press(msg),
+            "Refresh the library",
+        ),
+        None => mono(&left, 10.5).color(style::MUTED()).into(),
+    };
     container(
         row![
-            text(left)
-                .font(style::MONO)
-                .size(10.5)
-                .color(style::MUTED())
-                .wrapping(text::Wrapping::None),
+            container(l).clip(true),
             space::horizontal(),
-            text(right)
-                .font(style::MONO)
-                .size(10.5)
-                .color(style::MUTED())
-                .wrapping(text::Wrapping::None),
+            mono(&right, 10.5).color(style::MUTED()),
         ]
         .align_y(Vertical::Center)
         .height(30),

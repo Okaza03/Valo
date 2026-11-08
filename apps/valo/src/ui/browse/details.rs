@@ -22,7 +22,7 @@ use crate::util::{color_for, fmt_runtime, fmt_time, percent_decode, Task};
 
 /// Ratings, quality and the main button on Valo's details pages.
 #[allow(non_snake_case)]
-pub(super) fn GOLD() -> Color32 {
+pub(crate) fn GOLD() -> Color32 {
     if crate::ui::theme::pal().light {
         Color32::from_rgb(168, 118, 10)
     } else {
@@ -32,7 +32,7 @@ pub(super) fn GOLD() -> Color32 {
 
 /// Small captions ("Cast", "File · Metadata").
 #[allow(non_snake_case)]
-pub(super) fn TEAL() -> Color32 {
+pub(crate) fn TEAL() -> Color32 {
     if crate::ui::theme::pal().light {
         Color32::from_rgb(0, 128, 112)
     } else {
@@ -43,7 +43,7 @@ pub(super) fn TEAL() -> Color32 {
 /// The main button: gold for Valo, the style's own button color otherwise.
 /// A title's play button: `normal` colors and the play icon, or grey and
 /// none while an admin moves its files (the button is off then too).
-pub(super) fn play_look(
+pub(crate) fn play_look(
     item: &Item,
     normal: (Color32, Color32),
 ) -> (Option<Icon>, (Color32, Color32)) {
@@ -54,7 +54,7 @@ pub(super) fn play_look(
     }
 }
 
-pub(super) fn play_colors() -> (Color32, Color32) {
+pub(crate) fn play_colors() -> (Color32, Color32) {
     if crate::ui::theme::skin() == crate::ui::theme::Skin::Valo {
         (GOLD(), INK())
     } else {
@@ -82,7 +82,7 @@ fn ymd(s: &str) -> Option<(u32, usize, u32)> {
 }
 
 /// "31 Oct 2002"
-pub(super) fn date_long(s: &str) -> String {
+pub(crate) fn date_long(s: &str) -> String {
     ymd(s).map_or_else(
         || s.to_owned(),
         |(y, m, d)| format!("{d} {} {y}", MONTHS[m - 1]),
@@ -113,7 +113,7 @@ pub(crate) fn date_short(s: &str) -> String {
 }
 
 /// 8000000 -> "$8,000,000"
-fn money(n: u64) -> String {
+pub(crate) fn money(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -136,11 +136,11 @@ pub(crate) fn bytes(n: u64) -> String {
 }
 
 /// 2600000 -> "2.6 Mb/s"
-fn bitrate(n: u64) -> String {
+pub(crate) fn bitrate(n: u64) -> String {
     format!("{:.1} Mb/s", n as f64 / 1e6)
 }
 
-fn minutes(secs: f64) -> String {
+pub(crate) fn minutes(secs: f64) -> String {
     format!("{} min", (secs / 60.0).round())
 }
 
@@ -155,7 +155,7 @@ pub(crate) fn years(item: &Item) -> Option<String> {
 
 /// "Arcane.S01E01.1080p.mp4": the server's file name, else the stream URL's
 /// when it looks like one (not "/api/stream/movie/42").
-fn file_name(file: Option<&FileInfo>, stream: &str) -> Option<String> {
+pub(crate) fn file_name(file: Option<&FileInfo>, stream: &str) -> Option<String> {
     file.and_then(|f| f.name.clone()).or_else(|| {
         let last = stream.split(['?', '#']).next().unwrap_or(stream);
         let name = percent_decode(last.rsplit('/').next().unwrap_or(last));
@@ -167,7 +167,7 @@ fn file_name(file: Option<&FileInfo>, stream: &str) -> Option<String> {
 }
 
 /// The server's file info with gaps filled from probing the stream.
-fn merge(server: Option<&FileInfo>, probed: Option<&FileInfo>) -> Option<FileInfo> {
+pub(crate) fn merge(server: Option<&FileInfo>, probed: Option<&FileInfo>) -> Option<FileInfo> {
     let (s, p) = match (server, probed) {
         (None, None) => return None,
         (Some(s), None) => return Some(s.clone()),
@@ -187,7 +187,7 @@ fn merge(server: Option<&FileInfo>, probed: Option<&FileInfo>) -> Option<FileInf
     })
 }
 
-fn sxe(season: u32, ep: u32) -> String {
+pub(crate) fn sxe(season: u32, ep: u32) -> String {
     featurette(season, ep).unwrap_or_else(|| format!("S{season:02}E{ep:02}"))
 }
 
@@ -843,7 +843,7 @@ pub(crate) fn similar<'a>(
 }
 
 /// (season index, episode index) of every episode, in order.
-fn all_episodes(s: &Item) -> Vec<(usize, usize)> {
+pub(crate) fn all_episodes(s: &Item) -> Vec<(usize, usize)> {
     s.seasons
         .iter()
         .enumerate()
@@ -863,7 +863,7 @@ pub(super) struct Watchers {
 
 /// "Jo watched this", "Jo and Sam …", "Jo, Sam and 3 others …": the two
 /// latest by name.
-fn watchers_text(list: &[Watcher]) -> String {
+pub(crate) fn watchers_text(list: &[Watcher]) -> String {
     let who = match list {
         [] => return String::new(),
         [a] => a.shown().to_owned(),
