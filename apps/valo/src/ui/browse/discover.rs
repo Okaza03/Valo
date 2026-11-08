@@ -24,7 +24,7 @@ use crate::images::Images;
 use crate::ui::chrome::{self, Icon};
 use crate::ui::{bold, image_cover, mono, placeholder, segmented};
 use crate::ui::{ERROR, LINE, MUTED, OK, TEXT, WARN};
-use crate::util::{fmt_runtime, Task};
+use crate::util::{fmt_runtime, Task, Waker};
 
 /// Metadata lookups per batch.
 const BATCH: usize = 24;
@@ -32,7 +32,7 @@ const BATCH: usize = 24;
 const TYPING: Duration = Duration::from_millis(300);
 
 #[derive(Default)]
-pub(super) struct State {
+pub(crate) struct State {
     load: Option<Task<Result<addons::Catalogs>>>,
     /// The addon list has come in (possibly empty).
     loaded: bool,
@@ -41,8 +41,8 @@ pub(super) struct State {
     /// Each row as item ids: ours where the IMDb id matches, else the addon's.
     pub shown: Vec<Shown>,
     /// The Streaming page: which catalog, and movies, series or both.
-    service: Option<String>,
-    service_kind: Option<Kind>,
+    pub(crate) service: Option<String>,
+    pub(crate) service_kind: Option<Kind>,
     /// Addon titles, by [`addons::remote_id`].
     pub remote: HashMap<String, Item>,
     /// From metadata addons, by "movie:tt1375666" (None: none of them has it).
@@ -51,19 +51,19 @@ pub(super) struct State {
     asked: HashSet<String>,
     fetching: Option<Task<addons::Metas>>,
     /// The user's own requests; Err: the server doesn't take requests.
-    requests: Option<std::result::Result<Vec<MediaRequest>, String>>,
+    pub(crate) requests: Option<std::result::Result<Vec<MediaRequest>, String>>,
     requests_task: Option<Task<Result<Vec<MediaRequest>>>>,
-    sending: Option<Task<Result<MediaRequest>>>,
-    send_error: Option<String>,
+    pub(crate) sending: Option<Task<Result<MediaRequest>>>,
+    pub(crate) send_error: Option<String>,
     /// Filmographies by person name.
     films: HashMap<String, Films>,
     /// Cast photos from Wikidata, by name (None: it has none).
     photos: HashMap<String, Option<String>>,
     photos_task: Option<Task<PhotoAnswer>>,
     photos_want: Vec<String>,
-    film_filter: FilmFilter,
+    pub(crate) film_filter: FilmFilter,
     /// The season shown on an addon series' page: (item id, season index).
-    season: (String, usize),
+    pub(crate) season: (String, usize),
     searchable: Vec<addons::Searchable>,
     /// What's typed in the search box, and since when.
     typed: (String, Option<Instant>),
@@ -73,9 +73,9 @@ pub(super) struct State {
 }
 
 impl State {
-    pub fn reload(&mut self, ctx: &egui::Context, client: &Client) {
+    pub fn reload(&mut self, wake: impl Into<Waker>, client: &Client) {
         let c = client.clone();
-        self.load = Some(Task::spawn(ctx, move || addons::catalogs(&c)));
+        self.load = Some(Task::spawn(wake, move || addons::catalogs(&c)));
         self.requests = None;
     }
 
@@ -228,7 +228,13 @@ impl State {
     }
 
     /// Take finished loads; fills `lib` when new details came in.
-    pub fn poll(&mut self, ctx: &egui::Context, client: &Client, lib: &mut Option<Arc<Library>>) {
+    pub fn poll(
+        &mut self,
+        wake: impl Into<Waker>,
+        client: &Client,
+        lib: &mut Option<Arc<Library>>,
+    ) {
+        let wake: Waker = wake.into();
         if let Some(r) = self.load.as_mut().and_then(|t| t.poll()) {
             self.load = None;
             self.loaded = true;
@@ -262,7 +268,7 @@ impl State {
             let n = self.want.len().min(BATCH);
             let batch: Vec<(String, String)> = self.want.drain(..n).collect();
             let a = self.addons.clone();
-            self.fetching = Some(Task::spawn(ctx, move || addons::metas(&a, &batch)));
+            self.fetching = Some(Task::spawn(wake.clone(), move || addons::metas(&a, &batch)));
         }
         if let Some(mut sr) = self.searching.take() {
             let mut new = false;
@@ -311,7 +317,7 @@ impl State {
         }
         if self.photos_task.is_none() && !self.photos_want.is_empty() {
             let names = std::mem::take(&mut self.photos_want);
-            self.photos_task = Some(Task::spawn(ctx, move || {
+            self.photos_task = Some(Task::spawn(wake.clone(), move || {
                 let r = filmography::photos(&names);
                 (names, r)
             }));
@@ -334,7 +340,7 @@ impl State {
                         l.push(req);
                     }
                     let c = client.clone();
-                    self.requests_task = Some(Task::spawn(ctx, move || c.my_requests()));
+                    self.requests_task = Some(Task::spawn(wake.clone(), move || c.my_requests()));
                 }
                 Err(e) if e.is::<NoAdminApi>() => {
                     self.send_error = Some("This server doesn't take requests.".into())
@@ -346,7 +352,8 @@ impl State {
 
     /// The search box says `q`: search the addons once typing pauses.
     /// The addon titles found for it so far, and whether more may come.
-    pub fn search(&mut self, ctx: &egui::Context, q: &str) -> (Vec<String>, bool) {
+    pub fn search(&mut self, wake: impl Into<Waker>, q: &str) -> (Vec<String>, bool) {
+        let wake: Waker = wake.into();
         let q = q.trim();
         if self.searchable.is_empty() || q.chars().count() < 2 {
             return (Vec::new(), self.load.is_some() && q.chars().count() >= 2);
@@ -359,12 +366,12 @@ impl State {
         if !have && !running {
             match self.typed.1 {
                 Some(t) if t.elapsed() >= TYPING => {
-                    let c = ctx.clone();
+                    let w = wake.clone();
                     let rx = addons::search(
                         self.addons.clone(),
                         self.searchable.clone(),
                         q.to_owned(),
-                        move || c.request_repaint(),
+                        move || w.wake(),
                     );
                     self.searching = Some(Search {
                         q: q.to_owned(),
@@ -373,7 +380,7 @@ impl State {
                         left: self.searchable.len(),
                     });
                 }
-                Some(t) => ctx.request_repaint_after(TYPING.saturating_sub(t.elapsed())),
+                Some(t) => wake.wake_after(TYPING.saturating_sub(t.elapsed())),
                 None => {}
             }
         }
@@ -389,7 +396,7 @@ impl State {
     /// The request that stands for this title: anyone's that isn't denied
     /// (nobody asks twice), else the user's own denied one. Someone else's
     /// denied request doesn't count: the user can ask again.
-    fn request_for(&self, item: &Item, me: Option<&str>) -> Option<&MediaRequest> {
+    pub(crate) fn request_for(&self, item: &Item, me: Option<&str>) -> Option<&MediaRequest> {
         let Some(Ok(list)) = &self.requests else {
             return None;
         };
@@ -425,7 +432,7 @@ fn asks_for(r: &MediaRequest, item: &Item) -> bool {
 type YearId<'a> = (Option<u32>, &'a str);
 
 /// A catalog, its titles as ids.
-pub(super) struct Shown {
+pub(crate) struct Shown {
     /// [`addons::catalog_key`]
     pub key: String,
     /// "Netflix · Movies"
@@ -448,8 +455,8 @@ enum Films {
 }
 
 /// Which of a person's titles to show.
-#[derive(Clone, Copy, PartialEq, Default)]
-pub(super) enum FilmFilter {
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub(crate) enum FilmFilter {
     #[default]
     All,
     OnServer,
@@ -549,15 +556,16 @@ impl State {
     }
 
     /// A person's filmography: loads it the first time it's asked for.
-    fn films(
+    pub(crate) fn films(
         &mut self,
-        ctx: &egui::Context,
+        wake: impl Into<Waker>,
         name: &str,
     ) -> Option<&std::result::Result<Filmography, String>> {
         let key = name.to_lowercase();
+        let wake: Waker = wake.into();
         let entry = self.films.entry(key).or_insert_with(|| {
             let n = name.to_owned();
-            Films::Loading(Task::spawn(ctx, move || filmography::lookup(&n)))
+            Films::Loading(Task::spawn(wake, move || filmography::lookup(&n)))
         });
         if let Films::Loading(t) = entry {
             if let Some(r) = t.poll() {
@@ -568,6 +576,97 @@ impl State {
             Films::Done(r) => Some(r),
             Films::Loading(_) => None,
         }
+    }
+
+    /// The filmography's credits as ids, and whether each is on the
+    /// server; titles that aren't become addon titles to request.
+    pub(crate) fn credits(&mut self, lib: &Library, f: &Filmography) -> Vec<(String, bool)> {
+        let ours = Ours::new(lib);
+        f.credits
+            .iter()
+            .map(|c| {
+                let it = Item {
+                    id: addons::remote_id(kind_name(c.kind), &c.imdb),
+                    kind: c.kind,
+                    title: c.title.clone(),
+                    year: c.year,
+                    imdb_id: Some(c.imdb.clone()),
+                    poster: Some(format!(
+                        "https://images.metahub.space/poster/small/{}/img",
+                        c.imdb
+                    )),
+                    backdrop: Some(format!(
+                        "https://images.metahub.space/background/medium/{}/img",
+                        c.imdb
+                    )),
+                    ..Default::default()
+                };
+                match ours.find(&it) {
+                    Some(id) => (id.to_owned(), true),
+                    None => {
+                        let id = it.id.clone();
+                        self.remote.entry(id.clone()).or_insert(it);
+                        (id, false)
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// An addon title's page opened: ask for its details, its cast's
+    /// photos, and (signed in) the user's requests.
+    pub(crate) fn want_remote(&mut self, wake: impl Into<Waker>, client: &Client, item: &Item) {
+        if let Some((k, id)) = split_remote(&item.id) {
+            self.want_now(k, id);
+        }
+        self.want_photos(item);
+        if self.requests.is_none() && self.requests_task.is_none() && client.token.is_some() {
+            let c = client.clone();
+            self.requests_task = Some(Task::spawn(wake, move || c.my_requests()));
+        }
+    }
+
+    /// Ask the server for `item`.
+    pub(crate) fn send_request(&mut self, wake: impl Into<Waker>, client: &Client, item: &Item) {
+        if self.sending.is_none() {
+            self.send_error = None;
+            let (c, it) = (client.clone(), item.clone());
+            self.sending = Some(Task::spawn(wake, move || c.request_title(&it)));
+        }
+    }
+
+    /// A person's filmography if it's been loaded (see [`films`](Self::films)).
+    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
+    pub(crate) fn films_loaded(
+        &self,
+        name: &str,
+    ) -> Option<&std::result::Result<Filmography, String>> {
+        match self.films.get(&name.to_lowercase()) {
+            Some(Films::Done(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Loading something the pages wait on.
+    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
+    pub(crate) fn working(&self) -> bool {
+        self.busy()
+            || self.searching.is_some()
+            || self.photos_task.is_some()
+            || self.requests_task.is_some()
+            || self.sending.is_some()
+            || self.films.values().any(|f| matches!(f, Films::Loading(_)))
+            || self.typed.1.is_some_and(|t| t.elapsed() < TYPING * 2)
+    }
+
+    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
+    /// The streaming page's catalogs for `source`: (kind, ids) per catalog.
+    pub(crate) fn of_source(&self, source: &str) -> Vec<(Kind, Vec<String>)> {
+        self.shown
+            .iter()
+            .filter(|s| s.source == source)
+            .map(|s| (s.kind, s.ids.clone()))
+            .collect()
     }
 
     /// Their photo from Wikidata, once loaded.
@@ -630,37 +729,7 @@ impl Browse {
             Some(Ok(f)) => f,
         };
         // each credit as ours (on the server) or an addon title to request
-        let ours = Ours::new(lib);
-        let ids: Vec<(String, bool)> = f
-            .credits
-            .iter()
-            .map(|c| {
-                let it = Item {
-                    id: addons::remote_id(kind_name(c.kind), &c.imdb),
-                    kind: c.kind,
-                    title: c.title.clone(),
-                    year: c.year,
-                    imdb_id: Some(c.imdb.clone()),
-                    poster: Some(format!(
-                        "https://images.metahub.space/poster/small/{}/img",
-                        c.imdb
-                    )),
-                    backdrop: Some(format!(
-                        "https://images.metahub.space/background/medium/{}/img",
-                        c.imdb
-                    )),
-                    ..Default::default()
-                };
-                match ours.find(&it) {
-                    Some(id) => (id.to_owned(), true),
-                    None => {
-                        let id = it.id.clone();
-                        self.discover.remote.entry(id.clone()).or_insert(it);
-                        (id, false)
-                    }
-                }
-            })
-            .collect();
+        let ids = self.discover.credits(lib, &f);
         let on = ids.iter().filter(|(_, o)| *o).count();
         heading(ui, Some(ids.len()));
         ui.add_space(12.0);
@@ -893,15 +962,7 @@ impl Browse {
     ) -> Option<Click> {
         let mut click = None;
         let ctx = ui.ctx().clone();
-        let st = &mut self.discover;
-        if let Some((k, id)) = split_remote(&item.id) {
-            st.want_now(k, id);
-        }
-        st.want_photos(item);
-        if st.requests.is_none() && st.requests_task.is_none() && self.client.token.is_some() {
-            let c = self.client.clone();
-            st.requests_task = Some(Task::spawn(&ctx, move || c.my_requests()));
-        }
+        self.discover.want_remote(&ctx, &self.client.clone(), item);
 
         let w = ui.available_width();
         let h = (w * 0.42).clamp(440.0, 620.0);
@@ -1071,9 +1132,7 @@ impl Browse {
                                 let b = fill_button(ui, label, None, play_colors(), 42.0, 0.0, 0.0);
                                 if b.clicked() && !sending {
                                     st.send_error = None;
-                                    let (c, it) = (client.clone(), item.clone());
-                                    st.sending =
-                                        Some(Task::spawn(&ctx, move || c.request_title(&it)));
+                                    st.send_request(&ctx, &client, item);
                                 }
                             }
                         }
