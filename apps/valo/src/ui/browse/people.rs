@@ -146,7 +146,7 @@ fn top<'a>(names: impl Iterator<Item = &'a str>, n: usize) -> Vec<(&'a str, usiz
 }
 
 /// "just now", "3 hours ago", "yesterday", "12 days ago", …
-pub(super) fn ago(t: i64) -> String {
+pub(crate) fn ago(t: i64) -> String {
     let s = (now_unix() - t).max(0);
     let plural = |n: i64, unit: &str| format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" });
     match s {
