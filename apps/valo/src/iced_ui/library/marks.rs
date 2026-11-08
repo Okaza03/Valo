@@ -119,10 +119,7 @@ impl<M> canvas::Program<M> for Tape {
                 .with_color(Color::WHITE);
             for side in [-1.0, 1.0] {
                 let y = side * h * 0.78;
-                f.stroke(
-                    &Path::line(Point::new(-len, y), Point::new(len, y)),
-                    line,
-                );
+                f.stroke(&Path::line(Point::new(-len, y), Point::new(len, y)), line);
             }
             f.fill_text(Text {
                 content: "MOVING".to_owned(),

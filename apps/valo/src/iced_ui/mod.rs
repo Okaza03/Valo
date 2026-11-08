@@ -586,12 +586,7 @@ impl App {
                         c.signed_in(client, Some(user));
                         self.stage = Stage::Check(c);
                     }
-                    _ => {
-                        self.stage = Stage::Library {
-                            client,
-                            user: Some(user),
-                        }
-                    }
+                    _ => self.open_library(client, Some(user)),
                 }
             }
             Action::Ready { client, user } => {
