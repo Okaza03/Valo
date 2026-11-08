@@ -5,6 +5,7 @@
 //! popup are still egui-only.
 mod cards;
 mod details;
+mod marks;
 
 use std::hash::RandomState;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use iced::{Background, Border, Color, Element, Length, Padding};
 
 use super::icon::{self, Icon};
 use super::images::Images;
+use super::spaced::mono;
 use super::style::{self, black, c, BOLD, MONO};
 use super::widgets;
 use super::{Job, Out};
@@ -48,6 +50,8 @@ pub enum View {
     Movies,
     Series,
     Details(String),
+    /// series id, episode id
+    Episode(String, String),
     /// A director's or creator's titles, by name.
     Person(String),
 }
@@ -55,7 +59,7 @@ pub enum View {
 impl View {
     /// Pages opened from another page: Back returns to it.
     fn nested(&self) -> bool {
-        matches!(self, View::Details(_) | View::Person(_))
+        matches!(self, View::Details(_) | View::Episode(..) | View::Person(_))
     }
 }
 
@@ -64,6 +68,7 @@ impl View {
 pub enum Tab {
     Episodes,
     Related,
+    Details,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -131,6 +136,12 @@ pub enum Msg {
     Hover(Option<String>),
     /// Scroll a row (by its scrollable id) sideways by this much.
     Page(String, f32),
+    /// A row was scrolled to this offset.
+    Scrolled(String, f32),
+    /// The pointer is over this row (its key), or none.
+    RowOver(Option<String>),
+    /// Open a card's "⋮" menu (by its key), or close it.
+    CardMenu(Option<String>),
     Search(String),
     Sort(SortOpt),
     Desc,
@@ -142,6 +153,10 @@ pub enum Msg {
     Hero(isize),
     Retry,
     ChangeServer,
+    /// Open or close the profile menu.
+    Menu(bool),
+    SignOut,
+    Quit,
     CopyNote,
     Docs,
 }
@@ -179,6 +194,18 @@ pub struct Library {
     hero: isize,
     hero_since: Instant,
     hovered: Option<String>,
+    /// The profile menu is open.
+    menu: bool,
+    /// How far each row is scrolled, by its scrollable id.
+    row_offsets: std::collections::HashMap<String, f32>,
+    /// The row the pointer is over.
+    row_over: Option<String>,
+    /// The card whose "⋮" menu is open.
+    card_menu: Option<String>,
+    /// Who else watched each title, by id.
+    watchers: std::collections::HashMap<String, details::Watchers>,
+    /// File info probed from streams, by stream URL.
+    probes: std::collections::HashMap<String, details::Probe>,
     watchlist: Watchlist,
     hidden: Hidden,
     /// My list and Continue watching removals, kept in step with the server.
@@ -219,6 +246,12 @@ impl Library {
             hero: 0,
             hero_since: Instant::now(),
             hovered: None,
+            menu: false,
+            row_offsets: std::collections::HashMap::new(),
+            row_over: None,
+            card_menu: None,
+            watchers: std::collections::HashMap::new(),
+            probes: std::collections::HashMap::new(),
             watchlist: Watchlist::load(),
             hidden: Hidden::load(),
             lists: ListSync::default(),
@@ -251,7 +284,10 @@ impl Library {
 
     /// Loading the library: tick quickly.
     pub fn busy(&self) -> bool {
-        self.loading.is_some() || self.me.is_some() || self.layout_task.is_some()
+        self.loading.is_some()
+            || self.me.is_some()
+            || self.layout_task.is_some()
+            || self.details_busy()
     }
 
     fn prefix(&self) -> String {
@@ -270,7 +306,16 @@ impl Library {
                 .is_some_and(Entry::watched)
     }
 
+    /// The hovered card and the open card menu, for drawing cards.
+    pub(super) fn hot(&self) -> cards::Hot<'_> {
+        cards::Hot {
+            card: self.hovered.as_deref(),
+            menu: self.card_menu.as_deref(),
+        }
+    }
+
     fn go(&mut self, v: View) -> Out {
+        self.card_menu = None;
         if v == self.view && self.search.is_empty() {
             return Out::None;
         }
@@ -286,6 +331,7 @@ impl Library {
             self.history.clear();
         }
         self.view = v;
+        self.details_work();
         self.search.clear();
         self.hovered = None;
         Out::Top(PAGE)
@@ -342,6 +388,7 @@ impl Library {
                 Ok(lib) => {
                     let gone = match &self.view {
                         View::Details(id) => lib.find(id).is_none(),
+                        View::Episode(_, ep) => lib.find_episode(ep).is_none(),
                         _ => false,
                     };
                     if gone {
@@ -377,6 +424,7 @@ impl Library {
             self.hero = self.hero.wrapping_add(1);
             self.hero_since = Instant::now();
         }
+        self.details_work();
         out
     }
 
@@ -418,6 +466,7 @@ impl Library {
                 }
             }
             Msg::Hide(id) => {
+                self.card_menu = None;
                 let key = self.key(&id);
                 self.hidden.hide(&key);
             }
@@ -427,6 +476,11 @@ impl Library {
             }
             Msg::Hover(k) => self.hovered = k,
             Msg::Page(id, dx) => return Out::ScrollBy(id, dx),
+            Msg::Scrolled(id, x) => {
+                self.row_offsets.insert(id, x);
+            }
+            Msg::RowOver(k) => self.row_over = k,
+            Msg::CardMenu(k) => self.card_menu = k,
             Msg::Search(s) => {
                 let was = self.search.trim().is_empty();
                 self.search = s;
@@ -456,6 +510,15 @@ impl Library {
             }
             Msg::Retry => self.reload(),
             Msg::ChangeServer => return Out::Act(Action::ChangeServer),
+            Msg::Menu(open) => self.menu = open,
+            Msg::SignOut => {
+                self.menu = false;
+                return Out::Act(Action::SignOut(self.client.clone()));
+            }
+            Msg::Quit => {
+                self.menu = false;
+                return Out::Act(Action::Quit);
+            }
             Msg::CopyNote => {
                 if let Some(m) = self.missing {
                     self.copied = true;
@@ -480,33 +543,38 @@ impl Library {
 
     // ------------------------------------------------------------ the bar
 
-    /// The title bar's left side: Back, and the page tabs.
+    /// The title bar's left side: Back on nested pages, and the page tabs.
     pub fn bar_left(&self) -> Element<'_, Msg> {
-        let searching = !self.search.trim().is_empty();
-        let mut r = row![].spacing(2).align_y(Vertical::Center);
-        if self.view.nested() || searching {
-            r = r.push(tab("‹ Back", false, Msg::Back));
+        let searching = !self.search.is_empty();
+        let mut r = row![].spacing(6).align_y(Vertical::Center);
+        if self.view.nested() {
+            r = r.push(crate::iced_ui::chrome::tip_below(
+                widgets::tab("‹ Back", false, Msg::Back),
+                "Backspace",
+            ));
         }
-        for (label, v) in [
-            ("Home", View::Home),
-            ("Movies", View::Movies),
-            ("TV Shows", View::Series),
-        ] {
-            let on = !searching && self.view == v;
-            r = r.push(tab(label, on, Msg::Nav(v)));
+        if theme::spec().layout.nav == theme::Nav::Top {
+            for (label, v) in [
+                ("Home", View::Home),
+                ("Movies", View::Movies),
+                ("TV Shows", View::Series),
+            ] {
+                let on = !searching && self.view == v;
+                r = r.push(widgets::tab(label, on, Msg::Nav(v)));
+            }
         }
         r.into()
     }
 
-    /// The title bar's search field.
+    /// The title bar's search field (egui: 240 wide at most, 10×6 margins).
     pub fn search_field(&self) -> Element<'_, Msg> {
         let p = theme::pal();
         text_input("Search movies & shows", &self.search)
             .id(SEARCH)
             .on_input(Msg::Search)
-            .size(13.5)
+            .size(14.5)
             .padding([6, 10])
-            .width(220)
+            .width(240)
             .style(move |_, s| {
                 let border = match s {
                     text_input::Status::Focused { .. } => c(p.text),
@@ -521,7 +589,7 @@ impl Library {
                         radius: 3.0.into(),
                     },
                     icon: c(p.muted),
-                    placeholder: c(p.muted).scale_alpha(0.7),
+                    placeholder: c(p.muted),
                     value: c(p.text),
                     selection: c(p.accent).scale_alpha(0.4),
                 }
@@ -529,8 +597,120 @@ impl Library {
             .into()
     }
 
-    /// The status line's left side.
-    pub fn status(&self) -> String {
+    /// Escape in the search field: clear it.
+    pub fn escape(&mut self) -> Out {
+        if self.search.is_empty() {
+            return Out::None;
+        }
+        self.search.clear();
+        Out::Top(PAGE)
+    }
+
+    fn shown_name(&self) -> String {
+        self.user.clone().unwrap_or_else(|| "Guest".to_owned())
+    }
+
+    /// The profile button: avatar, name and a caret (egui's `profile_menu`).
+    pub fn profile_button(&self) -> Element<'_, Msg> {
+        let name = self.shown_name();
+        let open = self.menu;
+        let content = row![
+            space().width(14),
+            avatar(&name, 12.0),
+            space().width(8),
+            crate::iced_ui::spaced::Spaced::new(name.to_uppercase(), 11.5, 11.5 * 0.14, MONO)
+                .color(style::TEXT()),
+            space().width(12),
+            icon::icon(Icon::ChevronDown, style::MUTED(), 12.0),
+            space().width(9),
+        ]
+        .align_y(Vertical::Center)
+        .height(crate::iced_ui::chrome::BAR_H);
+        button(content)
+            .padding(0)
+            .style(move |_, s| {
+                let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
+                button::Style {
+                    background: (hot || open).then(|| Background::Color(style::SURFACE_HI())),
+                    ..button::Style::default()
+                }
+            })
+            .on_press(Msg::Menu(!open))
+            .into()
+    }
+
+    /// Where the profile button's left edge is, from the window's right.
+    fn profile_offset(&self) -> f32 {
+        let n = self.shown_name().chars().count() as f32;
+        let label = n * 11.5 * 0.74 - 11.5 * 0.14;
+        let profile_w = label + 72.0;
+        3.0 * crate::iced_ui::chrome::BAR_H + 1.0 + profile_w
+    }
+
+    /// The open profile menu, under its button; a click elsewhere closes it.
+    pub fn menu_overlay(&self) -> Option<Element<'_, Msg>> {
+        if !self.menu {
+            return None;
+        }
+        let name = self.shown_name();
+        let mut items = column![
+            row![
+                avatar(&name, 17.0),
+                column![
+                    text(name.clone()).font(BOLD).size(15),
+                    widgets::label(&self.client.info.name, 10.5),
+                ]
+                .spacing(0),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center)
+            .padding([4, 2]),
+            separator(),
+        ]
+        .spacing(2)
+        .width(250);
+        if self.client.token.is_some() {
+            items = items.push(widgets::menu_item("Sign out", Msg::SignOut));
+        }
+        items = items.push(widgets::menu_item("Quit", Msg::Quit));
+        let panel = container(items).padding(6).style(|_| {
+            let p = theme::pal();
+            container::Style {
+                background: Some(Background::Color(c(p.surface))),
+                border: Border {
+                    color: c(p.line_hi),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: black(120),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                text_color: Some(c(p.text)),
+                ..container::Style::default()
+            }
+        });
+        let right = (self.profile_offset() - 262.0).max(0.0);
+        Some(
+            stack![
+                iced::widget::mouse_area(space().width(Length::Fill).height(Length::Fill))
+                    .on_press(Msg::Menu(false)),
+                container(panel)
+                    .width(Length::Fill)
+                    .align_x(Horizontal::Right)
+                    .padding(
+                        Padding::default()
+                            .top(crate::iced_ui::chrome::BAR_H + 2.0)
+                            .right(right)
+                    ),
+            ]
+            .into(),
+        )
+    }
+
+    /// The status line: when the library was loaded and from where; the counts.
+    pub fn status(&self) -> (String, String) {
         let host = self
             .client
             .base
@@ -547,11 +727,7 @@ impl Library {
                 None => "Library not loaded".to_owned(),
             }
         };
-        let who = match &self.user {
-            Some(u) => format!("  ·  {u}"),
-            None => String::new(),
-        };
-        let counts = match &self.lib {
+        let right = match &self.lib {
             Some(l) => {
                 let eps: usize = l
                     .series
@@ -565,14 +741,22 @@ impl Library {
                     ""
                 };
                 format!(
-                    "  ·  {} movies  ·  {} series  ·  {eps} episodes{kind}",
+                    "{} movies  ·  {} series  ·  {eps} episodes{kind}  ·  ",
                     l.movies.len(),
                     l.series.len()
                 )
             }
             None => String::new(),
         };
-        format!("{when}  ·  {host}{who}{counts}")
+        (
+            format!("{when}  ·  {host}"),
+            format!("{right}Valo {}", crate::update::VERSION),
+        )
+    }
+
+    /// Whether clicking the status line may reload (not while loading).
+    pub fn can_refresh(&self) -> bool {
+        self.loading.is_none()
     }
 
     // -------------------------------------------------------------- pages
@@ -598,14 +782,28 @@ impl Library {
                         Some(item) => self.series_page(lib, item, env, w),
                         None => muted_center("This title isn't on the server any more"),
                     },
+                    View::Episode(_, ep) => match lib.find_episode(ep) {
+                        Some((s, si, ei)) => self.episode_page(s, si, ei, env, w),
+                        None => muted_center("This episode isn't on the server any more"),
+                    },
                 }
             };
-            scrollable(column![page, space().height(40)])
+            let page = scrollable(column![page, space().height(40)])
                 .id(PAGE)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(scroll_style)
+                .style(scroll_style);
+            if self.card_menu.is_some() {
+                // a click outside the open menu closes it
+                stack![
+                    page,
+                    iced::widget::mouse_area(space().width(Length::Fill).height(Length::Fill))
+                        .on_press(Msg::CardMenu(None)),
+                ]
                 .into()
+            } else {
+                page.into()
+            }
         })
         .into()
     }
@@ -654,8 +852,10 @@ impl Library {
         if lib.movies.is_empty() && lib.series.is_empty() {
             return column![
                 space().height(120),
-                widgets::label("Your library is empty", 13.0),
-                text("No movies or series were found on this server.").color(style::MUTED()),
+                mono("Your library is empty", 13.0),
+                text("No movies or series were found on this server.")
+                    .size(14.5)
+                    .color(style::MUTED()),
             ]
             .spacing(4)
             .width(Length::Fill)
@@ -668,17 +868,8 @@ impl Library {
             let i = self.hero.rem_euclid(feat.len() as isize) as usize;
             page = page.push(self.hero(feat[i], (i, feat.len()), env, w));
         }
-        let hovered = self.hovered.as_deref();
         let row_of = |title: &str, cards: &[Card], wide: bool, all: Option<View>| {
-            cards::row_of(
-                env.images,
-                title,
-                cards,
-                wide,
-                hovered,
-                all.map(Msg::Nav),
-                w,
-            )
+            self.row(env, title, cards, wide, all.map(Msg::Nav), w)
         };
         let keys: Vec<String> = HOME_ROWS
             .iter()
@@ -757,8 +948,34 @@ impl Library {
         page.into()
     }
 
-    /// The featured banner: artwork on the right, the title and buttons on
-    /// the left. `at`: its place among the featured titles.
+    /// A titled row of cards that pages sideways.
+    pub(super) fn row<'a>(
+        &self,
+        env: Env<'a>,
+        title: &str,
+        cards: &[Card],
+        wide: bool,
+        all: Option<Msg>,
+        w: f32,
+    ) -> Element<'a, Msg> {
+        let id = format!("row\u{1f}{title}");
+        cards::row_of(
+            env.images,
+            title,
+            cards,
+            wide,
+            self.hot(),
+            all,
+            w,
+            self.row_offsets.get(&id).copied().unwrap_or(0.0),
+            self.row_over.as_deref() == Some(id.as_str()),
+        )
+    }
+
+    /// The featured banner (egui's `Browse::hero`, as a carousel): artwork
+    /// on the right fading into the page, the title, what it is and the
+    /// buttons on the left, dots for each featured title, and arrows while
+    /// the pointer is over it. A click anywhere else opens the title.
     fn hero<'a>(
         &'a self,
         item: &'a Item,
@@ -767,118 +984,183 @@ impl Library {
         w: f32,
     ) -> Element<'a, Msg> {
         let h = (w * 0.40).clamp(300.0, 560.0);
-        let art_w = w * 0.75;
+        let art_x = w * 0.25;
+        let art_w = w - art_x;
         let bg = style::BG();
         let clear = Color { a: 0.0, ..bg };
-        let art = item.backdrop.as_deref().or(item.poster.as_deref());
-        let artwork = stack![
-            cards::art(env.images, art, &item.title, art_w, h, 0.0),
-            // fade into the page on its left and bottom
-            container(space())
-                .width(art_w * 0.45)
-                .height(h)
-                .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, bg, clear)),
+        let url = item.backdrop.as_deref().or(item.poster.as_deref());
+        let loaded = url
+            .and_then(|u| env.images.get(u, crate::iced_ui::images::Variant::Full))
+            .is_some();
+        let mut layers: Vec<Element<'a, Msg>> = Vec::new();
+        if loaded {
+            layers.push(
+                container(space())
+                    .width(w)
+                    .height(h)
+                    .style(|_| container::Style {
+                        background: Some(Background::Color(Color::BLACK)),
+                        ..container::Style::default()
+                    })
+                    .into(),
+            );
+            layers.push(
+                row![
+                    container(space())
+                        .width(art_x + 1.0)
+                        .height(h)
+                        .style(move |_| {
+                            container::Style {
+                                background: Some(Background::Color(bg)),
+                                ..container::Style::default()
+                            }
+                        }),
+                    stack![
+                        cards::art(env.images, url, &item.title, art_w - 1.0, h, 0.0),
+                        container(space())
+                            .width((art_w - 1.0) * 0.45)
+                            .height(h)
+                            .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, bg, clear)),
+                    ],
+                ]
+                .into(),
+            );
+        } else {
+            // no artwork: the title's color, fading into the page both sides
+            let col = c(crate::util::color_for(&item.title));
+            let half = Color { a: 0.5, ..col };
+            layers.push(
+                row![
+                    container(space())
+                        .width(w / 2.0)
+                        .height(h)
+                        .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, bg, half)),
+                    container(space())
+                        .width(w / 2.0)
+                        .height(h)
+                        .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, col, bg)),
+                ]
+                .into(),
+            );
+        }
+        // the bottom fades into the page
+        layers.push(
             container(
                 container(space())
-                    .width(art_w)
+                    .width(w)
                     .height(h * 0.35)
-                    .style(move |_| { fill_gradient(std::f32::consts::PI, clear, bg) })
+                    .style(move |_| fill_gradient(std::f32::consts::PI, clear, bg)),
             )
             .height(h)
-            .align_y(Vertical::Bottom),
-        ];
+            .align_y(Vertical::Bottom)
+            .into(),
+        );
+
         let (label, restart) = play_label(item, env.progress, &|i| self.key(i));
-        let mut buttons = row![pill(
+        let mut buttons = row![widgets::button_with(
+            widgets::Kind::Primary,
             &label,
             Some(Icon::Play),
-            true,
             (!item.unavailable).then(|| Msg::Play(item.id.clone(), None, false)),
         )]
-        .spacing(10);
+        .spacing(8);
         if restart {
-            buttons = buttons.push(pill(
+            buttons = buttons.push(widgets::button_with(
+                widgets::Kind::Secondary,
                 "Start over",
                 None,
-                false,
                 Some(Msg::Play(item.id.clone(), None, true)),
             ));
         }
-        buttons = buttons.push(pill(
+        buttons = buttons.push(widgets::button_with(
+            widgets::Kind::Secondary,
             "More info",
             None,
-            false,
             Some(Msg::Open(item.id.clone())),
         ));
         let text_w = (w * 0.45).clamp(320.0, 640.0).min(w - 2.0 * SIDE);
+        let kind = if item.kind == Kind::Movie {
+            "Featured movie"
+        } else {
+            "Featured series"
+        };
         let mut words = column![
-            widgets::label(
-                if item.kind == Kind::Movie {
-                    "Featured movie"
-                } else {
-                    "Featured series"
-                },
-                11.0
-            )
-            .color(c(theme::pal().accent)),
+            mono(kind, 11.0).color(c(theme::pal().accent)),
             text(item.title.clone()).font(BOLD).size(40),
-            text(meta_line(item))
-                .font(MONO)
-                .size(11.5)
-                .color(style::MUTED()),
+            space().height(2),
+            mono(&meta_line(item), 11.5).color(style::MUTED()),
         ]
-        .spacing(4)
+        .spacing(3)
         .width(text_w);
         if !item.overview.is_empty() {
-            words = words.push(
-                container(text(shorten(&item.overview, 260)).size(15))
-                    .padding(Padding::default().top(6.0)),
-            );
+            words = words
+                .push(
+                    text(shorten(&item.overview, 260))
+                        .size(15)
+                        .color(style::TEXT()),
+                )
+                .push(space().height(4));
         }
-        words = words.push(container(buttons).padding(Padding::default().top(10.0)));
-        let mut layers = vec![
-            row![space().width(w - art_w), artwork].into(),
+        words = words.push(space().height(8)).push(buttons);
+        layers.push(
             container(words)
                 .height(h)
                 .padding(Padding::default().left(SIDE).bottom(32.0))
                 .align_y(Vertical::Bottom)
                 .into(),
-        ];
+        );
+        let over = self.row_over.as_deref() == Some("hero");
         if at.1 > 1 {
-            let mut dots = row![].spacing(6).align_y(Vertical::Center);
+            let mut dots = row![].align_y(Vertical::Center);
             for i in 0..at.1 {
                 let on = i == at.0;
                 dots = dots.push(
-                    container(space())
-                        .width(if on { 14 } else { 6 })
-                        .height(3)
-                        .style(move |_| container::Style {
-                            background: Some(Background::Color(if on {
-                                style::TEXT()
-                            } else {
-                                style::MUTED().scale_alpha(0.6)
-                            })),
-                            ..container::Style::default()
-                        }),
+                    container(
+                        container(space())
+                            .width(if on { 14 } else { 6 })
+                            .height(3)
+                            .style(move |_| container::Style {
+                                background: Some(Background::Color(if on {
+                                    style::TEXT()
+                                } else {
+                                    c(theme::MUTED().gamma_multiply(0.6))
+                                })),
+                                ..container::Style::default()
+                            }),
+                    )
+                    .center_x(16),
                 );
             }
-            let nav = row![
-                round(Icon::ChevronLeft, Msg::Hero(-1)),
-                dots,
-                round(Icon::ChevronRight, Msg::Hero(1)),
-            ]
-            .spacing(10)
-            .align_y(Vertical::Center);
             layers.push(
-                container(nav)
+                container(dots)
                     .width(w)
                     .height(h)
-                    .padding(Padding::default().right(SIDE).bottom(14.0))
+                    .padding(Padding::default().right(SIDE + 8.0).bottom(20.5))
                     .align_x(Horizontal::Right)
                     .align_y(Vertical::Bottom)
                     .into(),
             );
+            if over {
+                layers.push(
+                    container(row![
+                        hero_arrow("‹", Msg::Hero(-1)),
+                        space::horizontal(),
+                        hero_arrow("›", Msg::Hero(1)),
+                    ])
+                    .width(w)
+                    .height(h)
+                    .padding([0, 2])
+                    .align_y(Vertical::Center)
+                    .into(),
+                );
+            }
         }
-        stack(layers).width(w).height(h).into()
+        iced::widget::mouse_area(stack(layers).width(w).height(h))
+            .on_press(Msg::Open(item.id.clone()))
+            .on_enter(Msg::RowOver(Some("hero".to_owned())))
+            .on_exit(Msg::RowOver(None))
+            .interaction(iced::mouse::Interaction::Pointer)
+            .into()
     }
 
     fn continue_cards(&self, lib: &api::Library, progress: &Progress) -> Vec<Card> {
@@ -1042,19 +1324,19 @@ impl Library {
             "Creator"
         };
 
-        let mut chips = row![].spacing(4).align_y(Vertical::Center);
-        for (f, label, n) in [
-            (Filter::All, "All", in_genre.len()),
-            (Filter::InProgress, "In progress", count(Filter::InProgress)),
-            (Filter::Unwatched, "Unwatched", count(Filter::Unwatched)),
-            (Filter::Watched, "Watched", count(Filter::Watched)),
-        ] {
-            chips = chips.push(chip(
-                &format!("{label}  {n}"),
-                self.filter == f,
-                Msg::Filter(f),
-            ));
-        }
+        // egui: the filter strip on the left; on the right, from the edge:
+        // genre, its label, direction, sort, its label
+        let chips = widgets::segmented(
+            [
+                (Filter::All, "All", in_genre.len()),
+                (Filter::InProgress, "In progress", count(Filter::InProgress)),
+                (Filter::Unwatched, "Unwatched", count(Filter::Unwatched)),
+                (Filter::Watched, "Watched", count(Filter::Watched)),
+            ]
+            .into_iter()
+            .map(|(f, label, n)| (label.to_owned(), Some(n), self.filter == f, Msg::Filter(f)))
+            .collect(),
+        );
         let mut sorts = vec![
             SortOpt(Sort::Title, "A – Z"),
             SortOpt(Sort::Year, "Release year"),
@@ -1066,44 +1348,50 @@ impl Library {
             sorts.push(SortOpt(Sort::Director, maker_label));
         }
         let current = sorts.iter().find(|s| s.0 == self.sort).copied();
+        let (dir_icon, dir_label) = if self.desc {
+            (Icon::ArrowDown, "Descending")
+        } else {
+            (Icon::ArrowUp, "Ascending")
+        };
         let mut controls = row![
             widgets::label("Sort", 11.0),
-            picker(pick_list(sorts, current, Msg::Sort)),
-            button(icon::icon(
-                if self.desc {
-                    Icon::ArrowDown
-                } else {
-                    Icon::ArrowUp
-                },
-                style::TEXT(),
-                30.0,
-            ))
-            .padding(0)
-            .style(style::bare(style::SURFACE_HI(), 4.0))
-            .on_press(Msg::Desc),
+            space().width(10),
+            picker(pick_list(sorts, current, Msg::Sort).width(170)),
+            space().width(16),
+            crate::iced_ui::chrome::tip_below(
+                widgets::button_with(
+                    widgets::Kind::Small,
+                    dir_label,
+                    Some(dir_icon),
+                    Some(Msg::Desc)
+                ),
+                "Sort direction",
+            ),
         ]
-        .spacing(8)
         .align_y(Vertical::Center);
         if !genres.is_empty() {
             let mut opts = vec![ALL_GENRES.to_owned()];
             opts.extend(genres);
             let current = genre.cloned().unwrap_or_else(|| ALL_GENRES.to_owned());
             controls = controls
-                .push(space().width(10))
+                .push(space().width(24))
                 .push(widgets::label("Genre", 11.0))
-                .push(picker(pick_list(opts, Some(current), Msg::Genre)));
+                .push(space().width(10))
+                .push(picker(
+                    pick_list(opts, Some(current), Msg::Genre).width(170),
+                ));
         }
         let head = row![chips, space::horizontal(), controls]
             .align_y(Vertical::Center)
             .padding(
                 Padding::default()
-                    .left(SIDE)
-                    .right(SIDE)
+                    .left(SIDE - 22.0)
+                    .right(SIDE - 22.0)
                     .top(18.0)
-                    .bottom(30.0),
+                    .bottom(36.0),
             );
         if items.is_empty() {
-            return column![head, muted_center("Nothing here")].into();
+            return column![head, space().height(4), muted_center("Nothing here")].into();
         }
         let mut cards = self.poster_cards(items.iter().copied(), env.progress);
         if self.sort == Sort::Director {
@@ -1116,11 +1404,7 @@ impl Library {
         } else {
             "series"
         };
-        column![
-            head,
-            cards::grid(env.images, &cards, w, self.hovered.as_deref(), salt)
-        ]
-        .into()
+        column![head, cards::grid(env.images, &cards, w, self.hot(), salt)].into()
     }
 
     fn search_page<'a>(&'a self, lib: &'a api::Library, env: Env<'a>, w: f32) -> Element<'a, Msg> {
@@ -1142,22 +1426,25 @@ impl Library {
         people.sort_by_key(|d| d.to_lowercase());
         people.dedup();
         let mut page = column![row![
-            text(format!("Results for “{}”", self.search.trim()))
-                .font(MONO)
-                .size(13),
-            text(hits.len().to_string())
-                .font(MONO)
-                .size(13)
-                .color(style::MUTED()),
+            mono(&format!("Results for “{}”", self.search.trim()), 13.0),
+            mono(&hits.len().to_string(), 13.0).color(style::MUTED()),
         ]
         .spacing(10)
         .padding(Padding::default().left(SIDE).top(24.0))];
         if !people.is_empty() {
-            let mut names = row![widgets::label("Directors & creators", 11.0)]
-                .spacing(8)
-                .align_y(Vertical::Center);
+            let mut names = row![
+                widgets::label("Directors & creators", 11.0),
+                space().width(6)
+            ]
+            .spacing(10)
+            .align_y(Vertical::Center);
             for d in people {
-                names = names.push(widgets::small(d, Msg::Nav(View::Person(d.to_owned()))));
+                names = names.push(widgets::button_with(
+                    widgets::Kind::Secondary,
+                    d,
+                    None,
+                    Some(Msg::Nav(View::Person(d.to_owned()))),
+                ));
             }
             page = page.push(
                 container(names.wrap())
@@ -1165,17 +1452,14 @@ impl Library {
             );
         }
         if hits.is_empty() {
-            return page.push(muted_center("Nothing matches")).into();
+            return page
+                .push(space().height(16))
+                .push(muted_center("Nothing matches"))
+                .into();
         }
         let cards = self.poster_cards(hits.into_iter(), env.progress);
         page.push(space().height(16))
-            .push(cards::grid(
-                env.images,
-                &cards,
-                w,
-                self.hovered.as_deref(),
-                "search",
-            ))
+            .push(cards::grid(env.images, &cards, w, self.hot(), "search"))
             .into()
     }
 
@@ -1214,10 +1498,33 @@ impl Library {
         let cards = self.poster_cards(items.into_iter(), env.progress);
         column![
             head,
-            cards::grid(env.images, &cards, w, self.hovered.as_deref(), "person")
+            cards::grid(env.images, &cards, w, self.hot(), "person")
         ]
         .into()
     }
+}
+
+/// The banner's arrow: a dark box with a chevron, brighter on hover.
+fn hero_arrow<'a>(glyph: &str, msg: Msg) -> Element<'a, Msg> {
+    button(
+        container(text(glyph.to_owned()).size(30))
+            .center_x(32)
+            .center_y(64),
+    )
+    .width(32)
+    .height(64)
+    .padding(0)
+    .style(|_, s| {
+        let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: Some(Background::Color(black(if hot { 160 } else { 80 }))),
+            text_color: Color::WHITE.scale_alpha(if hot { 1.0 } else { 0.7 }),
+            border: iced::border::rounded(2),
+            ..button::Style::default()
+        }
+    })
+    .on_press(msg)
+    .into()
 }
 
 /// How long the app has run, for spinners.
@@ -1240,113 +1547,66 @@ fn fill_gradient(angle: f32, from: Color, to: Color) -> container::Style {
 
 /// A gray line in the middle of the page ("Nothing here").
 fn muted_center<'a>(t: &str) -> Element<'a, Msg> {
-    container(widgets::label(t, 12.0))
+    container(mono(t, 12.0).color(style::MUTED()))
         .padding(Padding::default().top(40.0))
         .center_x(Length::Fill)
         .into()
 }
 
-/// A tab in the title bar: muted, lit when it's the current page.
-fn tab<'a>(label: &str, on: bool, msg: Msg) -> Element<'a, Msg> {
-    button(
-        text(label.to_owned())
-            .size(14)
-            .font(if on { BOLD } else { style::SANS }),
+/// A round avatar with the name's initial (egui's `chrome::avatar`).
+pub fn avatar<'a>(name: &str, r: f32) -> Element<'a, Msg> {
+    let initial = name
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
+    container(
+        text(initial)
+            .font(style::BLACK)
+            .size(r * 1.05)
+            .color(style::TEXT()),
     )
-    .padding([6, 12])
-    .style(move |_, s| {
-        let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
-        button::Style {
-            background: None,
-            text_color: if on || hot {
-                style::TEXT()
-            } else {
-                style::MUTED()
-            },
-            ..button::Style::default()
-        }
+    .center_x(2.0 * r)
+    .center_y(2.0 * r)
+    .style(move |_| container::Style {
+        background: Some(Background::Color(c(theme::pal().accent))),
+        border: iced::border::rounded(r),
+        ..container::Style::default()
     })
-    .on_press(msg)
     .into()
 }
 
-/// A filter chip: filled when it's chosen.
-fn chip<'a>(label: &str, on: bool, msg: Msg) -> Element<'a, Msg> {
-    button(text(label.to_owned()).size(13))
-        .padding([6, 12])
-        .style(move |_, s| {
-            let p = theme::pal();
-            let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: if on {
-                    Some(Background::Color(c(p.text)))
-                } else if hot {
-                    Some(Background::Color(c(p.surface_hi)))
-                } else {
-                    None
-                },
-                text_color: if on { c(p.bg) } else { c(p.text) },
-                border: Border {
-                    color: c(p.line_hi),
-                    width: if on { 0.0 } else { 1.0 },
-                    radius: 15.0.into(),
-                },
-                ..button::Style::default()
-            }
-        })
-        .on_press(msg)
-        .into()
-}
-
-/// A rounded button with an optional icon: `primary` is the filled one.
-fn pill<'a>(label: &str, ic: Option<Icon>, primary: bool, msg: Option<Msg>) -> Element<'a, Msg> {
-    let enabled = msg.is_some();
+/// A drop-down panel (menus): egui's popup frame.
+pub(super) fn popup_style(_: &iced::Theme) -> container::Style {
     let p = theme::pal();
-    let ink = if primary { c(p.ink) } else { c(p.text) };
-    let mut content = row![].spacing(6).align_y(Vertical::Center);
-    if let Some(ic) = ic {
-        content = content.push(icon::icon(ic, ink, 18.0));
+    container::Style {
+        background: Some(Background::Color(c(p.surface))),
+        border: Border {
+            color: c(p.line_hi),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: black(120),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+        text_color: Some(c(p.text)),
+        ..container::Style::default()
     }
-    content = content.push(text(label.to_owned()).font(BOLD).size(14).color(ink));
-    button(content)
-        .padding([10, 18])
-        .style(move |_, s| {
-            let hot = enabled && matches!(s, button::Status::Hovered | button::Status::Pressed);
-            let fill = match (primary, hot) {
-                (true, false) => c(p.primary),
-                (true, true) => c(theme::mix(p.primary, p.bg, 0.14)),
-                (false, false) => black(110),
-                (false, true) => black(190),
-            };
-            button::Style {
-                background: Some(Background::Color(if enabled {
-                    fill
-                } else {
-                    fill.scale_alpha(0.45)
-                })),
-                text_color: ink,
-                border: Border {
-                    color: if primary {
-                        Color::TRANSPARENT
-                    } else {
-                        c(p.line_hi)
-                    },
-                    width: 1.0,
-                    radius: f32::from(theme::spec().button_radius).into(),
-                },
-                ..button::Style::default()
-            }
-        })
-        .on_press_maybe(msg)
-        .into()
 }
 
-/// A small round button with an icon (the banner's arrows).
-fn round<'a>(ic: Icon, msg: Msg) -> Element<'a, Msg> {
-    button(icon::icon(ic, Color::WHITE, 28.0))
-        .padding(0)
-        .style(style::ctl(true))
-        .on_press(msg)
+/// A menu's dividing line.
+fn separator<'a>() -> Element<'a, Msg> {
+    container(space())
+        .width(Length::Fill)
+        .height(1)
+        .padding([0, 0])
+        .style(|_| container::Style {
+            background: Some(Background::Color(style::LINE())),
+            ..container::Style::default()
+        })
         .into()
 }
 

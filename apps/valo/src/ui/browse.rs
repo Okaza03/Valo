@@ -6,7 +6,7 @@ mod devices;
 mod discover;
 mod layouts;
 mod password;
-mod people;
+pub(crate) mod people;
 mod viewed;
 
 use std::collections::{HashMap, HashSet};
