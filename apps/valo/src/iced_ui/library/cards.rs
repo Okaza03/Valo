@@ -8,7 +8,7 @@ use iced::widget::{
 use iced::{Background, Border, Color, ContentFit, Element, Length, Padding, Rectangle};
 
 use super::super::icon::{self, Icon};
-use super::super::images::Images;
+use super::super::images::{Images, Variant};
 use super::super::style::{self, black, c, white, BOLD};
 use super::Msg;
 use crate::ui::theme;
@@ -49,7 +49,8 @@ pub fn art<'a>(
     h: f32,
     radius: f32,
 ) -> Element<'a, Msg> {
-    if let Some((handle, (iw, ih))) = url.and_then(|u| images.get(u)) {
+    let v = Variant::for_size(w, h);
+    if let Some((handle, (iw, ih))) = url.and_then(|u| images.get(u, v)) {
         let (iw, ih) = (iw as f32, ih as f32);
         let (ta, ra) = (iw / ih.max(1.0), w / h.max(1.0));
         let crop = if ta > ra {
@@ -77,7 +78,7 @@ pub fn art<'a>(
             .border_radius(radius)
             .into();
     }
-    let loading = url.is_some_and(|u| !images.failed(u));
+    let loading = url.is_some_and(|u| !images.failed(u, v));
     if loading {
         return container(space())
             .width(w)

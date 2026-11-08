@@ -174,7 +174,9 @@ pub struct Library {
     /// The series page's season; `usize::MAX` picks the one to continue.
     season: usize,
     tab: Tab,
-    hero: usize,
+    /// The featured title shown, counting from the first; taken modulo
+    /// their number when drawn, so stepping back from the first wraps.
+    hero: isize,
     hero_since: Instant,
     hovered: Option<String>,
     watchlist: Watchlist,
@@ -392,7 +394,7 @@ impl Library {
     pub fn update(&mut self, msg: Msg, progress: &Progress, cfg: &Config) -> Out {
         match msg {
             Msg::Nav(v) => return self.go(v),
-            Msg::Back => return self.back(),
+            Msg::Back => return self.key_back(),
             Msg::Open(id) => return self.go(View::Details(id)),
             Msg::Play(id, ep, _) if self.moving(&id, ep.as_deref()) => {
                 // its page says why it can't play
@@ -449,7 +451,7 @@ impl Library {
             }
             Msg::Tab(t) => self.tab = t,
             Msg::Hero(step) => {
-                self.hero = self.hero.wrapping_add_signed(step);
+                self.hero = self.hero.wrapping_add(step);
                 self.hero_since = Instant::now();
             }
             Msg::Retry => self.reload(),
@@ -663,7 +665,7 @@ impl Library {
         let mut page = column![];
         let feat = featured(lib, &self.shuffle);
         if !feat.is_empty() && self.layout.shows("featured") {
-            let i = self.hero % feat.len();
+            let i = self.hero.rem_euclid(feat.len() as isize) as usize;
             page = page.push(self.hero(feat[i], (i, feat.len()), env, w));
         }
         let hovered = self.hovered.as_deref();
