@@ -90,7 +90,7 @@ pub(crate) fn date_long(s: &str) -> String {
 }
 
 /// Unix seconds -> "31 Oct 2002" (UTC).
-pub(super) fn date_unix(t: i64) -> String {
+pub(crate) fn date_unix(t: i64) -> String {
     // days to a civil date: Howard Hinnant's days_from_civil, backwards
     let z = t.div_euclid(86_400) + 719_468;
     let era = z.div_euclid(146_097);

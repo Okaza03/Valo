@@ -228,7 +228,7 @@ fn info_row<'a>(k: &str, value: Element<'a, Msg>, label_w: f32) -> Element<'a, M
 
 /// A filled button with an optional icon; `radius` 0 makes it a pill
 /// (egui's `fill_button`).
-fn fill_button<'a>(
+pub(super) fn fill_button<'a>(
     t: &str,
     ic: Option<Icon>,
     colors: (Egui, Egui),
@@ -659,7 +659,7 @@ impl Library {
 
     /// Headshots in a grid, name and character under each; each opens the
     /// person's page (egui's `cast_grid`).
-    fn cast_grid<'a>(
+    pub(super) fn cast_grid<'a>(
         &self,
         cast: &[CastMember],
         env: Env<'a>,
@@ -1218,10 +1218,16 @@ impl Library {
             ),
             ("Path", opt(f.and_then(|f| f.path.clone()), faint, 12.0)),
         ];
-        let rows: Vec<(&str, String, Color, f32)> = candidates
+        let mut rows: Vec<(&str, String, Color, f32)> = candidates
             .into_iter()
             .filter_map(|(k, v)| v.map(|(v, c, s)| (k, v, c, s)))
             .collect();
+        // where it streams: links when opened from Streaming, else a row
+        let linked = self.came_from_streaming();
+        let services = self.discover.services(&item.id);
+        if !linked && !services.is_empty() {
+            rows.insert(0, ("Streaming on", services.join(", "), c(TEAL()), 14.0));
+        }
         let mut meta = column![caps("File · Metadata", c(TEAL())), space().height(6)];
         let directors = item
             .director
@@ -1229,9 +1235,13 @@ impl Library {
             .map(split_names)
             .unwrap_or_default();
         if !directors.is_empty() {
+            let more = !rows.is_empty() || (linked && !services.is_empty());
+            meta = meta.push(kv_row("Director", people_links(&directors, 14.0), more));
+        }
+        if linked && !services.is_empty() {
             meta = meta.push(kv_row(
-                "Director",
-                people_links(&directors, 14.0),
+                "Streaming on",
+                super::discover::service_links(&services, &item.title, 14.0, c(TEAL())),
                 !rows.is_empty(),
             ));
         }
@@ -1569,7 +1579,12 @@ impl Library {
             left = left.push(gap(24.0)).push(panel(people));
         }
         let eps: usize = item.seasons.iter().map(|s| s.episodes.len()).sum();
+        let linked = self.came_from_streaming();
+        let services = self.discover.services(&item.id);
         let mut rows = Vec::new();
+        if !linked && !services.is_empty() {
+            rows.push(("Streaming on", services.join(", ")));
+        }
         if let Some(n) = &item.network {
             rows.push(("Network", n.clone()));
         }
@@ -1581,6 +1596,13 @@ impl Library {
             format!("{eps} episode{}", if eps == 1 { "" } else { "s" }),
         ));
         let mut info = column![text("Info").font(BOLD).size(17), gap(16.0)];
+        if linked && !services.is_empty() {
+            info = info.push(info_row(
+                "Streaming on",
+                super::discover::service_links(&services, &item.title, 14.0, c(TEAL())),
+                112.0,
+            ));
+        }
         for (k, v) in rows {
             info = info.push(info_row(k, text(v).size(14).into(), 112.0));
         }

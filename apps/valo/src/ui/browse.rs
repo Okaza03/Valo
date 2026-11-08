@@ -3,7 +3,7 @@ mod admin;
 pub(crate) mod arrivals;
 pub(crate) mod details;
 mod devices;
-mod discover;
+pub(crate) mod discover;
 mod layouts;
 mod password;
 pub(crate) mod people;

@@ -20,7 +20,7 @@ use crate::ui::{black_font, bold, gradient, image_cover, mono, placeholder, smal
 use crate::ui::{Action, BG, LINE, MUTED, TEXT};
 use crate::util::{color_for, fmt_runtime, now_unix};
 
-fn same(a: &str, b: &str) -> bool {
+pub(crate) fn same(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
@@ -29,23 +29,23 @@ fn by_year(v: &mut [Credit]) {
     v.sort_by_key(|c| (c.item.year.is_none(), std::cmp::Reverse(c.item.year)));
 }
 
-struct Credit<'a> {
-    item: &'a Item,
+pub(crate) struct Credit<'a> {
+    pub item: &'a Item,
     /// The character played, for acting credits.
-    character: Option<&'a str>,
+    pub character: Option<&'a str>,
 }
 
 /// Everything one person did in the library.
-struct Person<'a> {
-    movies: Vec<Credit<'a>>,
-    shows: Vec<Credit<'a>>,
-    directed: Vec<Credit<'a>>,
-    created: Vec<Credit<'a>>,
-    photo: Option<&'a str>,
+pub(crate) struct Person<'a> {
+    pub movies: Vec<Credit<'a>>,
+    pub shows: Vec<Credit<'a>>,
+    pub directed: Vec<Credit<'a>>,
+    pub created: Vec<Credit<'a>>,
+    pub photo: Option<&'a str>,
 }
 
 impl<'a> Person<'a> {
-    fn find(lib: &'a Library, name: &str) -> Self {
+    pub fn find(lib: &'a Library, name: &str) -> Self {
         let mut p = Person {
             movies: Vec::new(),
             shows: Vec::new(),
@@ -90,7 +90,7 @@ impl<'a> Person<'a> {
     }
 
     /// Every distinct title, each once.
-    fn titles(&self) -> Vec<&'a Item> {
+    pub fn titles(&self) -> Vec<&'a Item> {
         let mut v: Vec<&Item> = Vec::new();
         for c in [&self.movies, &self.shows, &self.directed, &self.created]
             .into_iter()
@@ -103,7 +103,7 @@ impl<'a> Person<'a> {
         v
     }
 
-    fn roles(&self) -> Vec<&'static str> {
+    pub fn roles(&self) -> Vec<&'static str> {
         let mut r = Vec::new();
         if !self.movies.is_empty() || !self.shows.is_empty() {
             r.push("Actor");
@@ -119,7 +119,7 @@ impl<'a> Person<'a> {
 }
 
 /// "1999–2021", or one year.
-fn span(items: &[&Item]) -> Option<String> {
+pub(crate) fn span(items: &[&Item]) -> Option<String> {
     let lo = items.iter().filter_map(|i| i.year).min()?;
     let hi = items
         .iter()
@@ -134,7 +134,7 @@ fn span(items: &[&Item]) -> Option<String> {
 }
 
 /// The `n` most common of `names`, most common first, ties A to Z.
-fn top<'a>(names: impl Iterator<Item = &'a str>, n: usize) -> Vec<(&'a str, usize)> {
+pub(crate) fn top<'a>(names: impl Iterator<Item = &'a str>, n: usize) -> Vec<(&'a str, usize)> {
     let mut count: HashMap<&str, usize> = HashMap::new();
     for g in names {
         *count.entry(g).or_default() += 1;

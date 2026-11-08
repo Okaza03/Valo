@@ -5,6 +5,7 @@
 //! popup are still egui-only.
 mod cards;
 mod details;
+mod discover;
 mod marks;
 mod profile;
 
@@ -59,6 +60,8 @@ pub enum View {
     Person(String),
     /// The signed-in user's watching stats and devices.
     Profile,
+    /// What's on Netflix, HBO Max, …: the addons' catalogs, one at a time.
+    Streaming,
     /// What other users watched lately; only the home row's See all opens it.
     Viewed,
 }
@@ -169,6 +172,15 @@ pub enum Msg {
     Password(profile::PwMsg),
     CloseArrivals,
     OpenUrl(String),
+    /// The Streaming page's catalog, and movies, series or both.
+    Source(String),
+    SourceKind(Option<Kind>),
+    /// Which of a person's titles to show.
+    Films(crate::ui::browse::discover::FilmFilter),
+    /// The season shown on an addon series' page: (its id, season index).
+    RemoteSeason(String, usize),
+    /// Ask the server for this addon title.
+    Request(String),
     /// Open or close the profile menu.
     Menu(bool),
     SignOut,
@@ -232,6 +244,12 @@ pub struct Library {
     arrivals: crate::ui::browse::arrivals::Queue,
     /// No other dialog or the splash is up: this page's popups may show.
     quiet: bool,
+    /// Catalogs and details from the admin's Stremio addons.
+    discover: crate::ui::browse::discover::State,
+    /// The open person's filmography as ids, and whether each is on the server.
+    credits: Option<(String, Vec<(String, bool)>)>,
+    /// Search results from beyond the server, and whether more may come.
+    found: (Vec<String>, bool),
     watchlist: Watchlist,
     hidden: Hidden,
     /// My list and Continue watching removals, kept in step with the server.
@@ -284,6 +302,9 @@ impl Library {
             known: crate::config::Known::load(),
             arrivals: crate::ui::browse::arrivals::Queue::default(),
             quiet: false,
+            discover: crate::ui::browse::discover::State::default(),
+            credits: None,
+            found: (Vec::new(), false),
             watchlist: Watchlist::load(),
             hidden: Hidden::load(),
             lists: ListSync::default(),
@@ -299,6 +320,7 @@ impl Library {
     pub fn reload(&mut self) {
         let c = self.client.clone();
         self.loading = Some(Job::spawn(move || c.library()));
+        self.discover.reload(Waker::none(), &self.client);
         let c = self.client.clone();
         self.layout_task = Some(Job::spawn(move || c.layout()));
         self.lists.pull_now();
@@ -330,6 +352,7 @@ impl Library {
             || self.layout_task.is_some()
             || self.details_busy()
             || self.people_busy()
+            || self.discover.working()
     }
 
     fn prefix(&self) -> String {
@@ -428,9 +451,12 @@ impl Library {
         if let Some(r) = self.loading.as_mut().and_then(Job::poll) {
             self.loading = None;
             match r {
-                Ok(lib) => {
+                Ok(mut lib) => {
+                    self.discover.on_library(&mut lib);
                     let gone = match &self.view {
-                        View::Details(id) => lib.find(id).is_none(),
+                        View::Details(id) => {
+                            lib.find(id).is_none() && !self.discover.remote.contains_key(id)
+                        }
                         View::Episode(_, ep) => lib.find_episode(ep).is_none(),
                         _ => false,
                     };
@@ -472,6 +498,7 @@ impl Library {
             self.hero_since = Instant::now();
         }
         self.details_work();
+        self.discover_work();
         if self.people_work() {
             return Out::Act(Action::NeedLogin(self.client.clone()));
         }
@@ -517,6 +544,19 @@ impl Library {
             Msg::EndSession(which) => return self.end_sessions(which),
             Msg::Password(m) => return self.update_password(m),
             Msg::CloseArrivals => self.arrivals.clear(),
+            Msg::Source(s) => {
+                self.discover.service = Some(s);
+                return Out::Top(PAGE);
+            }
+            Msg::SourceKind(k) => self.discover.service_kind = k,
+            Msg::Films(f) => self.discover.film_filter = f,
+            Msg::RemoteSeason(id, i) => self.discover.season = (id, i),
+            Msg::Request(id) => {
+                if let Some(item) = self.discover.remote.get(&id).cloned() {
+                    self.discover
+                        .send_request(Waker::none(), &self.client, &item);
+                }
+            }
             Msg::OpenUrl(u) => crate::ui::chrome::open_url(&u),
             Msg::Play(id, ep, _) if self.moving(&id, ep.as_deref()) => {
                 // its page says why it can't play
@@ -559,6 +599,8 @@ impl Library {
                 let was = self.search.trim().is_empty();
                 self.search = s;
                 self.hovered = None;
+                // start the wait for typing to pause, so ticks come quickly
+                self.found = self.discover.search(Waker::none(), &self.search);
                 if was != self.search.trim().is_empty() {
                     return Out::Top(PAGE);
                 }
@@ -628,11 +670,15 @@ impl Library {
             ));
         }
         if theme::spec().layout.nav == theme::Nav::Top {
-            for (label, v) in [
+            let mut tabs = vec![
                 ("Home", View::Home),
                 ("Movies", View::Movies),
                 ("TV Shows", View::Series),
-            ] {
+            ];
+            if !self.discover.shown.is_empty() {
+                tabs.push(("Streaming", View::Streaming));
+            }
+            for (label, v) in tabs {
                 let on = !searching && self.view == v;
                 r = r.push(widgets::tab(label, on, Msg::Nav(v)));
             }
@@ -852,13 +898,17 @@ impl Library {
                     View::Series => self.grid_page(lib, Kind::Series, env, w),
                     View::Person(name) => self.person_page(lib, name, env, w),
                     View::Profile => self.profile_page(lib, env, w),
+                    View::Streaming => self.streaming_page(lib, env, w),
                     View::Viewed => self.viewed_page(lib, env, w),
                     View::Details(id) => match lib.find(id) {
                         Some(item) if item.kind == Kind::Movie => {
                             self.movie_page(lib, item, env, w)
                         }
                         Some(item) => self.series_page(lib, item, env, w),
-                        None => muted_center("This title isn't on the server any more"),
+                        None => match self.discover.remote.get(id) {
+                            Some(item) => self.remote_page(lib, item, env, w),
+                            None => muted_center("This title isn't on the server any more"),
+                        },
                     },
                     View::Episode(_, ep) => match lib.find_episode(ep) {
                         Some((s, si, ei)) => self.episode_page(s, si, ei, env, w),
@@ -949,9 +999,13 @@ impl Library {
         let row_of = |title: &str, cards: &[Card], wide: bool, all: Option<View>| {
             self.row(env, title, cards, wide, all.map(Msg::Nav), w)
         };
-        let keys: Vec<String> = HOME_ROWS
+        // the admin's addon catalogs go after the first five rows
+        let catalogs = self.catalog_rows(lib, env);
+        let keys: Vec<String> = HOME_ROWS[..5]
             .iter()
             .map(|k| (*k).to_owned())
+            .chain(catalogs.iter().map(|c| c.0.clone()))
+            .chain(HOME_ROWS[5..].iter().map(|k| (*k).to_owned()))
             .chain(["genres".to_owned()])
             .collect();
         for key in self.layout.ordered(&keys) {
@@ -1027,7 +1081,11 @@ impl Library {
                         }
                     }
                 }
-                _ => {}
+                k => {
+                    if let Some((_, title, cards)) = catalogs.iter().find(|c| c.0 == k) {
+                        page = page.push(row_of(title, cards, false, None));
+                    }
+                }
             }
         }
         page.into()
@@ -1536,56 +1594,13 @@ impl Library {
                     .padding(Padding::default().left(SIDE).right(SIDE).top(10.0)),
             );
         }
-        if hits.is_empty() {
-            return page
-                .push(space().height(16))
-                .push(muted_center("Nothing matches"))
-                .into();
+        page = page.push(space().height(16));
+        let none_here = hits.is_empty();
+        if !none_here {
+            let cards = self.poster_cards(hits.into_iter(), env.progress);
+            page = page.push(cards::grid(env.images, &cards, w, self.hot(), "search"));
         }
-        let cards = self.poster_cards(hits.into_iter(), env.progress);
-        page.push(space().height(16))
-            .push(cards::grid(env.images, &cards, w, self.hot(), "search"))
-            .into()
-    }
-
-    /// Everything a director or creator made.
-    fn person_page<'a>(
-        &'a self,
-        lib: &'a api::Library,
-        name: &str,
-        env: Env<'a>,
-        w: f32,
-    ) -> Element<'a, Msg> {
-        let mut items: Vec<&Item> = lib.all().filter(|i| makers(i).any(|m| m == name)).collect();
-        sort_by(&mut items, true, |i| i.year);
-        let movies = items.iter().filter(|i| i.kind == Kind::Movie).count();
-        let series = items.len() - movies;
-        let mut what = Vec::new();
-        if movies > 0 {
-            what.push(format!(
-                "{movies} movie{}",
-                if movies == 1 { "" } else { "s" }
-            ));
-        }
-        if series > 0 {
-            what.push(format!("{series} series"));
-        }
-        let head = column![
-            widgets::label("Director & creator", 11.0),
-            text(name.to_owned()).font(BOLD).size(34),
-            text(what.join("  ·  ")).color(style::MUTED()),
-        ]
-        .spacing(4)
-        .padding(Padding::default().left(SIDE).top(28.0).bottom(24.0));
-        if items.is_empty() {
-            return column![head, muted_center("Nothing on the server")].into();
-        }
-        let cards = self.poster_cards(items.into_iter(), env.progress);
-        column![
-            head,
-            cards::grid(env.images, &cards, w, self.hot(), "person")
-        ]
-        .into()
+        page.push(self.search_beyond(lib, env, w, none_here)).into()
     }
 }
 
