@@ -7,23 +7,14 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Length, Padding, Theme};
 
 use super::icon;
-use super::style::{self, c, BOLD, MONO, SANS};
-use crate::ui::theme::{self, Labels, Skin};
+use super::spaced::{mono, Spaced};
+use super::style::{self, c, BOLD};
+use crate::ui::theme::{self, Skin};
 
 /// A small label (field names, section headers) in the current style:
 /// letter-spaced monospace capitals for Valo, plain sans for most others.
-pub fn label<'a>(t: &str, size: f32) -> iced::widget::Text<'a> {
-    let (font, size, upper) = match theme::spec().labels {
-        Labels::Mono => (MONO, size, true),
-        Labels::Caps => (BOLD, size * 1.08, true),
-        Labels::Sans => (if size >= 12.0 { BOLD } else { SANS }, size * 1.14, false),
-    };
-    let t = if upper {
-        t.to_uppercase()
-    } else {
-        t.to_owned()
-    };
-    text(t).font(font).size(size).color(style::MUTED())
+pub fn label(t: &str, size: f32) -> Spaced {
+    mono(t, size).color(style::MUTED())
 }
 
 /// A section header inside a card.
@@ -221,4 +212,354 @@ pub fn admin_help<'a, M: Clone + 'a>(
     .spacing(6)
     .padding(Padding::default().top(4.0))
     .into()
+}
+
+// ------------------------------------------------- the egui kit, ported
+
+use crate::ui::theme::{Tabs, ACCENT, BG, INK, LINE, LINE_HI, PRIMARY, SURFACE_HI, TEXT};
+use eframe::egui::Color32;
+
+/// How a button is painted in the current style (egui's `ui::Kind`).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Kind {
+    /// White (or the accent): "Play", "Done".
+    Primary,
+    /// Translucent: "More info", "Start over".
+    Secondary,
+    /// Small and quiet: "Refresh", "Sign out".
+    Small,
+}
+
+fn hot(s: button::Status) -> bool {
+    matches!(s, button::Status::Hovered | button::Status::Pressed)
+}
+
+/// A button's look: fill, outline and text color, like egui's `paint_button`.
+fn paint_button(kind: Kind, hovered: bool, enabled: bool, h: f32) -> button::Style {
+    let skin = theme::skin();
+    let pal = theme::pal();
+    let rad = radius(h);
+    let (fill, line, col): (Option<Color32>, Option<(Color32, f32)>, Color32) = match kind {
+        Kind::Primary => {
+            let fill = if !enabled {
+                PRIMARY().gamma_multiply(0.45)
+            } else if hovered {
+                theme::mix(PRIMARY(), BG(), 0.14)
+            } else {
+                PRIMARY()
+            };
+            (Some(fill), None, INK())
+        }
+        Kind::Secondary if skin == Skin::Valo => {
+            let base = (!pal.light).then(|| Color32::from_black_alpha(60));
+            let fill = if hovered {
+                Some(over(base, SURFACE_HI().gamma_multiply(0.6)))
+            } else {
+                base
+            };
+            (fill, Some((LINE_HI(), 1.0)), TEXT())
+        }
+        Kind::Secondary if skin == Skin::Disney => {
+            let a = if hovered { 140 } else { 80 };
+            (
+                Some(Color32::from_black_alpha(a)),
+                Some((TEXT(), 1.5)),
+                TEXT(),
+            )
+        }
+        Kind::Secondary => {
+            let a = if hovered { 0.32 } else { 0.22 };
+            let base = if pal.light { TEXT() } else { Color32::WHITE };
+            (Some(base.gamma_multiply(a)), None, TEXT())
+        }
+        Kind::Small if skin == Skin::Valo => {
+            (hovered.then(SURFACE_HI), Some((LINE_HI(), 1.0)), TEXT())
+        }
+        Kind::Small => {
+            let fill = if hovered {
+                theme::mix(SURFACE_HI(), TEXT(), 0.1)
+            } else {
+                SURFACE_HI()
+            };
+            (Some(fill), None, TEXT())
+        }
+    };
+    button::Style {
+        background: fill.map(|f| Background::Color(c(f))),
+        text_color: c(col),
+        border: Border {
+            color: line.map_or(Color::TRANSPARENT, |l| c(l.0)),
+            width: line.map_or(0.0, |l| l.1),
+            radius: rad.into(),
+        },
+        ..button::Style::default()
+    }
+}
+
+/// `top` painted over `base` (egui paints fills one after the other).
+fn over(base: Option<Color32>, top: Color32) -> Color32 {
+    let Some(b) = base else {
+        return top;
+    };
+    let (b, t) = (c(b), c(top));
+    let a = t.a + b.a * (1.0 - t.a);
+    if a <= 0.0 {
+        return top;
+    }
+    let mixc = |x: f32, y: f32| (y * t.a + x * b.a * (1.0 - t.a)) / a;
+    Color32::from_rgba_unmultiplied(
+        (mixc(b.r, t.r) * 255.0) as u8,
+        (mixc(b.g, t.g) * 255.0) as u8,
+        (mixc(b.b, t.b) * 255.0) as u8,
+        (a * 255.0) as u8,
+    )
+}
+
+/// A button in the current style with a label and an optional icon (before
+/// the text, or after it for external links and right arrows). `None`
+/// greys it out. Like egui's `primary_button`, `secondary_button`,
+/// `small_button` and their `_icon` versions.
+pub fn button_with<'a, M: Clone + 'a>(
+    kind: Kind,
+    t: &str,
+    ic: Option<icon::Icon>,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let enabled = msg.is_some();
+    let (size, h, pad) = match kind {
+        Kind::Small => (11.5, 30.0, if ic.is_some() { 10.0 } else { 12.0 }),
+        _ => (12.5, 38.0, 18.0),
+    };
+    // the label's color follows the button's state, so it's set in the style
+    let col = move |hovered: bool| {
+        let s = paint_button(kind, hovered && enabled, enabled, h);
+        if enabled {
+            s.text_color
+        } else {
+            s.text_color
+                .scale_alpha(if ic.is_some() { 0.4 } else { 0.5 })
+        }
+    };
+    let content: Element<'a, M> = match ic {
+        None => mono(t.trim(), size).into(),
+        Some(i) => {
+            let after = matches!(
+                i,
+                icon::Icon::External | icon::Icon::ChevronRight | icon::Icon::ArrowRight
+            );
+            let glyph: Element<'a, M> = icon::icon(i, col(false), 16.0).into();
+            let label: Element<'a, M> = mono(t, size).into();
+            if after {
+                row![label, glyph]
+                    .spacing(8)
+                    .align_y(Vertical::Center)
+                    .into()
+            } else {
+                row![glyph, label]
+                    .spacing(8)
+                    .align_y(Vertical::Center)
+                    .into()
+            }
+        }
+    };
+    button(container(content).center_y(h))
+        .height(h)
+        .padding([0.0, pad])
+        .style(move |_, s| {
+            let mut st = paint_button(kind, hot(s) && enabled, enabled, h);
+            st.text_color = col(hot(s));
+            st
+        })
+        .on_press_maybe(msg)
+        .into()
+}
+
+/// A top-bar tab in the current style: a filled block, bold text, an
+/// underline or a pill when selected (egui's `ui::tab`).
+pub fn tab<'a, M: Clone + 'a>(t: &str, selected: bool, msg: M) -> Element<'a, M> {
+    let spec = theme::spec();
+    let label: Element<'a, M> = if spec.tabs == Tabs::Plain {
+        super::spaced::Spaced::new(t, 14.5, 0.0, if selected { BOLD } else { style::SANS }).into()
+    } else {
+        mono(t, 12.0).into()
+    };
+    let pill = spec.tabs == Tabs::Pill;
+    let (padx, h) = if pill { (13.0, 30.0) } else { (8.0, 28.0) };
+    let underline = spec.tabs == Tabs::Underline;
+    let inner: Element<'a, M> = if underline {
+        let bar = container(space())
+            .height(2)
+            .width(Length::Fill)
+            .padding([0, 6]);
+        column![container(label).center_y(h - 2.0), bar].into()
+    } else {
+        container(label).center_y(h).into()
+    };
+    button(inner)
+        .height(h)
+        .padding([0.0, padx])
+        .style(move |_, s| tab_style(selected, hot(s), false, h))
+        .on_press(msg)
+        .into()
+}
+
+/// A tab's look (egui's `paint_tab`). `chip`: a filter chip, not a top tab.
+fn tab_style(selected: bool, hovered: bool, chip: bool, h: f32) -> button::Style {
+    let spec = theme::spec();
+    let dim = TEXT().gamma_multiply(0.72);
+    let (fill, col, rad) = match spec.tabs {
+        Tabs::Block => {
+            let rad = if chip { 0.0 } else { 1.0 };
+            if selected {
+                (Some(PRIMARY()), INK(), rad)
+            } else {
+                (hovered.then(SURFACE_HI), TEXT(), rad)
+            }
+        }
+        Tabs::Plain | Tabs::Underline if !chip => {
+            (None, if selected || hovered { TEXT() } else { dim }, 0.0)
+        }
+        _ => {
+            let rad = f32::from(spec.button_radius).min(h / 2.0);
+            if selected {
+                (Some(PRIMARY()), INK(), rad)
+            } else {
+                let quiet = theme::skin() == Skin::Youtube || chip;
+                let fill = if hovered {
+                    Some(theme::mix(SURFACE_HI(), TEXT(), 0.1))
+                } else if quiet {
+                    Some(SURFACE_HI())
+                } else {
+                    None
+                };
+                (fill, TEXT(), rad)
+            }
+        }
+    };
+    button::Style {
+        background: fill.map(|f| Background::Color(c(f))),
+        text_color: c(col),
+        border: iced::border::rounded(rad),
+        ..button::Style::default()
+    }
+}
+
+/// A row of options with one chosen (egui's `ui::segmented`): a bordered
+/// strip for Valo, chips for the other styles. Each item: its label, a
+/// count, whether it's chosen, and its message.
+pub fn segmented<'a, M: Clone + 'a>(
+    items: Vec<(String, Option<usize>, bool, M)>,
+) -> Element<'a, M> {
+    let block = theme::spec().tabs == Tabs::Block;
+    let mut r = row![].spacing(if block { 0 } else { 8 });
+    for (i, (label, count, sel, msg)) in items.into_iter().enumerate() {
+        let on_fill = sel && matches!(theme::spec().tabs, Tabs::Block | Tabs::Pill);
+        let count_col = if on_fill {
+            c(INK().gamma_multiply(0.6))
+        } else {
+            style::MUTED()
+        };
+        let mut content = row![mono(&label, 12.0)].align_y(Vertical::Center);
+        if let Some(n) = count {
+            content = content
+                .push(space().width(9))
+                .push(mono(&n.to_string(), 12.0).color(count_col));
+        }
+        if block && i > 0 {
+            r = r.push(vline(34.0));
+        }
+        let b = button(container(content).center_y(34))
+            .height(34)
+            .padding([0, 12])
+            .style(move |_, s| tab_style(sel, hot(s), true, 34.0));
+        r = r.push(if sel { b } else { b.on_press(msg) });
+    }
+    if !block {
+        return r.into();
+    }
+    // the strip's outline, over the cells' fills
+    iced::widget::stack![
+        r,
+        container(space())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_| container::Style {
+                border: Border {
+                    color: c(LINE()),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..container::Style::default()
+            }),
+    ]
+    .into()
+}
+
+/// A one-pixel vertical line in the theme's line color.
+pub fn vline<'a, M: 'a>(h: f32) -> Element<'a, M> {
+    container(space())
+        .width(1)
+        .height(h)
+        .style(|_| container::Style {
+            background: Some(Background::Color(c(LINE()))),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// A full-width row in a drop-down menu (egui's `ui::menu_item`).
+pub fn menu_item<'a, M: Clone + 'a>(t: &str, msg: M) -> Element<'a, M> {
+    button(container(text(t.to_owned()).size(14.5)).center_y(32))
+        .width(Length::Fill)
+        .height(32)
+        .padding([0, 10])
+        .style(|_, s| button::Style {
+            background: hot(s).then(|| Background::Color(style::SURFACE_HI())),
+            text_color: style::TEXT(),
+            border: iced::border::rounded(2),
+            ..button::Style::default()
+        })
+        .on_press(msg)
+        .into()
+}
+
+/// The word mark in the title bar: the server's name, or the app's (egui's
+/// `ui::logo`).
+pub fn logo<'a, M: 'a>(t: &str, size: f32) -> Element<'a, M> {
+    let spec = theme::spec();
+    let mut t = if spec.logo_lower {
+        t.to_lowercase()
+    } else {
+        t.to_uppercase()
+    };
+    if t.chars().count() > 28 {
+        t = t.chars().take(27).collect::<String>() + "…";
+    }
+    let (font, spacing) = if spec.logo_lower || spec.logo_badge {
+        (BOLD, -0.3)
+    } else {
+        (style::BLACK, size * 0.04)
+    };
+    let col = if spec.logo_accent {
+        c(ACCENT())
+    } else {
+        style::TEXT()
+    };
+    let word = super::spaced::Spaced::new(t, size, spacing, font).color(col);
+    if !spec.logo_badge {
+        return word.into();
+    }
+    // a rounded badge with a play triangle in front of the name
+    let badge = container(icon::icon(icon::Icon::Play, Color::WHITE, size * 0.7))
+        .center_x(size * 1.45)
+        .center_y(size)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(c(ACCENT()))),
+            border: iced::border::rounded(size * 0.28),
+            ..container::Style::default()
+        });
+    row![badge, word]
+        .spacing(4)
+        .align_y(Vertical::Center)
+        .into()
 }

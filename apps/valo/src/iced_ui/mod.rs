@@ -13,6 +13,7 @@ mod library;
 mod login;
 mod seekbar;
 mod setup;
+mod spaced;
 mod style;
 mod video;
 mod watch;
@@ -23,7 +24,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use iced::keyboard::{self, key::Named, Key, Modifiers};
-use iced::widget::{column, container, operation, row};
+use iced::widget::{column, container, operation, row, space};
 use iced::window::{self, Direction};
 use iced::{event, Background, Element, Length, Point, Size, Subscription, Task, Theme};
 
@@ -35,6 +36,7 @@ use crate::ui::watch::PlayItem;
 use crate::ui::Action;
 use crate::update;
 use check::Check;
+use icon::Icon;
 use images::Images;
 use library::Library;
 use login::Login;
@@ -188,7 +190,12 @@ pub enum Message {
     Library(library::Msg),
     /// Poll the screen's background work.
     Tick,
-    SignOut,
+    /// Reload the library (the status line was clicked).
+    Refresh,
+    OpenSettings,
+    CheckUpdates,
+    /// Escape, even one a text field took.
+    Escape,
     Key(Key, Modifiers),
     Window(window::Event),
     Maximized(bool),
@@ -260,6 +267,13 @@ impl App {
             }
             _ => None,
         });
+        let escape = event::listen_with(|e, _, _| match e {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Escape),
+                ..
+            }) => Some(Message::Escape),
+            _ => None,
+        });
         let window = event::listen_with(|e, _, _| match e {
             iced::Event::Window(
                 e @ (window::Event::Resized(_)
@@ -285,7 +299,7 @@ impl App {
             }
             None => Subscription::none(),
         };
-        Subscription::batch([keys, window, ticks])
+        Subscription::batch([keys, escape, window, ticks])
     }
 
     fn set_fullscreen(&mut self, on: bool) -> Task<Message> {
@@ -385,10 +399,13 @@ impl App {
                 };
                 self.out(out)
             }
-            Message::SignOut => match &self.stage {
-                Stage::Library(l) => {
-                    let c = l.client().clone();
-                    self.handle(Action::SignOut(c))
+            Message::Refresh => self.handle(Action::Refresh),
+            Message::OpenSettings => self.handle(Action::OpenSettings),
+            Message::CheckUpdates => self.handle(Action::CheckUpdates),
+            Message::Escape => match (&self.watch, &mut self.stage) {
+                (None, Stage::Library(l)) => {
+                    let out = l.escape();
+                    self.out(out)
                 }
                 _ => Task::none(),
             },
@@ -501,6 +518,12 @@ impl App {
             self.cfg.admin = false;
         }
         self.cfg.save();
+    }
+
+    /// The update control: the refresh icon that checks for a new Valo
+    /// (egui's `chrome::update_button`).
+    fn update_button(&self) -> Element<'_, Message> {
+        chrome::bar_button(Icon::Refresh, "Check for updates", Message::CheckUpdates)
     }
 
     /// Show the library of `client`'s server.
@@ -725,21 +748,31 @@ impl App {
             Stage::Library(l) => l.client().info.name.clone(),
             _ => "Valo".to_owned(),
         };
+        let update = self.update_button();
+        let settings = chrome::bar_button(Icon::Settings, "Settings", Message::OpenSettings);
         let (left, right): (Element<Message>, Element<Message>) = match &self.stage {
-            Stage::Library(l) => {
-                let mut right = row![
+            Stage::Library(l) => (
+                l.bar_left().map(Message::Library),
+                row![
+                    space().width(10),
                     l.search_field().map(Message::Library),
-                    widgets::small("Open videos…", Message::OpenFiles),
+                    space().width(10),
+                    chrome::vsep(),
+                    update,
+                    chrome::vsep(),
+                    settings,
+                    chrome::vsep(),
+                    l.profile_button().map(Message::Library),
                 ]
-                .spacing(10)
-                .padding([0, 12])
-                .align_y(iced::alignment::Vertical::Center);
-                if l.client().token.is_some() {
-                    right = right.push(widgets::small("Sign out", Message::SignOut));
-                }
-                (l.bar_left().map(Message::Library), right.into())
-            }
-            _ => (column![].into(), column![].into()),
+                .align_y(iced::alignment::Vertical::Center)
+                .into(),
+            ),
+            _ => (
+                column![].into(),
+                row![update, chrome::vsep(), settings]
+                    .align_y(iced::alignment::Vertical::Center)
+                    .into(),
+            ),
         };
         let bar = chrome::title_bar(&name, self.maximized, left, right);
         let body: Element<Message> = match &self.stage {
@@ -766,16 +799,30 @@ impl App {
                 format!("Connected to {}  ·  sign-in required", l.client().info.name)
             }
             Stage::Check(c) => format!("Checking {}", c.address()),
-            Stage::Library(l) => l.status(),
+            Stage::Library(l) => l.status().0,
             Stage::Setup(_) => "Not connected".to_owned(),
         };
-        let right = format!(
-            "Valo {}  ·  {} {}",
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
-        column![bar, body, chrome::status_bar(left, right)].into()
+        let (right, refresh) = match &self.stage {
+            Stage::Library(l) => (l.status().1, l.can_refresh().then_some(Message::Refresh)),
+            _ => (
+                format!(
+                    "Valo {}  ·  {} {}",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ),
+                None,
+            ),
+        };
+        let page: Element<Message> =
+            column![bar, body, chrome::status_bar(left, right, refresh)].into();
+        match &self.stage {
+            Stage::Library(l) => match l.menu_overlay() {
+                Some(menu) => iced::widget::stack![page, menu.map(Message::Library)].into(),
+                None => page,
+            },
+            _ => page,
+        }
     }
 }
 

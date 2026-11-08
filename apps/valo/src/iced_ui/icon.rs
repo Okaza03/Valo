@@ -9,7 +9,18 @@ pub use crate::ui::chrome::Icon;
 
 /// An icon in a `size`-square box.
 pub fn icon<'a, M: 'a>(icon: Icon, color: Color, size: f32) -> Canvas<Drawn, M> {
-    canvas_widget(Drawn { icon, color })
+    canvas_widget(Drawn {
+        icon,
+        color,
+        hot: color,
+    })
+    .width(size)
+    .height(size)
+}
+
+/// An icon that turns `hot` while the pointer is over it.
+pub fn icon_hover<'a, M: 'a>(icon: Icon, color: Color, hot: Color, size: f32) -> Canvas<Drawn, M> {
+    canvas_widget(Drawn { icon, color, hot })
         .width(size)
         .height(size)
 }
@@ -17,6 +28,7 @@ pub fn icon<'a, M: 'a>(icon: Icon, color: Color, size: f32) -> Canvas<Drawn, M> 
 pub struct Drawn {
     icon: Icon,
     color: Color,
+    hot: Color,
 }
 
 impl<M> canvas::Program<M> for Drawn {
@@ -28,11 +40,16 @@ impl<M> canvas::Program<M> for Drawn {
         renderer: &Renderer,
         _: &Theme,
         bounds: Rectangle,
-        _: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let c = frame.center();
-        draw(&mut frame, c, self.icon, self.color);
+        let col = if cursor.is_over(bounds) {
+            self.hot
+        } else {
+            self.color
+        };
+        draw(&mut frame, c, self.icon, col);
         vec![frame.into_geometry()]
     }
 }
