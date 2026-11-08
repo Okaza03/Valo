@@ -105,7 +105,7 @@ pub(super) fn date_unix(t: i64) -> String {
 }
 
 /// "Oct 31, 2002"
-fn date_short(s: &str) -> String {
+pub(crate) fn date_short(s: &str) -> String {
     ymd(s).map_or_else(
         || s.to_owned(),
         |(y, m, d)| format!("{} {d}, {y}", MONTHS[m - 1]),
@@ -126,7 +126,7 @@ fn money(n: u64) -> String {
 }
 
 /// 2090000000 -> "2.09 GB"
-pub(super) fn bytes(n: u64) -> String {
+pub(crate) fn bytes(n: u64) -> String {
     let n = n as f64;
     match n {
         n if n >= 1e9 => format!("{:.2} GB", n / 1e9),
@@ -145,7 +145,7 @@ fn minutes(secs: f64) -> String {
 }
 
 /// "2021–2024", or just the start year.
-fn years(item: &Item) -> Option<String> {
+pub(crate) fn years(item: &Item) -> Option<String> {
     let y = item.year?;
     Some(match item.end_year.filter(|e| *e != y) {
         Some(e) => format!("{y}–{e}"),
@@ -558,7 +558,7 @@ fn service_link(ui: &mut Ui, service: &str, title: &str, size: f32, col: Color32
 }
 
 /// "A, B" as names, for a server that sends several directors in one string.
-pub(super) fn split_names(s: &str) -> Vec<&str> {
+pub(crate) fn split_names(s: &str) -> Vec<&str> {
     s.split(',')
         .map(str::trim)
         .filter(|n| !n.is_empty())
@@ -827,7 +827,7 @@ fn wide_tile(ui: &mut Ui, item: &Item, size: egui::Vec2, images: &mut Images) ->
 
 /// `n` random items sharing a genre with `item`, the same ones each time
 /// for one `shuffle`.
-pub(super) fn similar<'a>(
+pub(crate) fn similar<'a>(
     lib: &'a Library,
     item: &'a Item,
     n: usize,
