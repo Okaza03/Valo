@@ -14,7 +14,7 @@ A desktop video player and media-library client (Rust, egui, FFmpeg).
 
 1. **Setup**: enter your media server's address (`192.168.1.20`, `nas.local:8080`, …). It's remembered for next time.
 2. **Server check**: the first time you add a server, Valo checks every part of its API one by one (reachability, `/api/info`, sign-in, library, streaming, artwork) and shows how many titles have each piece of metadata. Problems that stop the app from working are errors and block the server. Missing extras, or a server without a sign-in, are warnings you can accept with _I know this is missing, continue_. _Copy report_ gives you the results to send to the server's admin.
-3. **Sign in**: only shown if the server says it needs a login. The library checks run after it.
+3. **Sign in**: only shown if the server says it needs a login. If you're an admin, the library checks run after it; everyone else goes straight to the library.
 4. **Library**: Prime Video–style home page (featured banner, Continue watching, Recently added, Movies, TV shows, rows per genre), Movies/TV grids with sorting and genre filter, search (Ctrl+F), and detail pages with seasons and episodes.
 5. **Player**: streams straight from the server. It remembers where you stopped and plays the next episode automatically.
 
@@ -53,7 +53,7 @@ Windows builds are made with `cargo xtask dist [arch]` (zip) and `cargo xtask in
 1. Bump `version` in `Cargo.toml`.
 2. Rewrite `notes.md` for the new version. Its first line must name it (`# Valo vX.Y.Z`). It becomes the release description.
 3. Add `<release version="X.Y.Z" …/>` to `packaging/flatpak/io.github.okaza03.Valo.metainfo.xml`.
-4. Open a pull request with these changes. Once it's merged, tag the merge: `git checkout main && git pull && git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. Open a pull request with these changes from a branch named `release-X.Y.Z`. Merging it tags the merge as `vX.Y.Z` and starts the release (`.github/workflows/tag-release.yml`). The branch name has to match the version in `Cargo.toml`.
 
 The release workflow refuses to publish if any of these are out of sync with the tag. It also publishes the Flatpak repository to GitHub Pages; the one-time setup for that is in [packaging/flatpak/README.md](packaging/flatpak/README.md).
 

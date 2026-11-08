@@ -527,7 +527,7 @@ impl App {
             Action::Connected(mut client) => {
                 self.remember_server();
                 if matches!(self.stage, Stage::Check(_)) {
-                    // a newly added server: sign in, then finish the check
+                    // a newly added server: sign in, then (admins) finish the check
                     let check = std::mem::replace(
                         &mut self.stage,
                         Stage::Setup(Setup::new(String::new(), false)),
@@ -556,12 +556,19 @@ impl App {
                 self.cfg.token = if remember { client.token.clone() } else { None };
                 self.cfg.admin = remember && client.admin;
                 self.cfg.save();
+                // a new server's check goes on after signing in for admins
+                // only: everyone else goes straight to the library
                 match self.pending_check.take() {
-                    Some(mut c) => {
+                    Some(mut c) if client.admin => {
                         c.signed_in(client, Some(user));
                         self.stage = Stage::Check(c);
                     }
-                    None => self.open_library(client, Some(user)),
+                    _ => {
+                        self.stage = Stage::Library {
+                            client,
+                            user: Some(user),
+                        }
+                    }
                 }
             }
             Action::Ready { client, user } => {

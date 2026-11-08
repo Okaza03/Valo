@@ -4,7 +4,8 @@
 #
 #   publish-repo.sh REPO SITE BUNDLE [KEY-ID]
 #
-# REPO is flatpak-builder's --repo, SITE the folder to publish, BUNDLE the
+# REPO is flatpak-builder's --repo, SITE the folder to publish (the website
+# from packaging/site plus the repository), BUNDLE the
 # bundle to write. With KEY-ID (a key in the default GnuPG home), the
 # repository's summary is signed and the key goes into the .flatpakrepo and
 # .flatpakref files and the bundle, so flatpak can check what it downloads.
@@ -82,24 +83,17 @@ IsRuntime=false
 $GPGKEY_LINE
 EOF
 
-cat > "$SITE/index.html" <<EOF
-<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Valo for Flatpak</title>
-<style>
-  body { font: 16px/1.5 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; color: #ddd; background: #18181b; }
-  code, pre { background: #26262b; border-radius: 6px; }
-  pre { padding: .75rem 1rem; overflow-x: auto; }
-  a { color: #8ab4ff; }
-</style>
-<h1>Valo for Flatpak</h1>
-<p>Install Valo and keep it up to date with <code>flatpak</code>:</p>
-<pre>flatpak install --user $BASE/valo.flatpakref</pre>
-<p>Or add the repository once, with Flathub for the runtime, then install by name:</p>
-<pre>flatpak remote-add --user --if-not-exists flathub $RUNTIME_REPO
-flatpak remote-add --user --if-not-exists valo $BASE/valo.flatpakrepo
-flatpak install --user io.github.okaza03.Valo</pre>
-<p><code>flatpak update</code> gets new versions. The runtime comes from Flathub.</p>
-<p><a href="$HOMEPAGE">Valo on GitHub</a></p>
-EOF
+# The website: packaging/site, with this release's version and links filled in
+HERE=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$HERE/../.." && pwd)
+VERSION=$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)
+TAG=${VALO_TAG:-v$VERSION}
+RELEASES=https://github.com/Okaza03/Valo/releases
+cp -a "$ROOT/packaging/site/." "$SITE/"
+sed -i \
+    -e "s|@BASE@|$BASE|g" \
+    -e "s|@DL@|$RELEASES/download/$TAG|g" \
+    -e "s|@TAG@|$TAG|g" \
+    -e "s|@VERSION@|${TAG#v}|g" \
+    -e "s|@VERSION_LINE@|Latest version: ${TAG#v} · <a href=\"$RELEASES/tag/$TAG\">What's new</a>|g" \
+    "$SITE/index.html"
