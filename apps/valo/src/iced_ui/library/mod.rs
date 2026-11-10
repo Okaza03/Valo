@@ -502,13 +502,16 @@ impl Library {
             match r {
                 Ok(mut lib) => {
                     self.discover.on_library(&mut lib);
-                    let gone = match &self.view {
+                    let removed = |v: &View| match v {
                         View::Details(id) => {
                             lib.find(id).is_none() && !self.discover.remote.contains_key(id)
                         }
                         View::Episode(_, ep) => lib.find_episode(ep).is_none(),
                         _ => false,
                     };
+                    let gone = removed(&self.view);
+                    // Forward mustn't reopen a title the refresh took away
+                    self.ahead.retain(|v| !removed(v));
                     if gone {
                         self.view = View::Home;
                         self.history.clear();
