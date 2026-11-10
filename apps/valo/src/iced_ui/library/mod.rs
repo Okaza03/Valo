@@ -222,6 +222,8 @@ pub struct Library {
     copied: bool,
     view: View,
     history: Vec<View>,
+    /// Pages left with Back, for the mouse's forward button (latest last).
+    ahead: Vec<View>,
     search: String,
     sort: Sort,
     /// Sort direction.
@@ -297,6 +299,7 @@ impl Library {
             copied: false,
             view: View::Home,
             history: Vec::new(),
+            ahead: Vec::new(),
             search: String::new(),
             sort: Sort::Title,
             desc: false,
@@ -417,6 +420,7 @@ impl Library {
         } else {
             self.history.clear();
         }
+        self.ahead.clear(); // a new page: nothing to go forward to
         self.view = v;
         self.details_work();
         self.search.clear();
@@ -428,7 +432,30 @@ impl Library {
         if self.history.is_empty() && !self.view.nested() {
             return Out::None;
         }
-        self.view = self.history.pop().unwrap_or(View::Home);
+        let left = std::mem::replace(&mut self.view, self.history.pop().unwrap_or(View::Home));
+        self.ahead.push(left);
+        self.hovered = None;
+        Out::Top(PAGE)
+    }
+
+    /// The mouse's forward button: the page last left with Back.
+    pub fn forward(&mut self) -> Out {
+        let Some(v) = self.ahead.pop() else {
+            return Out::None;
+        };
+        self.card_menu = None;
+        if v.nested() {
+            self.history.push(self.view.clone());
+        } else {
+            self.history.clear();
+        }
+        if let View::Details(_) = v {
+            self.season = usize::MAX;
+            self.tab = Tab::Episodes;
+        }
+        self.view = v;
+        self.details_work();
+        self.search.clear();
         self.hovered = None;
         Out::Top(PAGE)
     }
@@ -475,16 +502,20 @@ impl Library {
             match r {
                 Ok(mut lib) => {
                     self.discover.on_library(&mut lib);
-                    let gone = match &self.view {
+                    let removed = |v: &View| match v {
                         View::Details(id) => {
                             lib.find(id).is_none() && !self.discover.remote.contains_key(id)
                         }
                         View::Episode(_, ep) => lib.find_episode(ep).is_none(),
                         _ => false,
                     };
+                    let gone = removed(&self.view);
+                    // Forward mustn't reopen a title the refresh took away
+                    self.ahead.retain(|v| !removed(v));
                     if gone {
                         self.view = View::Home;
                         self.history.clear();
+                        self.ahead.clear();
                         out = Out::Top(PAGE);
                     }
                     let prefix = self.prefix();
@@ -523,6 +554,7 @@ impl Library {
         if self.view == View::Admin && !self.client.admin {
             self.view = View::Home;
             self.history.clear();
+            self.ahead.clear();
             out = Out::Top(PAGE);
         }
         let asks = self.admin.work(&self.client, self.view == View::Admin);

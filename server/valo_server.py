@@ -1129,7 +1129,7 @@ def user_analytics(progress, users, lib, name, days):
         hours_of_day[when.hour] += 1
         weekdays[when.weekday()] += 1
         plays, hours = plays + 1, hours + h
-        done = dur > 0 and pos >= 0.95 * dur
+        done = dur > 0 and pos >= 0.90 * dur
         finished, started = finished + done, started + (not done)
         movies, episodes = movies + (kind == "movie"), episodes + (kind == "episode")
         item, ep, label = titles.get((kind, id), (None, None, None))
@@ -1178,8 +1178,9 @@ def user_analytics(progress, users, lib, name, days):
 
 def watchers(progress, users, lib, kind, id, me):
     """Everyone but `me` who played a movie, or any episode of a series, the
-    latest first; None for an unknown series. A series counts as watched once
-    they finished every episode."""
+    latest first; None for an unknown series. For a series, `episodes` lists
+    the ids of the episodes each one watched, and it counts as watched once
+    they watched every episode."""
     if kind == "movie":
         keys = [f"movie:{id}"]
     else:
@@ -1187,19 +1188,35 @@ def watchers(progress, users, lib, kind, id, me):
         if not show:
             return None
         keys = [f"episode:{e['id']}" for se in show["seasons"] for e in se["episodes"]]
-    done = lambda e: e["duration"] > 0 and e["position"] >= 0.95 * e["duration"]
+    done = lambda e: e["duration"] > 0 and e["position"] >= 0.90 * e["duration"]
     out = []
     for user, entries in progress.data.items():
         played = [entries[k] for k in keys if k in entries]
         if user == me or not played or user not in users.users:
             continue
-        out.append({
+        w = {
             "name": user,
             "display_name": users.users[user].get("display_name"),
-            "completed": len(played) == len(keys) and all(map(done, played)),
             "updated": max(e["updated"] for e in played),
-        })
+        }
+        if kind == "movie":
+            w["completed"] = done(played[0])
+        else:
+            seen = episodes_watched(entries, keys)
+            w["completed"] = len(seen) == len(keys)
+            w["episodes"] = [k.split(":", 1)[1] for k in keys if k in seen]
+        out.append(w)
     return sorted(out, key=lambda w: -w["updated"])
+
+
+def episodes_watched(entries, keys):
+    """Which of a series' episode keys these progress entries count as
+    watched: seen to 90% (the app saves Next Episode as watched to the end)."""
+    return {
+        k for k in keys
+        if k in entries and entries[k]["duration"] > 0
+        and entries[k]["position"] >= 0.90 * entries[k]["duration"]
+    }
 
 
 def viewed(progress, users, lib, me, limit=100):
@@ -1211,7 +1228,7 @@ def viewed(progress, users, lib, me, limit=100):
         for se in s["seasons"]:
             for e in se["episodes"]:
                 owner[f"episode:{e['id']}"] = ("series", s["id"])
-    done = lambda e: e["duration"] > 0 and e["position"] >= 0.95 * e["duration"]
+    done = lambda e: e["duration"] > 0 and e["position"] >= 0.90 * e["duration"]
     titles = {}
     for user, entries in progress.data.items():
         if user == me or user not in users.users:
@@ -1455,7 +1472,7 @@ class Progress:
             "position": pos,
             "duration": dur,
             "percent": min(pct, 100),
-            "completed": dur > 0 and pos >= 0.95 * dur,
+            "completed": dur > 0 and pos >= 0.90 * dur,
             "updated": e["updated"],
         }
 

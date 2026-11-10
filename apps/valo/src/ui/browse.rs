@@ -136,7 +136,8 @@ fn story(s: &Item) -> impl Iterator<Item = &crate::api::Season> {
         .filter(|x| x.number != crate::api::FEATURETTES)
 }
 
-/// Whether this episode has been watched.
+/// Whether this episode has been watched: seen to 90%, or left with Next
+/// Episode (the player saves that as watched to the end).
 pub(crate) fn episode_watched(progress: &Progress, key: &dyn Fn(&str) -> String, id: &str) -> bool {
     progress.get(&key(id)).is_some_and(Entry::watched)
 }
@@ -494,6 +495,22 @@ mod tests {
 
     fn key(id: &str) -> String {
         id.to_owned()
+    }
+
+    #[test]
+    fn watched_at_90_percent() {
+        let (s, p) = show(&[("a", 91.0, 1), ("b", 89.0, 2)]);
+        assert!(episode_watched(&p, &key, "a"));
+        assert!(!episode_watched(&p, &key, "b"));
+        assert_eq!(seen_note(&s, 0, &p, &key), None);
+        let n = next_up(&s, &p, &key).unwrap();
+        assert_eq!((n.si, n.ei, n.resume.is_some()), (0, 1, true), "resumes b");
+
+        let (s, p) = show(&[("a", 90.0, 1), ("b", 95.0, 2)]);
+        assert_eq!(
+            seen_note(&s, 0, &p, &key),
+            Some("You've watched this season")
+        );
     }
 
     #[test]

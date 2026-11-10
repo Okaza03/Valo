@@ -160,11 +160,10 @@ pub struct Entry {
     pub updated: i64,
 }
 
-/// Watched this share of an episode, it counts as finished.
-pub const FINISHED: f64 = 0.95;
-/// A movie counts as finished sooner: its end credits run longer. The
-/// player saves a movie past this point as watched to the end.
-pub const MOVIE_FINISHED: f64 = 0.90;
+/// Watched this share of a movie or an episode, it counts as finished
+/// (the end credits don't need watching). The player saves it as watched
+/// to the end.
+pub const FINISHED: f64 = 0.90;
 
 impl Entry {
     pub fn fraction(&self) -> f32 {
@@ -174,7 +173,7 @@ impl Entry {
             0.0
         }
     }
-    /// Started, but not finished (95% watched counts as finished, which
+    /// Started, but not finished (90% watched counts as finished, which
     /// skips the end credits).
     pub fn in_progress(&self) -> bool {
         self.pos > 30.0 && (self.dur <= 0.0 || self.pos < self.dur * FINISHED)
@@ -523,14 +522,14 @@ mod tests {
     use super::Entry;
 
     #[test]
-    fn finished_at_95_percent() {
+    fn finished_at_90_percent() {
         let e = |pos| Entry {
             pos,
             dur: 7200.0,
             updated: 0,
         };
-        assert!(e(6839.0).in_progress()); // 94.99%
-        assert!(e(6840.0).watched()); // 95%
+        assert!(e(6479.0).in_progress()); // 89.99%
+        assert!(e(6480.0).watched()); // 90%
         assert!(!e(20.0).in_progress() && !e(20.0).watched()); // barely started
     }
 }

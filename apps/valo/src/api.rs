@@ -470,6 +470,10 @@ pub struct Watcher {
     /// Unix time they last played it.
     #[serde(deserialize_with = "null_as_default")]
     pub updated: i64,
+    /// For a series: the episodes they watched, by the library's episode id
+    /// or as "S01E02". Empty from servers that don't send it.
+    #[serde(deserialize_with = "id_strings")]
+    pub episodes: Vec<String>,
 }
 
 /// A title other users played lately (`GET /api/watchers`).

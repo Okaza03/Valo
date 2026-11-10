@@ -253,20 +253,27 @@ pub(super) fn fill_button<'a>(
     if let Some(i) = ic {
         content = content.push(icon::icon(i, fg, 22.0));
     }
-    content = content.push(text(t.to_owned()).font(BOLD).size(15).color(fg));
-    let mut b = button(container(content).center_y(height))
+    content = content.push(
+        text(t.to_owned())
+            .font(BOLD)
+            .size(15)
+            .color(fg)
+            .wrapping(iced::widget::text::Wrapping::None),
+    );
+    // at least `min_w` wide, wider for a longer label ("Resume S01 E01")
+    let pad = 24.0;
+    let inner = column![content, space().width((min_w - 2.0 * pad).max(0.0))]
+        .align_x(iced::alignment::Horizontal::Center);
+    button(container(inner).center_y(height))
         .height(height)
-        .padding([0, 24])
+        .padding([0.0, pad])
         .style(move |_, s| button::Style {
             background: Some(Background::Color(if hot(s) { hover } else { fill })),
             border: iced::border::rounded(radius),
             ..button::Style::default()
         })
-        .on_press_maybe(msg);
-    if min_w > 0.0 {
-        b = b.width(Length::Fixed(min_w));
-    }
-    b.into()
+        .on_press_maybe(msg)
+        .into()
 }
 
 /// Darker (f < 1) or lighter (f > 1) version of an opaque color.
@@ -1507,6 +1514,13 @@ impl Library {
                 .push(gap(10.0))
                 .push(text(note).font(BOLD).size(14).color(c(TEAL())));
         }
+        for note in
+            crate::ui::browse::details::watchers_season_notes(self.watchers_of(series), series, si)
+        {
+            list = list
+                .push(gap(6.0))
+                .push(text(note).font(BOLD).size(14).color(style::MUTED()));
+        }
         list = list.push(gap(14.0));
         for chunk in eps.chunks(cols as usize) {
             let mut r = row![].spacing(gap_x);
@@ -1589,7 +1603,18 @@ impl Library {
         if crate::ui::browse::episode_watched(env.progress, &|i| self.key(i), &ep.id) {
             facts = facts.push(text("Watched").font(BOLD).size(12).color(c(TEAL())));
         }
-        card.push(gap(6.0)).push(facts).into()
+        let card = card.push(gap(6.0)).push(facts);
+        match crate::ui::browse::details::watchers_episode_text(
+            self.watchers_of(series),
+            series,
+            &ep.id,
+        ) {
+            Some(who) => card
+                .push(gap(4.0))
+                .push(text(who).size(12).color(style::MUTED()))
+                .into(),
+            None => card.into(),
+        }
     }
 
     /// About and Info side by side, then the cast.
