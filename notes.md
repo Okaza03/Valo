@@ -7,7 +7,7 @@ Valo's desktop app has a new engine underneath, and series pages show who watche
 
 ### New
 - **Mouse back and forward:** the side buttons on your mouse go back and forward between pages. Back also closes the player or a dialog.
-- **Who watched what:** a series page says who else has watched the whole series or the season you're looking at ("Artur has watched this season"), and each episode lists who watched it. Needs a server that lists the episodes each person watched (`episodes` in `/api/watchers/series/<id>`, by id or as "S01E02"); with an older one, only those who watched the whole series show.
+- **Who watched what:** a series page says who else has watched the whole series or the season you're looking at ("Artur has watched this season"), and each episode says who watched it ("Artur watched this episode"). Needs a server that lists the episodes each person watched (`episodes` in `/api/watchers/series/<id>`, by id or as "S01E02"); with an older one, only those who watched the whole series show.
 
 ### Changed
 - **Watched at 90%:** movies and episodes both count as watched once you're 90% of the way through, on the desktop and TV apps. Clicking **Next Episode** still counts the episode you left.
