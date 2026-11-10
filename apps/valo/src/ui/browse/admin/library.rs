@@ -1,6 +1,6 @@
 //! Admin › Library: edit a title's details and artwork by hand, or fetch
 //! them from IMDb and check them before saving.
-mod extras;
+pub(crate) mod extras;
 
 use std::path::Path;
 
@@ -19,29 +19,29 @@ use crate::util::Task;
 
 /// The editor's fields, as text.
 #[derive(Clone, Default, PartialEq)]
-struct Form {
-    title: String,
-    year: String,
-    overview: String,
+pub(crate) struct Form {
+    pub(crate) title: String,
+    pub(crate) year: String,
+    pub(crate) overview: String,
     /// Comma-separated.
-    genres: String,
-    rating: String,
+    pub(crate) genres: String,
+    pub(crate) rating: String,
     /// Director (movies) or creators, comma-separated (series).
-    maker: String,
-    released: String,
-    end_year: String,
-    network: String,
-    status: String,
-    score: String,
-    imdb_id: String,
-    poster: String,
-    backdrop: String,
-    thumb: String,
-    logo: String,
+    pub(crate) maker: String,
+    pub(crate) released: String,
+    pub(crate) end_year: String,
+    pub(crate) network: String,
+    pub(crate) status: String,
+    pub(crate) score: String,
+    pub(crate) imdb_id: String,
+    pub(crate) poster: String,
+    pub(crate) backdrop: String,
+    pub(crate) thumb: String,
+    pub(crate) logo: String,
 }
 
 impl Form {
-    fn from_item(i: &Item) -> Self {
+    pub(crate) fn from_item(i: &Item) -> Self {
         let opt = |o: &Option<String>| o.clone().unwrap_or_default();
         let num = |o: Option<u32>| o.map(|n| n.to_string()).unwrap_or_default();
         Self {
@@ -68,7 +68,7 @@ impl Form {
     }
 
     /// Fill in what a lookup found; empty answers leave a field alone.
-    fn merge(&mut self, found: &Form) {
+    pub(crate) fn merge(&mut self, found: &Form) {
         for (to, from) in self.fields_mut().into_iter().zip(found.fields()) {
             if !from.trim().is_empty() {
                 *to = from.to_owned();
@@ -97,7 +97,7 @@ impl Form {
         ]
     }
 
-    fn fields_mut(&mut self) -> [&mut String; 16] {
+    pub(crate) fn fields_mut(&mut self) -> [&mut String; 16] {
         [
             &mut self.title,
             &mut self.year,
@@ -120,7 +120,7 @@ impl Form {
 
     /// The fields that differ from `base`, in the library's names.
     /// A cleared field is sent as `null`.
-    fn changes(&self, base: &Form, kind: Kind) -> Result<Map<String, Value>, String> {
+    pub(crate) fn changes(&self, base: &Form, kind: Kind) -> Result<Map<String, Value>, String> {
         let mut out = Map::new();
         let text = |s: &str| {
             let s = s.trim();
@@ -837,12 +837,12 @@ impl State {
 }
 
 /// The server says the title (or some of its episodes) has no subtitles.
-fn no_subs(i: &Item) -> bool {
+pub(crate) fn no_subs(i: &Item) -> bool {
     i.has_subtitles == Some(false) || i.missing_subtitles.is_some_and(|n| n > 0)
 }
 
 /// What a title is missing, for the list and the editor.
-fn gaps(i: &Item) -> Vec<&'static str> {
+pub(crate) fn gaps(i: &Item) -> Vec<&'static str> {
     let mut v = Vec::new();
     if i.poster.is_none() {
         v.push("poster");
@@ -983,7 +983,7 @@ fn pair(ui: &mut Ui, a: (&str, &mut String, &str), b: (&str, &mut String, &str))
     });
 }
 
-fn read_image(path: &Path) -> Result<(Vec<u8>, &'static str)> {
+pub(crate) fn read_image(path: &Path) -> Result<(Vec<u8>, &'static str)> {
     let data = std::fs::read(path).with_context(|| format!("can't read {}", path.display()))?;
     let ext = path
         .extension()

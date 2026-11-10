@@ -1,5 +1,5 @@
 //! The media library: home page, movie/series grids, search and details.
-mod admin;
+pub(crate) mod admin;
 pub(crate) mod arrivals;
 pub(crate) mod details;
 mod devices;
@@ -46,7 +46,7 @@ const SIDE: f32 = 40.0;
 const HERO_ROTATE: Duration = Duration::from_secs(9);
 /// The home page's own rows in their usual order (their layout keys). The
 /// addon catalogs go between the first five and the rest.
-const HOME_ROWS: [&str; 8] = [
+pub(crate) const HOME_ROWS: [&str; 8] = [
     "continue", "mylist", "recent", "others", "top", "movies", "series", "genres",
 ];
 

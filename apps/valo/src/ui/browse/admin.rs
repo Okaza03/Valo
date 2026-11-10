@@ -7,7 +7,7 @@ mod analytics;
 mod collections;
 mod dashboard;
 mod layout;
-mod library;
+pub(crate) mod library;
 mod moving;
 mod requests;
 mod users;
