@@ -2310,6 +2310,16 @@ impl Browse {
     }
 }
 
+/// "You've watched this season" (or the whole series), above the episodes.
+pub(crate) fn seen_banner(ui: &mut Ui, note: &str) {
+    ui.label(bold(note, 14.0).color(TEAL()));
+}
+
+/// "Watched", beside an episode the user has seen.
+pub(crate) fn watched_tag(ui: &mut Ui) {
+    ui.label(bold("Watched", 12.0).color(TEAL()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2357,14 +2367,4 @@ mod tests {
         );
         assert_eq!(file_name(None, "http://h/api/stream/movie/42"), None);
     }
-}
-
-/// "You've watched this season" (or the whole series), above the episodes.
-pub(crate) fn seen_banner(ui: &mut Ui, note: &str) {
-    ui.label(bold(note, 14.0).color(TEAL()));
-}
-
-/// "Watched", beside an episode the user has seen.
-pub(crate) fn watched_tag(ui: &mut Ui) {
-    ui.label(bold("Watched", 12.0).color(TEAL()));
 }
