@@ -70,7 +70,8 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    use zbus::blocking::Connection;
+    // zbus is async; each call here is short, so it runs to the end on this thread
+    use zbus::{block_on, Connection};
 
     /// Who answered and the cookie to release with.
     enum Held {
@@ -98,7 +99,7 @@ mod imp {
                 return;
             }
             if self.conn.is_none() {
-                self.conn = Connection::session().ok();
+                self.conn = block_on(Connection::session()).ok();
             }
             let Some(conn) = &self.conn else { return };
             if on {
@@ -108,22 +109,22 @@ mod imp {
             } else {
                 match self.held.take() {
                     Some(Held::ScreenSaver(c)) => {
-                        let _ = conn.call_method(
+                        let _ = block_on(conn.call_method(
                             Some("org.freedesktop.ScreenSaver"),
                             "/org/freedesktop/ScreenSaver",
                             Some("org.freedesktop.ScreenSaver"),
                             "UnInhibit",
                             &(c,),
-                        );
+                        ));
                     }
                     Some(Held::Gnome(c)) => {
-                        let _ = conn.call_method(
+                        let _ = block_on(conn.call_method(
                             Some("org.gnome.SessionManager"),
                             "/org/gnome/SessionManager",
                             Some("org.gnome.SessionManager"),
                             "Uninhibit",
                             &(c,),
-                        );
+                        ));
                     }
                     None => {}
                 }
@@ -133,13 +134,13 @@ mod imp {
 
     /// KDE, Xfce, LXQt, Cinnamon and most others.
     fn screensaver_inhibit(conn: &Connection) -> Option<u32> {
-        conn.call_method(
+        block_on(conn.call_method(
             Some("org.freedesktop.ScreenSaver"),
             "/org/freedesktop/ScreenSaver",
             Some("org.freedesktop.ScreenSaver"),
             "Inhibit",
             &("valo", REASON),
-        )
+        ))
         .ok()?
         .body()
         .deserialize()
@@ -148,13 +149,13 @@ mod imp {
 
     /// GNOME; flags 4|8 = inhibit suspend and idle.
     fn gnome_inhibit(conn: &Connection) -> Option<u32> {
-        conn.call_method(
+        block_on(conn.call_method(
             Some("org.gnome.SessionManager"),
             "/org/gnome/SessionManager",
             Some("org.gnome.SessionManager"),
             "Inhibit",
             &("valo", 0u32, REASON, 4u32 | 8u32),
-        )
+        ))
         .ok()?
         .body()
         .deserialize()
