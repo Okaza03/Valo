@@ -3,6 +3,7 @@
 //! from `crate::ui::browse`, in the default Valo style; the other styles'
 //! layouts, Streaming (addon catalogs), profiles, admin and the arrivals
 //! popup are still egui-only.
+mod admin;
 mod cards;
 mod details;
 mod discover;
@@ -62,6 +63,8 @@ pub enum View {
     Profile,
     /// What's on Netflix, HBO Max, …: the addons' catalogs, one at a time.
     Streaming,
+    /// Server management, for admins.
+    Admin,
     /// What other users watched lately; only the home row's See all opens it.
     Viewed,
 }
@@ -71,7 +74,12 @@ impl View {
     fn nested(&self) -> bool {
         matches!(
             self,
-            View::Details(_) | View::Episode(..) | View::Person(_) | View::Profile | View::Viewed
+            View::Details(_)
+                | View::Episode(..)
+                | View::Person(_)
+                | View::Profile
+                | View::Viewed
+                | View::Admin
         )
     }
 }
@@ -181,6 +189,7 @@ pub enum Msg {
     RemoteSeason(String, usize),
     /// Ask the server for this addon title.
     Request(String),
+    Admin(admin::Msg),
     /// Open or close the profile menu.
     Menu(bool),
     SignOut,
@@ -250,6 +259,7 @@ pub struct Library {
     credits: Option<(String, Vec<(String, bool)>)>,
     /// Search results from beyond the server, and whether more may come.
     found: (Vec<String>, bool),
+    admin: admin::State,
     watchlist: Watchlist,
     hidden: Hidden,
     /// My list and Continue watching removals, kept in step with the server.
@@ -305,6 +315,7 @@ impl Library {
             discover: crate::ui::browse::discover::State::default(),
             credits: None,
             found: (Vec::new(), false),
+            admin: admin::State::default(),
             watchlist: Watchlist::load(),
             hidden: Hidden::load(),
             lists: ListSync::default(),
@@ -353,6 +364,7 @@ impl Library {
             || self.details_busy()
             || self.people_busy()
             || self.discover.working()
+            || (self.view == View::Admin && self.admin.busy())
     }
 
     fn prefix(&self) -> String {
@@ -501,10 +513,33 @@ impl Library {
         }
         self.details_work();
         self.discover_work();
+        if self.view == View::Admin && !self.client.admin {
+            self.view = View::Home;
+            self.history.clear();
+            out = Out::Top(PAGE);
+        }
+        let asks = self.admin.work(&self.client, self.view == View::Admin);
+        if let Some(o) = self.admin_asks(asks) {
+            return o;
+        }
         if self.people_work() {
             return Out::Act(Action::NeedLogin(self.client.clone()));
         }
         out
+    }
+
+    /// Do what the admin page asked for.
+    fn admin_asks(&mut self, asks: admin::Asks) -> Option<Out> {
+        if asks.login {
+            return Some(Out::Act(Action::NeedLogin(self.client.clone())));
+        }
+        if asks.reload_library {
+            self.reload();
+        } else if asks.reload_layout {
+            let c = self.client.clone();
+            self.layout_task = Some(Job::spawn(move || c.layout()));
+        }
+        None
     }
 
     /// Whether this page's popups may show (no splash or other dialog).
@@ -553,6 +588,12 @@ impl Library {
             Msg::SourceKind(k) => self.discover.service_kind = k,
             Msg::Films(f) => self.discover.film_filter = f,
             Msg::RemoteSeason(id, i) => self.discover.season = (id, i),
+            Msg::Admin(m) => {
+                let asks = self.admin.update(m, &self.client, self.lib.as_deref());
+                if let Some(o) = self.admin_asks(asks) {
+                    return o;
+                }
+            }
             Msg::Request(id) => {
                 if let Some(item) = self.discover.remote.get(&id).cloned() {
                     self.discover
@@ -789,10 +830,13 @@ impl Library {
             .padding([4, 2]),
             separator(),
             widgets::menu_item("Profile", Msg::Nav(View::Profile)),
-            separator(),
         ]
         .spacing(2)
         .width(250);
+        if self.client.admin {
+            items = items.push(widgets::menu_item("Admin", Msg::Nav(View::Admin)));
+        }
+        items = items.push(separator());
         if self.client.token.is_some() {
             items = items.push(widgets::menu_item("Sign out", Msg::SignOut));
         }
@@ -889,8 +933,14 @@ impl Library {
         let Some(lib) = &self.lib else {
             return self.not_loaded();
         };
+        // Admin has its sections down the left, beside the page
+        let admin = self.admin_open();
         responsive(move |size| {
-            let w = size.width;
+            let w = if admin {
+                size.width - 220.0
+            } else {
+                size.width
+            };
             let page: Element<Msg> = if !self.search.trim().is_empty() {
                 self.search_page(lib, env, w)
             } else {
@@ -901,6 +951,13 @@ impl Library {
                     View::Person(name) => self.person_page(lib, name, env, w),
                     View::Profile => self.profile_page(lib, env, w),
                     View::Streaming => self.streaming_page(lib, env, w),
+                    View::Admin => self.admin.view(
+                        &self.client,
+                        lib,
+                        env.images,
+                        self.user.as_deref().unwrap_or(""),
+                        w,
+                    ),
                     View::Viewed => self.viewed_page(lib, env, w),
                     View::Details(id) => match lib.find(id) {
                         Some(item) if item.kind == Kind::Movie => {
@@ -923,6 +980,16 @@ impl Library {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(scroll_style);
+            let page: Element<Msg> = if admin {
+                row![
+                    self.admin
+                        .sidebar(&self.client.info.name, &self.client.base),
+                    page
+                ]
+                .into()
+            } else {
+                page.into()
+            };
             if self.card_menu.is_some() {
                 // a click outside the open menu closes it
                 stack![
@@ -932,7 +999,7 @@ impl Library {
                 ]
                 .into()
             } else {
-                page.into()
+                page
             }
         })
         .into()

@@ -416,6 +416,26 @@ pub fn small_icon_button<'a, M: Clone + 'a>(ic: icon::Icon, msg: M) -> Element<'
         .into()
 }
 
+/// [`small_icon_button`] that's greyed out without a message.
+pub fn small_icon_button_maybe<'a, M: Clone + 'a>(
+    ic: icon::Icon,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let enabled = msg.is_some();
+    let col = if enabled {
+        style::TEXT()
+    } else {
+        style::TEXT().scale_alpha(0.4)
+    };
+    button(container(icon::icon(ic, col, 30.0)).center(30))
+        .width(30)
+        .height(30)
+        .padding(0)
+        .style(move |_, s| paint_button(Kind::Small, hot(s) && enabled, enabled, 30.0))
+        .on_press_maybe(msg)
+        .into()
+}
+
 /// A top-bar tab in the current style: a filled block, bold text, an
 /// underline or a pill when selected (egui's `ui::tab`).
 pub fn tab<'a, M: Clone + 'a>(t: &str, selected: bool, msg: M) -> Element<'a, M> {

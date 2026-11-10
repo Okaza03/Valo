@@ -30,10 +30,12 @@ use crate::ui::theme::{CARD, LINE};
 use crate::util::{color_for, fmt_runtime};
 
 /// Something loaded from the server, again when asked (egui's `admin::Remote`).
-pub(super) struct Remote<T> {
+pub(crate) struct Remote<T> {
     pub data: Option<T>,
     job: Option<Job<Result<T>>>,
     pub error: Option<String>,
+    /// The server doesn't have this part of the admin API.
+    pub missing: bool,
     at: Option<Instant>,
 }
 
@@ -43,6 +45,7 @@ impl<T> Default for Remote<T> {
             data: None,
             job: None,
             error: None,
+            missing: false,
             at: None,
         }
     }
@@ -59,7 +62,15 @@ impl<T: Send + 'static> Remote<T> {
 
     /// Nothing loaded or loading, and no error to wait out.
     pub fn idle(&self) -> bool {
-        self.data.is_none() && self.job.is_none() && self.error.is_none()
+        self.data.is_none() && self.job.is_none() && self.error.is_none() && !self.missing
+    }
+
+    /// Time to load: never loaded, or asked again with [`retry`](Self::retry).
+    pub fn due(&self) -> bool {
+        self.job.is_none()
+            && self.error.is_none()
+            && !self.missing
+            && (self.data.is_none() || self.at.is_none())
     }
 
     /// Older than `secs` (and not loading).
@@ -70,13 +81,17 @@ impl<T: Send + 'static> Remote<T> {
     /// Load again next time, keeping what's shown meanwhile.
     pub fn retry(&mut self) {
         self.error = None;
+        self.missing = false;
         self.at = None;
+        if self.data.is_none() {
+            self.job = None;
+        }
     }
 
-    /// Take a finished load. A 401 sets `login`.
-    pub fn poll(&mut self, login: &mut bool) {
+    /// Take a finished load: true when new data came in. A 401 sets `login`.
+    pub fn poll(&mut self, login: &mut bool) -> bool {
         let Some(r) = self.job.as_mut().and_then(Job::poll) else {
-            return;
+            return false;
         };
         self.job = None;
         self.at = Some(Instant::now());
@@ -84,9 +99,21 @@ impl<T: Send + 'static> Remote<T> {
             Ok(d) => {
                 self.data = Some(d);
                 self.error = None;
+                self.missing = false;
+                true
             }
-            Err(e) if e.is::<api::Unauthorized>() => *login = true,
-            Err(e) => self.error = Some(format!("{e:#}")),
+            Err(e) if e.is::<api::Unauthorized>() => {
+                *login = true;
+                false
+            }
+            Err(e) if e.is::<api::NoAdminApi>() => {
+                self.missing = true;
+                false
+            }
+            Err(e) => {
+                self.error = Some(format!("{e:#}"));
+                false
+            }
         }
     }
 }
@@ -145,7 +172,7 @@ fn names(w: &[Watcher]) -> Option<String> {
 pub(super) const VIEWED: &str = "Viewed by other users";
 
 /// A section heading: a small kicker, the title and a count (egui's `section_title`).
-fn section_title<'a>(kicker: &str, title: &str, n: usize) -> Element<'a, Msg> {
+pub(super) fn section_title<'a>(kicker: &str, title: &str, n: usize) -> Element<'a, Msg> {
     column![
         caps(kicker, c(TEAL())),
         gap(4.0),
@@ -191,7 +218,7 @@ fn stat<'a>(w: f32, value: String, label: &str) -> Element<'a, Msg> {
 }
 
 /// A row of [`stat`] tiles that wraps on narrow windows.
-fn stats<'a>(tiles: Vec<(String, &str)>, w: f32) -> Element<'a, Msg> {
+pub(super) fn stats<'a>(tiles: Vec<(String, &str)>, w: f32) -> Element<'a, Msg> {
     let g = 14.0;
     let cols = ((w + g) / (170.0 + g))
         .floor()
@@ -287,7 +314,7 @@ impl Library {
         }
         // devices, on the profile page
         let d = &mut self.devices;
-        d.list.poll(&mut login);
+        let _ = d.list.poll(&mut login);
         if let Some(r) = d.op.as_mut().and_then(Job::poll) {
             d.op = None;
             match r {
@@ -1178,5 +1205,26 @@ impl<M> canvas::Program<M> for Monitor {
             stroke,
         );
         vec![f.into_geometry()]
+    }
+}
+
+/// A text field's look, as egui's.
+pub(crate) fn field_style(_: &Theme, s: text_input::Status) -> text_input::Style {
+    let p = crate::ui::theme::pal();
+    text_input::Style {
+        background: Background::Color(c(p.field)),
+        border: Border {
+            color: match s {
+                text_input::Status::Focused { .. } => c(p.text),
+                text_input::Status::Hovered => c(p.line_hi),
+                _ => c(p.line),
+            },
+            width: 1.0,
+            radius: 3.0.into(),
+        },
+        icon: c(p.muted),
+        placeholder: c(p.muted),
+        value: c(p.text),
+        selection: c(p.accent).scale_alpha(0.4),
     }
 }
