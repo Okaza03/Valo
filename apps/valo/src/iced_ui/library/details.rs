@@ -67,7 +67,13 @@ pub(super) fn caps<'a>(t: &str, color: Color) -> Element<'a, Msg> {
 }
 
 /// Text cut to about `rows` lines of `width`, with an ellipsis.
-fn clamp_text<'a>(t: &str, size: f32, color: Color, rows: usize, width: f32) -> Element<'a, Msg> {
+pub(super) fn clamp_text<'a>(
+    t: &str,
+    size: f32,
+    color: Color,
+    rows: usize,
+    width: f32,
+) -> Element<'a, Msg> {
     let per_line = (width / (size * 0.5)).max(10.0) as usize;
     text(super::shorten(t, per_line * rows))
         .size(size)
@@ -81,7 +87,7 @@ fn dot<'a>() -> Element<'a, Msg> {
 }
 
 /// A small outlined tag: "1080p", "TV-14".
-fn tag<'a>(t: &str) -> Element<'a, Msg> {
+pub(super) fn tag<'a>(t: &str) -> Element<'a, Msg> {
     container(text(t.to_owned()).size(11.5).color(style::TEXT()))
         .padding([3, 6])
         .style(|_| container::Style {
@@ -290,7 +296,12 @@ fn circle_button<'a>(ic: Icon, tip: &str, msg: Msg) -> Element<'a, Msg> {
 }
 
 /// The title as artwork (its logo) when the server has one, else big text.
-fn title_art<'a>(item: &Item, env: Env<'a>, max: (f32, f32), size: f32) -> Element<'a, Msg> {
+pub(super) fn title_art<'a>(
+    item: &Item,
+    env: Env<'a>,
+    max: (f32, f32),
+    size: f32,
+) -> Element<'a, Msg> {
     if let Some((h, (iw, ih))) = item
         .logo
         .as_deref()
@@ -396,7 +407,7 @@ fn face<'a>(name: &str, shown: &str, r: f32) -> Element<'a, Msg> {
 
 /// Up to three overlapping faces (a "+N" one for the rest) and the two
 /// latest names; hover for everyone (egui's `watchers_row`).
-fn watchers_row<'a>(list: &[Watcher]) -> Option<Element<'a, Msg>> {
+pub(super) fn watchers_row<'a>(list: &[Watcher]) -> Option<Element<'a, Msg>> {
     if list.is_empty() {
         return None;
     }
@@ -468,7 +479,7 @@ fn watchers_row<'a>(list: &[Watcher]) -> Option<Element<'a, Msg>> {
 
 /// A title's play button look: `normal` colors and the play icon, or grey
 /// and none while an admin moves its files.
-fn play_look(item: &Item, normal: (Egui, Egui)) -> (Option<Icon>, (Egui, Egui)) {
+pub(super) fn play_look(item: &Item, normal: (Egui, Egui)) -> (Option<Icon>, (Egui, Egui)) {
     if item.unavailable {
         (None, (SURFACE_HI(), MUTED()))
     } else {
@@ -566,12 +577,16 @@ pub(super) fn hover_area<'a>(
 
 impl Library {
     /// Who else watched `item`, as last loaded.
-    fn watchers_of(&self, item: &Item) -> &[Watcher] {
+    pub(super) fn watchers_of(&self, item: &Item) -> &[Watcher] {
         self.watchers.get(&item.id).map_or(&[], |w| &w.list)
     }
 
     /// File info for `stream`: the server's, completed by the probe.
-    fn file_for(&self, stream: &str, server: Option<&FileInfo>) -> (Option<FileInfo>, Option<f64>) {
+    pub(super) fn file_for(
+        &self,
+        stream: &str,
+        server: Option<&FileInfo>,
+    ) -> (Option<FileInfo>, Option<f64>) {
         match self.probes.get(stream) {
             Some(Probe::Done(f, d)) => (merge(server, Some(f)), *d),
             _ => (server.cloned(), None),
@@ -648,7 +663,7 @@ impl Library {
     }
 
     /// The bookmark circle: on My list or not.
-    fn bookmark<'a>(&self, item: &Item) -> Element<'a, Msg> {
+    pub(super) fn bookmark<'a>(&self, item: &Item) -> Element<'a, Msg> {
         let (ic, tip) = if self.watchlist.contains(&self.key(&item.id)) {
             (Icon::BookmarkOn, "Remove from My list")
         } else {
@@ -790,7 +805,13 @@ impl Library {
     }
 
     /// Wide artwork with the title and year on it ("Related").
-    fn wide_tile<'a>(&self, item: &Item, w: f32, h: f32, env: Env<'a>) -> Element<'a, Msg> {
+    pub(super) fn wide_tile<'a>(
+        &self,
+        item: &Item,
+        w: f32,
+        h: f32,
+        env: Env<'a>,
+    ) -> Element<'a, Msg> {
         let key = format!("wide\u{1f}{}", item.id);
         let lit = self.hovered.as_deref() == Some(key.as_str());
         let art = item.backdrop.as_deref().or(item.poster.as_deref());
@@ -841,6 +862,10 @@ impl Library {
             None => (item.file.clone(), None),
         };
         let runtime = item.duration.filter(|d| *d > 0.0).or(probed);
+        let style = theme::spec().layout.details;
+        if style == theme::Details::Watch {
+            return self.watch_page(lib, item, file.as_ref(), runtime, env, w);
+        }
         let h = (w * 0.5).clamp(520.0, 700.0);
         let (m, inner) = column_of(w);
         let show_poster = inner >= 860.0;
@@ -1007,7 +1032,11 @@ impl Library {
                 .align_y(Vertical::Center)
                 .into(),
         );
-        let banner = stack(layers).width(w).height(h);
+        let banner: Element<'a, Msg> = if style == theme::Details::Valo {
+            stack(layers).width(w).height(h).into()
+        } else {
+            self.styled_header(item, file.as_ref(), runtime, env, w)
+        };
 
         // cast and similar titles on the left, the file and critics on the right
         let narrow = inner < NARROW;
@@ -1286,6 +1315,10 @@ impl Library {
         } else {
             next_up(item, env.progress, &|i| self.key(i)).map_or(0, |n| n.si)
         };
+        let style = theme::spec().layout.details;
+        if style == theme::Details::Watch {
+            return self.watch_page(lib, item, None, None, env, w);
+        }
         let h = (w * 0.42).clamp(460.0, 640.0);
         let (m, inner) = column_of(w);
         let art = item.backdrop.as_deref().or(item.poster.as_deref());
@@ -1359,14 +1392,19 @@ impl Library {
                 .align_y(Vertical::Center),
             );
         }
-        let banner = stack![
-            backdrop(env, art, &item.title, 120, w, h),
-            container(words)
-                .width(w)
-                .height(h)
-                .padding(Padding::default().left(m).top(40.0).bottom(24.0))
-                .align_y(Vertical::Bottom),
-        ];
+        let banner: Element<'a, Msg> = if style == theme::Details::Valo {
+            stack![
+                backdrop(env, art, &item.title, 120, w, h),
+                container(words)
+                    .width(w)
+                    .height(h)
+                    .padding(Padding::default().left(m).top(40.0).bottom(24.0))
+                    .align_y(Vertical::Bottom),
+            ]
+            .into()
+        } else {
+            self.styled_header(item, None, None, env, w)
+        };
 
         let mut tabs = row![].spacing(32);
         for (t, label) in [
@@ -1377,10 +1415,24 @@ impl Library {
             tabs = tabs.push(section_tab(label, self.tab == t, Msg::Tab(t)));
         }
         let body: Element<'a, Msg> = match self.tab {
-            Tab::Episodes => match item.seasons.get(season) {
-                Some(s) => self.episodes_tab(item, season, &s.episodes, env, inner),
-                None => space().into(),
-            },
+            Tab::Episodes => {
+                // the Valo header has the season picker; the styled ones don't
+                let mut col = column![];
+                if style != theme::Details::Valo && item.seasons.len() > 1 {
+                    col = col
+                        .push(self.season_picker(item, season, 160.0))
+                        .push(gap(14.0));
+                }
+                col.push(if theme::spec().layout.episode_list {
+                    self.episode_list(item, season, env, inner)
+                } else {
+                    match item.seasons.get(season) {
+                        Some(s) => self.episodes_tab(item, season, &s.episodes, env, inner),
+                        None => space().into(),
+                    }
+                })
+                .into()
+            }
             Tab::Related => {
                 let more = similar(lib, item, 20, &self.shuffle);
                 if more.is_empty() {
@@ -1416,7 +1468,12 @@ impl Library {
         .into()
     }
 
-    fn season_picker<'a>(&self, item: &Item, season: usize, width: f32) -> Element<'a, Msg> {
+    pub(super) fn season_picker<'a>(
+        &self,
+        item: &Item,
+        season: usize,
+        width: f32,
+    ) -> Element<'a, Msg> {
         let opts: Vec<SeasonOpt> = item
             .seasons
             .iter()

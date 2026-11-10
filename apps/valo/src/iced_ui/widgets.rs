@@ -453,7 +453,10 @@ pub fn tab<'a, M: Clone + 'a>(t: &str, selected: bool, msg: M) -> Element<'a, M>
             .height(2)
             .width(Length::Fill)
             .padding([0, 6]);
-        column![container(label).center_y(h - 2.0), bar].into()
+        // as wide as the label: a Fill bar would make the tab take what the row has left
+        column![container(label).center_y(h - 2.0), bar]
+            .width(Length::Shrink)
+            .into()
     } else {
         container(label).center_y(h).into()
     };

@@ -1,13 +1,15 @@
 //! The library: the home page, the Movies and TV shows grids, search, a
 //! director's or creator's titles, the movie and series pages, Streaming,
 //! profiles, admin and the arrivals popup. Ported from `crate::ui::browse`,
-//! in the default Valo style; the other styles' layouts are still egui-only.
+//! in every app style (`layouts` and `styled` hold the other styles' pieces).
 mod admin;
 mod cards;
 mod details;
 mod discover;
+mod layouts;
 mod marks;
 mod profile;
+mod styled;
 
 use std::hash::RandomState;
 use std::sync::Arc;
@@ -171,6 +173,10 @@ pub enum Msg {
     Tab(Tab),
     /// Step the featured banner.
     Hero(isize),
+    /// A filter chip on the video-style home grid.
+    Chip(usize),
+    /// A genre tile: that genre's movies (true) or series.
+    GenreTile(String, bool),
     Retry,
     ChangeServer,
     Settings,
@@ -228,6 +234,8 @@ pub struct Library {
     /// The featured title shown, counting from the first; taken modulo
     /// their number when drawn, so stepping back from the first wraps.
     hero: isize,
+    /// The selected filter chip on the video-style home grid.
+    chip: usize,
     hero_since: Instant,
     hovered: Option<String>,
     /// The profile menu is open.
@@ -297,6 +305,7 @@ impl Library {
             season: usize::MAX,
             tab: Tab::Episodes,
             hero: 0,
+            chip: 0,
             hero_since: Instant::now(),
             hovered: None,
             menu: false,
@@ -572,6 +581,11 @@ impl Library {
     pub fn update(&mut self, msg: Msg, progress: &Progress, cfg: &Config) -> Out {
         match msg {
             Msg::Nav(v) => return self.go(v),
+            Msg::Chip(i) => self.chip = i,
+            Msg::GenreTile(g, movies) => {
+                self.genre = Some(g);
+                return self.go(if movies { View::Movies } else { View::Series });
+            }
             Msg::Back => return self.key_back(),
             Msg::Open(id) => {
                 if self.arrivals.open {
@@ -935,14 +949,13 @@ impl Library {
         let Some(lib) = &self.lib else {
             return self.not_loaded();
         };
-        // Admin has its sections down the left, beside the page
+        // Admin has its sections down the left, beside the page; some styles
+        // have the navigation there
         let admin = self.admin_open();
+        let side_nav = theme::spec().layout.nav == theme::Nav::Side;
         responsive(move |size| {
-            let w = if admin {
-                size.width - 220.0
-            } else {
-                size.width
-            };
+            let left = if admin { 220.0 } else { 0.0 } + if side_nav { 216.0 } else { 0.0 };
+            let w = size.width - left;
             let page: Element<Msg> = if !self.search.trim().is_empty() {
                 self.search_page(lib, env, w)
             } else {
@@ -982,7 +995,7 @@ impl Library {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(scroll_style);
-            let page: Element<Msg> = if admin {
+            let mut page: Element<Msg> = if admin {
                 row![
                     self.admin
                         .sidebar(&self.client.info.name, &self.client.base),
@@ -992,6 +1005,9 @@ impl Library {
             } else {
                 page.into()
             };
+            if side_nav {
+                page = row![self.nav_sidebar(env), page].into();
+            }
             if self.card_menu.is_some() {
                 // a click outside the open menu closes it
                 stack![
@@ -1061,11 +1077,25 @@ impl Library {
             .align_x(Horizontal::Center)
             .into();
         }
+        let lay = &theme::spec().layout;
+        if lay.home_grid {
+            return self.home_grid(lib, env, w);
+        }
         let mut page = column![];
         let feat = featured(lib, &self.shuffle);
-        if !feat.is_empty() && self.layout.shows("featured") {
+        if !feat.is_empty() && lay.hero != theme::Hero::None && self.layout.shows("featured") {
             let i = self.hero.rem_euclid(feat.len() as isize) as usize;
-            page = page.push(self.hero(feat[i], (i, feat.len()), env, w));
+            let at = (i, feat.len());
+            page = page.push(match lay.hero {
+                theme::Hero::FullBleed => self.hero_full(feat[i], at, env, w),
+                theme::Hero::Carousel => self.hero_carousel(&feat, i, env, w),
+                _ => self.hero(feat[i], at, env, w),
+            });
+        }
+        if lay.genre_tiles && self.layout.shows("genre_tiles") {
+            if let Some(t) = self.genre_tiles(lib, w) {
+                page = page.push(t);
+            }
         }
         let row_of = |title: &str, cards: &[Card], wide: bool, all: Option<View>| {
             self.row(env, title, cards, wide, all.map(Msg::Nav), w)
@@ -1123,6 +1153,10 @@ impl Library {
                     }
                     let mut rated = shuffled(rated.into_iter(), "top", &self.shuffle);
                     rated.sort_by(|a, b| b.score.unwrap_or(0.0).total_cmp(&a.score.unwrap_or(0.0)));
+                    if lay.top10 {
+                        page = page.push(self.top10_row(&rated, env, env.progress));
+                        continue;
+                    }
                     let cards = self.poster_cards(rated.into_iter().take(24), env.progress);
                     page = page.push(row_of("Top rated", &cards, false, None));
                 }
@@ -1393,6 +1427,8 @@ impl Library {
                         title: m.title.clone(),
                         sub: Some(format!("{} left", fmt_runtime(e.dur - e.pos))),
                         art: m.thumb.clone().or(m.backdrop.clone()).or(m.poster.clone()),
+                        wide_art: None,
+                        meta: Some(crate::ui::browse::short_meta(m)),
                         progress: Some(e.fraction()),
                         watched: false,
                         moving: m.unavailable,
@@ -1425,6 +1461,8 @@ impl Library {
                             .or(s.thumb.clone())
                             .or(s.backdrop.clone())
                             .or(s.poster.clone()),
+                        wide_art: None,
+                        meta: Some(format!("{} · {code}", s.title)),
                         progress: Some(n.resume.map_or(0.0, Entry::fraction)),
                         watched: false,
                         moving: s.unavailable || ep.unavailable,
@@ -1449,6 +1487,8 @@ impl Library {
                 title: i.title.clone(),
                 sub: i.year.map(|y| y.to_string()),
                 art: i.poster.clone(),
+                wide_art: i.thumb.clone().or(i.backdrop.clone()),
+                meta: Some(crate::ui::browse::short_meta(i)),
                 progress: (i.kind == Kind::Movie)
                     .then(|| {
                         progress
