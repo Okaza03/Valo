@@ -1,5 +1,4 @@
-//! The details pages in the Valo style, laid out like egui's
-//! `ui::browse::details`: the movie page (banner with the poster, cast,
+//! The details pages in the Valo style: the movie page (banner with the poster, cast,
 //! "You might also like", the file and metadata panel, critics), the series
 //! page (Episodes, Related and Details tabs) and a single episode. Sections
 //! the server sends no data for are left out.
@@ -29,7 +28,7 @@ use crate::ui::browse::{makers, next_up, play_label};
 use crate::ui::theme::{self, CARD, INK, LINE, LINE_HI, MUTED, PRIMARY, SURFACE_HI, TEXT};
 use crate::util::{color_for, fmt_runtime, fmt_time};
 
-type Egui = eframe::egui::Color32;
+type Egui = ecolor::Color32;
 
 const MAX_W: f32 = 1420.0;
 /// Below this content width, side-by-side columns stack.
@@ -56,12 +55,12 @@ pub(super) fn column_of(w: f32) -> (f32, f32) {
     ((w - inner) / 2.0, inner)
 }
 
-/// A gap as egui leaves it: `n` plus its 8px item spacing.
+/// A gap: `n` plus 8px of item spacing.
 pub(super) fn gap<'a>(n: f32) -> Element<'a, Msg> {
     space().height(n + 8.0).into()
 }
 
-/// Small spaced capitals (egui's `caps`).
+/// Small spaced capitals.
 pub(super) fn caps<'a>(t: &str, color: Color) -> Element<'a, Msg> {
     mono(t, 11.0).color(color).into()
 }
@@ -203,7 +202,7 @@ pub(super) fn kv_row<'a>(k: &str, value: Element<'a, Msg>, line: bool) -> Elemen
     out.into()
 }
 
-/// Rows of [`kv_row`], a hairline between each (egui's `kv_rows`).
+/// Rows of [`kv_row`], a hairline between each.
 pub(super) fn kv_rows<'a>(rows: Vec<(&str, String, Color, f32)>) -> Element<'a, Msg> {
     let n = rows.len();
     let mut out = column![];
@@ -233,7 +232,7 @@ fn info_row<'a>(k: &str, value: Element<'a, Msg>, label_w: f32) -> Element<'a, M
 }
 
 /// A filled button with an optional icon; `radius` 0 makes it a pill
-/// (egui's `fill_button`).
+///.
 pub(super) fn fill_button<'a>(
     t: &str,
     ic: Option<Icon>,
@@ -319,7 +318,7 @@ pub(super) fn title_art<'a>(
 }
 
 /// Full-width artwork darkened to `dim`, a shade along its left half, fading
-/// into the page at the bottom (egui's `backdrop`).
+/// into the page at the bottom.
 pub(super) fn backdrop<'a>(
     env: Env<'a>,
     art: Option<&str>,
@@ -406,7 +405,7 @@ fn face<'a>(name: &str, shown: &str, r: f32) -> Element<'a, Msg> {
 }
 
 /// Up to three overlapping faces (a "+N" one for the rest) and the two
-/// latest names; hover for everyone (egui's `watchers_row`).
+/// latest names; hover for everyone.
 pub(super) fn watchers_row<'a>(list: &[Watcher]) -> Option<Element<'a, Msg>> {
     if list.is_empty() {
         return None;
@@ -673,7 +672,7 @@ impl Library {
     }
 
     /// Headshots in a grid, name and character under each; each opens the
-    /// person's page (egui's `cast_grid`).
+    /// person's page.
     pub(super) fn cast_grid<'a>(
         &self,
         cast: &[CastMember],
@@ -751,7 +750,7 @@ impl Library {
         grid.into()
     }
 
-    /// A poster with the title and `sub` under it (egui's `poster_tile`).
+    /// A poster with the title and `sub` under it.
     pub(super) fn poster_tile<'a>(
         &self,
         item: &Item,

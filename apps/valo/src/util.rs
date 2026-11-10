@@ -2,15 +2,12 @@
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
-use eframe::egui;
-
-/// Wakes the UI when background work finishes: egui redraws; the Iced UI
-/// polls on its own ticks, so it passes [`Waker::none`].
+/// Wakes the UI when background work finishes. The Iced UI polls on its own
+/// ticks, so it passes [`Waker::none`]; tests and helpers can pass a callback.
 #[derive(Clone)]
 pub struct Waker(Option<std::sync::Arc<dyn Fn(std::time::Duration) + Send + Sync>>);
 
 impl Waker {
-    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
     pub fn none() -> Self {
         Self(None)
     }
@@ -20,20 +17,11 @@ impl Waker {
         self.wake_after(std::time::Duration::ZERO);
     }
 
-    /// Once `d` has passed, to do something then (egui only redraws when asked).
+    /// Once `d` has passed, to do something then.
     pub fn wake_after(&self, d: std::time::Duration) {
         if let Some(f) = &self.0 {
             f(d);
         }
-    }
-}
-
-impl From<&egui::Context> for Waker {
-    fn from(ctx: &egui::Context) -> Self {
-        let ctx = ctx.clone();
-        Self(Some(std::sync::Arc::new(move |d| {
-            ctx.request_repaint_after(d)
-        })))
     }
 }
 
@@ -102,10 +90,10 @@ pub fn percent_decode(s: &str) -> String {
 }
 
 /// Stable pleasant color for items without artwork.
-pub fn color_for(s: &str) -> egui::Color32 {
+pub fn color_for(s: &str) -> ecolor::Color32 {
     let h = s
         .bytes()
         .fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
     let hue = (h % 360) as f32 / 360.0;
-    egui::ecolor::Hsva::new(hue, 0.45, 0.42, 1.0).into()
+    ecolor::Hsva::new(hue, 0.45, 0.42, 1.0).into()
 }

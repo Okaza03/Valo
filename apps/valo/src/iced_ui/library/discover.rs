@@ -1,8 +1,7 @@
-//! What the admin's Stremio addons add, drawn like egui's
-//! `browse::discover`: the Streaming page, the home page's catalog rows,
+//! What the admin's Stremio addons add: the Streaming page, the home page's catalog rows,
 //! search results from beyond the server, the page of a title that isn't on
 //! the server (with Request), and person pages with their filmography
-//! (egui's `browse::people`). The state is egui's `discover::State`, shared.
+//!. The state is `crate::ui::browse::discover::State`.
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{
     column, container, image as _image, row, scrollable, space, stack, text, Column,
@@ -632,7 +631,7 @@ impl Library {
     // ----------------------------------------------------------- people
 
     /// A person's page, built from what the library knows about them, and
-    /// their filmography from Wikidata (egui's `person_page`).
+    /// their filmography from Wikidata.
     pub(super) fn person_page<'a>(
         &'a self,
         lib: &'a api::Library,

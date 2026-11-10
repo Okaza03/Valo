@@ -1,5 +1,5 @@
-//! The movie and series pages of the other app styles (egui's
-//! `browse::details::styled`): a backdrop across the top or beside the text,
+//! The movie and series pages of the other app styles: a backdrop across
+//! the top or beside the text,
 //! a numbered episode list, and YouTube's watch page.
 use iced::alignment::Vertical;
 use iced::widget::{column, container, mouse_area, row, space, stack, text, Column};

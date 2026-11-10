@@ -1,6 +1,5 @@
-//! Marks drawn over artwork, as in egui: the WATCHED sash across a poster's
-//! top right corner, and the red MOVING band while an admin moves a title's
-//! files (`ui::watched_sash`, `ui::moving_tape`).
+//! Marks drawn over artwork: the WATCHED sash across a poster's top right
+//! corner, and the red MOVING band while an admin moves a title's files.
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6};
 
 use iced::alignment::Vertical;

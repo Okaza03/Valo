@@ -7,7 +7,7 @@
 //! shows on the next frame.
 use std::sync::RwLock;
 
-use eframe::egui::Color32;
+use ecolor::Color32;
 use serde::{Deserialize, Serialize};
 
 /// The color theme.

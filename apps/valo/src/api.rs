@@ -412,28 +412,6 @@ impl Library {
         self.all().find(|i| i.id == id)
     }
 
-    /// The artwork URLs of everything an admin is moving: posters,
-    /// backdrops and thumbnails of the titles, and their episodes' stills.
-    pub fn moving_art(&self) -> HashSet<String> {
-        let mut out = HashSet::new();
-        for i in self.all() {
-            if i.unavailable {
-                out.extend(
-                    [&i.poster, &i.backdrop, &i.thumb]
-                        .into_iter()
-                        .flatten()
-                        .cloned(),
-                );
-            }
-            let eps = i.seasons.iter().flat_map(|s| &s.episodes);
-            out.extend(
-                eps.filter(|e| e.unavailable)
-                    .filter_map(|e| e.still.clone()),
-            );
-        }
-        out
-    }
-
     /// Series, season index and episode index for an episode id.
     pub fn find_episode(&self, ep_id: &str) -> Option<(&Item, usize, usize)> {
         self.series.iter().find_map(|s| {

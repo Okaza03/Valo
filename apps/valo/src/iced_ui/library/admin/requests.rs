@@ -278,7 +278,7 @@ impl State {
         if let Some(n) = r.note.as_ref().filter(|n| !n.trim().is_empty()) {
             info = info.push(text(format!("“{n}”")).size(14.5));
         }
-        // the answers, right to left in egui: Approve, Mark available, Deny…, ⋮
+        // the answers: Approve, Mark available, Deny…, ⋮
         let mut answers = row![].spacing(8).align_y(Vertical::Center);
         let id = r.id.clone();
         let ok = |m: Msg| (!busy).then(|| send(m));

@@ -1,5 +1,4 @@
-//! The dialogs over the window, like egui's (`ui::settings`, `ui::whats_new`,
-//! the update popup and notice in `update`): Settings, "Update available",
+//! The dialogs over the window: Settings, "Update available",
 //! "What's new", the update notice in the corner, and the wordmark shown
 //! while the library loads after signing in.
 use std::time::{Duration, Instant};
@@ -132,7 +131,7 @@ pub fn resolved(m: Mode, system_light: bool) -> Mode {
 
 /// A dialog over `page`: the page darkened, the dialog in the middle,
 /// `width` wide at most, scrolling when it's taller than the window
-/// (egui's `settings::dialog`). A click outside sends `close`.
+///. A click outside sends `close`.
 pub fn modal<'a, M: Clone + 'a>(
     page: Element<'a, M>,
     content: Element<'a, M>,
@@ -211,7 +210,7 @@ fn scroll_style(_: &Theme, s: scrollable::Status) -> scrollable::Style {
 }
 
 /// The dialog's title: the accent badge with a play mark, the title and a
-/// line under it (egui's `settings::header`).
+/// line under it.
 pub fn header<'a, M: 'a>(title: &str, sub: &str) -> Element<'a, M> {
     let badge = container(icon::icon(Icon::Play, Color::WHITE, 24.0))
         .center(36)
@@ -236,7 +235,7 @@ pub fn header<'a, M: 'a>(title: &str, sub: &str) -> Element<'a, M> {
     .into()
 }
 
-/// A muted section heading ("PLAYBACK"), egui's `ui::section`.
+/// A muted section heading ("PLAYBACK").
 fn section<'a>(t: &str) -> Element<'a, Msg> {
     column![
         space().height(18),
@@ -287,7 +286,7 @@ fn check<'a>(on: bool, label: &str, msg: fn(bool) -> Msg) -> Element<'a, Msg> {
     .into()
 }
 
-/// A drop-down 200 wide (egui's `combo`).
+/// A drop-down 200 wide.
 fn combo<'a, T: PartialEq + Copy + std::fmt::Debug + 'static>(
     options: &'static [Choice<T>],
     value: T,
@@ -583,13 +582,12 @@ impl<M> canvas::Program<M> for Swatch {
         let mut f = Frame::new(renderer, bounds.size());
         let pal = &self.pal;
         let size = bounds.size();
-        let rect =
-            |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, r: f32, col: eframe::egui::Color32| {
-                f.fill(
-                    &Path::rounded_rectangle(Point::new(x, y), Size::new(w, h), r.into()),
-                    c(col),
-                );
-            };
+        let rect = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, r: f32, col: ecolor::Color32| {
+            f.fill(
+                &Path::rounded_rectangle(Point::new(x, y), Size::new(w, h), r.into()),
+                c(col),
+            );
+        };
         rect(&mut f, 0.0, 0.0, size.width, size.height, 6.0, pal.bg);
         match self.pic {
             Pic::Colors => {
@@ -635,20 +633,19 @@ impl<M> canvas::Program<M> for Swatch {
     }
 }
 
-/// A style's layout in miniature (egui's `layout_swatch`).
+/// A style's layout in miniature.
 fn draw_layout(f: &mut Frame, skin: Skin, pal: &Palette, size: Size) {
     let lay = &skin.spec().layout;
-    let rect =
-        |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, r: f32, col: eframe::egui::Color32| {
-            f.fill(
-                &Path::rounded_rectangle(
-                    Point::new(x, y),
-                    Size::new(w.max(0.0), h.max(0.0)),
-                    r.into(),
-                ),
-                c(col),
-            );
-        };
+    let rect = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, r: f32, col: ecolor::Color32| {
+        f.fill(
+            &Path::rounded_rectangle(
+                Point::new(x, y),
+                Size::new(w.max(0.0), h.max(0.0)),
+                r.into(),
+            ),
+            c(col),
+        );
+    };
     // the body, inside a 6px margin
     let (mut left, mut top) = (6.0, 6.0);
     let (right, bottom) = (size.width - 6.0, size.height - 6.0);
@@ -909,7 +906,7 @@ const FADE_IN: f32 = 0.45;
 const FADE_OUT: f32 = 0.35;
 
 /// The wordmark over the window after signing in, while the library loads
-/// (egui's `ui::splash`).
+///.
 pub struct Splash {
     start: Instant,
     /// When it started fading out.

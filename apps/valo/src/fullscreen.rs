@@ -19,25 +19,8 @@ pub fn set(on: bool) {
     FULLSCREEN.store(on, Ordering::Relaxed);
 }
 
+/// Hook the main window's messages (see the module docs).
 #[cfg(windows)]
-pub fn install(cc: &eframe::CreationContext<'_>) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::UI::Shell::SetWindowSubclass;
-
-    let Ok(handle) = cc.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::Win32(h) = handle.as_raw() else {
-        return;
-    };
-    // SAFETY: the HWND is our live main window, and this runs on the thread that owns it.
-    unsafe {
-        SetWindowSubclass(h.hwnd.get() as _, Some(subclass_proc), 1, 0);
-    }
-}
-
-/// The same, for a window that isn't eframe's (the Iced UI).
-#[cfg(all(windows, feature = "iced"))]
 pub fn install_hwnd(hwnd: isize) {
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
     // SAFETY: the HWND is our live main window, and Iced runs this on the thread that owns it.
@@ -45,9 +28,6 @@ pub fn install_hwnd(hwnd: isize) {
         SetWindowSubclass(hwnd as _, Some(subclass_proc), 1, 0);
     }
 }
-
-#[cfg(not(windows))]
-pub fn install(_cc: &eframe::CreationContext<'_>) {}
 
 #[cfg(windows)]
 unsafe extern "system" fn subclass_proc(

@@ -1,5 +1,5 @@
-//! The home page and navigation pieces of the app styles (egui's
-//! `browse::layouts`): full-width and carousel banners, the Top 10 row,
+//! The home page and navigation pieces of the app styles: full-width and
+//! carousel banners, the Top 10 row,
 //! genre tiles, the video-style grid and the sidebar.
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{

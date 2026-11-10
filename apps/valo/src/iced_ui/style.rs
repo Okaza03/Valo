@@ -1,6 +1,5 @@
 //! The shared look: fonts, the theme's colors as Iced colors, and the styles
-//! the screens reuse. Colors come from `crate::ui::theme`, so the egui and
-//! Iced screens show the same theme while the port is under way.
+//! the screens reuse. Colors come from `crate::ui::theme`.
 use iced::widget::{button, container};
 use iced::{border, font, Background, Border, Color, Font, Theme};
 
@@ -27,8 +26,8 @@ pub const FONTS: [&[u8]; 4] = [
     include_bytes!("../../assets/fonts/NotoSansMono-Medium.ttf"),
 ];
 
-/// An egui color as an Iced one.
-pub fn c(e: eframe::egui::Color32) -> Color {
+/// A style color (`ecolor`, as the app styles define them) as an Iced one.
+pub fn c(e: ecolor::Color32) -> Color {
     let [r, g, b, a] = e.to_srgba_unmultiplied();
     Color::from_rgba8(r, g, b, f32::from(a) / 255.0)
 }

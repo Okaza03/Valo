@@ -2,11 +2,7 @@
 //! with the notes of every version since the one last seen.
 //! Only the big things go in [`NOTES`]; the full list is in the release notes.
 //! Admin features stay out: they're for the server's admin, who knows about them.
-use eframe::egui::{self, RichText};
-
-use super::settings::{dialog, header};
-use super::{bold, mono, primary_button, ACCENT, MUTED, TEXT};
-use crate::update::{newer, Release, VERSION};
+use crate::update::newer;
 
 pub(crate) struct Note {
     pub title: &'static str,
@@ -178,153 +174,6 @@ pub(crate) fn between(seen: &str, current: &str) -> Vec<(&'static str, &'static 
         .collect()
 }
 
-/// "Valo 0.8.6", over a version's notes when there's more than one version.
-fn version_heading(ui: &mut egui::Ui, v: &str) {
-    ui.label(mono(format!("VALO {v}"), 11.0).color(ACCENT()));
-    ui.add_space(6.0);
-}
-
-/// Whether there's anything to show for a user who last saw `seen`
-/// (empty: a config from before this existed).
-pub fn pending(seen: &str) -> bool {
-    // every update gets the dialog: the notes, or at least a pointer to them
-    seen != VERSION
-}
-
-/// Draw the dialog; true once it's dismissed.
-pub fn ui(ctx: &egui::Context, seen: &str) -> bool {
-    let notes = between(seen, VERSION);
-    let (done, close) = dialog(ctx, "whats-new", 460.0, |ui| {
-        header(ui, "What's new", &format!("Valo {VERSION}"));
-        ui.add_space(6.0);
-        for (v, list) in &notes {
-            if notes.len() > 1 {
-                version_heading(ui, v);
-            }
-            for n in list.iter() {
-                ui.label(bold(n.title, 16.0));
-                ui.add_space(2.0);
-                ui.label(RichText::new(n.text).size(14.5).color(MUTED()));
-                ui.add_space(14.0);
-            }
-        }
-        if notes.is_empty() {
-            ui.label(
-                RichText::new("This update brings fixes and small improvements.")
-                    .size(14.5)
-                    .color(MUTED()),
-            );
-            ui.add_space(14.0);
-        }
-        if super::ext_link(ui, "Full release notes") {
-            super::chrome::open_url(&format!(
-                "https://github.com/Okaza03/Valo/releases/tag/v{VERSION}"
-            ));
-        }
-        ui.add_space(10.0);
-        let b = ui.add_sized([ui.available_width(), 40.0], |ui: &mut egui::Ui| {
-            primary_button(ui, "Got it", true)
-        });
-        b.clicked()
-    });
-    done || close
-}
-
-pub use crate::update::UpdateChoice;
-
-/// The popup shown when a newer Valo is out: its release notes and a way to
-/// get it. `in_place`: the button installs and restarts; else it downloads.
-pub fn update_available(
-    ctx: &egui::Context,
-    rel: &Release,
-    in_place: bool,
-    flatpak: bool,
-) -> Option<UpdateChoice> {
-    let (choice, close) = dialog(ctx, "update-available", 460.0, |ui| {
-        header(
-            ui,
-            "Update available",
-            &format!("Valo {}  ·  you have {VERSION}", rel.version),
-        );
-        ui.add_space(6.0);
-        let many = rel.changes.len() > 1;
-        if many {
-            ui.label(
-                RichText::new(format!(
-                    "{} updates since your version, newest first.",
-                    rel.changes.len()
-                ))
-                .size(14.5)
-                .color(MUTED()),
-            );
-            ui.add_space(14.0);
-        }
-        for c in &rel.changes {
-            if many {
-                version_heading(ui, &c.version);
-            }
-            if !c.summary.is_empty() {
-                ui.label(RichText::new(&c.summary).size(15.0).color(TEXT()));
-                ui.add_space(14.0);
-            }
-            for (title, text) in &c.notes {
-                if !title.is_empty() {
-                    ui.label(bold(title, 16.0));
-                    ui.add_space(2.0);
-                }
-                ui.label(RichText::new(text).size(14.5).color(MUTED()));
-                ui.add_space(14.0);
-            }
-        }
-        if rel
-            .changes
-            .iter()
-            .all(|c| c.summary.is_empty() && c.notes.is_empty())
-        {
-            ui.label(
-                RichText::new("This update brings fixes and small improvements.")
-                    .size(14.5)
-                    .color(MUTED()),
-            );
-            ui.add_space(14.0);
-        }
-        if flatpak {
-            ui.label(
-                RichText::new("Download the new .flatpak and open it to update.")
-                    .size(14.5)
-                    .color(MUTED()),
-            );
-            ui.add_space(14.0);
-        }
-        if super::ext_link(ui, "Full release notes") {
-            super::chrome::open_url(&rel.url);
-        }
-        ui.add_space(10.0);
-        let label = if in_place { "Update now" } else { "Download" };
-        let full = [ui.available_width(), 40.0];
-        let mut choice = None;
-        if ui
-            .add_sized(full, |ui: &mut egui::Ui| primary_button(ui, label, true))
-            .clicked()
-        {
-            choice = Some(if in_place {
-                UpdateChoice::Update
-            } else {
-                UpdateChoice::Download
-            });
-        }
-        ui.add_space(6.0);
-        if ui
-            .add_sized(full, |ui: &mut egui::Ui| super::small_button(ui, "Later"))
-            .clicked()
-        {
-            choice = Some(UpdateChoice::Later);
-        }
-        choice
-    });
-    choice.or(close.then_some(UpdateChoice::Later))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,7 +190,5 @@ mod tests {
         // several versions behind: every one of them, newest first
         let v: Vec<_> = between("0.8.2", "0.8.7").iter().map(|(v, _)| *v).collect();
         assert_eq!(v, ["0.8.7", "0.8.6", "0.8.4", "0.8.3"]);
-        // an update always shows the dialog, even without notes of its own
-        assert!(pending("0.0.1") && !pending(VERSION));
     }
 }

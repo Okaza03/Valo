@@ -1,4 +1,4 @@
-//! The Admin page, as egui draws it (`browse::admin`): a sidebar of
+//! The Admin page (`browse::admin`): a sidebar of
 //! sections for managing the server, each talking to its own part of the
 //! optional admin API; when the server doesn't have that part, the section
 //! links to its setup guide instead.
@@ -486,7 +486,7 @@ impl State {
         self.requests.pending()
     }
 
-    /// The sections, on the left (egui's `admin_sidebar`).
+    /// The sections, on the left.
     pub fn sidebar<'a>(&self, server: &str, base: &str) -> Element<'a, LMsg> {
         let pending = self.pending();
         let mut col: Column<'a, LMsg> = column![

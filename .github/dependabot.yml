@@ -1,7 +1,7 @@
 version: 2
 updates:
   # Patch bumps come as one PR. Minor and major bumps come one per crate:
-  # most of ours are 0.x (eframe, cpal, rfd, image), where a minor bump breaks.
+  # most of ours are 0.x (iced, cpal, rfd, image), where a minor bump breaks.
   - package-ecosystem: cargo
     directory: /
     schedule:
@@ -13,11 +13,11 @@ updates:
       cargo-patch:
         update-types: [patch]
     # big rewrites, upgraded by hand: ureq 3 drops the body from error
-    # statuses, and every eframe 0.x minor reworks panels, popups and App
+    # statuses, and every iced 0.x minor reworks widgets and the runtime
     ignore:
       - dependency-name: ureq
         update-types: [version-update:semver-major]
-      - dependency-name: eframe
+      - dependency-name: iced
         update-types: [version-update:semver-major, version-update:semver-minor]
 
   - package-ecosystem: github-actions
