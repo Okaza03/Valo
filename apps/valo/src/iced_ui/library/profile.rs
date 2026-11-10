@@ -237,7 +237,7 @@ pub(super) fn stats<'a>(tiles: Vec<(String, &str)>, w: f32) -> Element<'a, Msg> 
 }
 
 /// A labelled bar ("Favorite genres"), `w` wide.
-fn bar<'a>(label: &str, value: String, f: f32, w: f32) -> Element<'a, Msg> {
+pub(super) fn bar<'a>(label: &str, value: String, f: f32, w: f32) -> Element<'a, Msg> {
     let gold = c(GOLD());
     column![
         row![
@@ -269,7 +269,7 @@ fn bar<'a>(label: &str, value: String, f: f32, w: f32) -> Element<'a, Msg> {
 }
 
 /// Main and side columns inside the content column; stacked when narrow.
-fn columns<'a>(
+pub(super) fn columns<'a>(
     w: f32,
     main: impl FnOnce(f32) -> Element<'a, Msg>,
     side: impl FnOnce(f32) -> Element<'a, Msg>,

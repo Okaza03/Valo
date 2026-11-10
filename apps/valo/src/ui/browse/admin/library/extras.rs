@@ -55,7 +55,7 @@ impl Extras {
 
 /// The video file a subtitle search is for: the movie's, or for a series the
 /// episode typed in ("S01E02"), else its first episode with a file.
-fn video_name(item: &Item, episode: &str) -> String {
+pub(crate) fn video_name(item: &Item, episode: &str) -> String {
     let file = |f: &Option<crate::api::FileInfo>| {
         f.as_ref()
             .map(|f| {
@@ -81,12 +81,12 @@ fn video_name(item: &Item, episode: &str) -> String {
 }
 
 /// An episode's code as the subtitle endpoints take it: "S01E02".
-fn episode_code(season: u32, episode: u32) -> String {
+pub(crate) fn episode_code(season: u32, episode: u32) -> String {
     format!("S{season:02}E{episode:02}")
 }
 
 /// The season and episode of a code like "S01E02" (any case).
-fn parse_code(code: &str) -> Option<(u32, u32)> {
+pub(crate) fn parse_code(code: &str) -> Option<(u32, u32)> {
     let code = code.trim().to_lowercase();
     let (s, e) = code.strip_prefix('s')?.split_once('e')?;
     Some((s.parse().ok()?, e.parse().ok()?))
@@ -171,7 +171,7 @@ const EDITIONS: [&str; 7] = [
 
 /// How well a subtitle's release fits the video file; higher is better,
 /// 4 or more counts as a match.
-fn release_score(video: &str, release: &str) -> i32 {
+pub(crate) fn release_score(video: &str, release: &str) -> i32 {
     let (v, r) = (words(video), words(release));
     if v.is_empty() || r.is_empty() {
         return 0;
@@ -211,7 +211,7 @@ fn release_score(video: &str, release: &str) -> i32 {
 }
 
 /// An episode's id as the server knows it (ours carries "episode:").
-fn episode_id(ep: &Episode) -> &str {
+pub(crate) fn episode_id(ep: &Episode) -> &str {
     ep.id.strip_prefix("episode:").unwrap_or(&ep.id)
 }
 

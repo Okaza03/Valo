@@ -1,8 +1,7 @@
 //! The library: the home page, the Movies and TV shows grids, search, a
-//! director's or creator's titles, and the movie and series pages. Ported
-//! from `crate::ui::browse`, in the default Valo style; the other styles'
-//! layouts, Streaming (addon catalogs), profiles, admin and the arrivals
-//! popup are still egui-only.
+//! director's or creator's titles, the movie and series pages, Streaming,
+//! profiles, admin and the arrivals popup. Ported from `crate::ui::browse`,
+//! in the default Valo style; the other styles' layouts are still egui-only.
 mod admin;
 mod cards;
 mod details;
@@ -519,6 +518,9 @@ impl Library {
             out = Out::Top(PAGE);
         }
         let asks = self.admin.work(&self.client, self.view == View::Admin);
+        for u in &asks.forget {
+            images.forget(u);
+        }
         if let Some(o) = self.admin_asks(asks) {
             return o;
         }
@@ -1702,7 +1704,7 @@ fn spin_secs() -> f32 {
     START.get_or_init(Instant::now).elapsed().as_secs_f32()
 }
 
-fn fill_gradient(angle: f32, from: Color, to: Color) -> container::Style {
+pub(super) fn fill_gradient(angle: f32, from: Color, to: Color) -> container::Style {
     container::Style {
         background: Some(Background::Gradient(
             iced::gradient::Linear::new(iced::Radians(angle))
@@ -1780,7 +1782,7 @@ fn separator<'a>() -> Element<'a, Msg> {
 }
 
 /// A drop-down in the app's colors.
-fn picker<'a, T, L, V>(p: iced::widget::PickList<'a, T, L, V, Msg>) -> Element<'a, Msg>
+pub(super) fn picker<'a, T, L, V>(p: iced::widget::PickList<'a, T, L, V, Msg>) -> Element<'a, Msg>
 where
     T: ToString + PartialEq + Clone + 'a,
     L: std::borrow::Borrow<[T]> + 'a,
@@ -1825,7 +1827,7 @@ where
 }
 
 /// The page's scrollbar: thin, in the theme's line color.
-fn scroll_style(_: &iced::Theme, s: scrollable::Status) -> scrollable::Style {
+pub(super) fn scroll_style(_: &iced::Theme, s: scrollable::Status) -> scrollable::Style {
     let hot = matches!(
         s,
         scrollable::Status::Hovered { .. } | scrollable::Status::Dragged { .. }

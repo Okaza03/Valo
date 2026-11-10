@@ -1,7 +1,8 @@
 //! The Iced UI, built with `--features iced`. It's being ported from the egui
-//! UI (`crate::ui`) one screen at a time; so far it has the window chrome, the
-//! player, setup, the server check and sign-in, and the library (home, grids,
-//! search, movie and series pages). Settings and updates are still egui-only.
+//! UI (`crate::ui`) one screen at a time; it has every screen now (chrome,
+//! player, setup, the server check, sign-in, settings, updates, the library,
+//! profiles and admin), drawn in the default Valo style. The other styles'
+//! layouts are still egui-only.
 //!
 //! Frames are presented with `PresentMode::Fifo` (vsync, no tearing), and
 //! fullscreen is a borderless window covering the screen, never exclusive mode.

@@ -144,6 +144,21 @@ impl Images {
         )
     }
 
+    /// Drop every copy of `url`, so it's downloaded again (after it changed
+    /// on the server under the same address).
+    pub fn forget(&self, url: &str) {
+        let mut map = self.map.borrow_mut();
+        map.retain(|(u, _), state| {
+            if u != url {
+                return true;
+            }
+            if matches!(state, State::Loading) {
+                self.waiting.set(self.waiting.get().saturating_sub(1));
+            }
+            false
+        });
+    }
+
     /// Downloads are on their way: poll for them.
     pub fn busy(&self) -> bool {
         self.waiting.get() > 0

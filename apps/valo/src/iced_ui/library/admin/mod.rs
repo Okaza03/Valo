@@ -2,7 +2,12 @@
 //! sections for managing the server, each talking to its own part of the
 //! optional admin API; when the server doesn't have that part, the section
 //! links to its setup guide instead.
+mod addons;
+mod analytics;
+mod collections;
 mod dashboard;
+mod layout;
+mod library;
 mod moving;
 mod requests;
 mod users;
@@ -135,14 +140,6 @@ impl Section {
             Section::Users => "Valo's admin API (/api/admin/users)",
         }
     }
-
-    /// Ported to this build; the rest come in later stages.
-    fn ported(self) -> bool {
-        matches!(
-            self,
-            Section::Dashboard | Section::Requests | Section::Moving | Section::Users
-        )
-    }
 }
 
 /// A finished change.
@@ -154,6 +151,8 @@ pub struct Done {
     pub library: bool,
     /// Load the home page layout again afterwards.
     pub layout: bool,
+    /// Images that changed on the server: download them again.
+    pub forget: Vec<String>,
 }
 
 impl Done {
@@ -177,6 +176,11 @@ pub enum Msg {
     Requests(requests::Msg),
     Moving(moving::Msg),
     Users(users::Msg),
+    Library(library::Msg),
+    Analytics(analytics::Msg),
+    Collections(collections::Msg),
+    Layout(layout::Msg),
+    Addons(addons::Msg),
 }
 
 /// What the admin page asks the library to do.
@@ -185,8 +189,8 @@ pub struct Asks {
     pub login: bool,
     pub reload_library: bool,
     pub reload_layout: bool,
-    /// Open this user's page under Analytics.
-    pub profile: Option<String>,
+    /// Images that changed on the server.
+    pub forget: Vec<String>,
 }
 
 #[derive(Default)]
@@ -206,6 +210,11 @@ pub struct State {
     requests: requests::State,
     moving: moving::State,
     users: users::State,
+    library: library::State,
+    analytics: analytics::State,
+    collections: collections::State,
+    layout: layout::State,
+    addons: addons::State,
     /// The server's own title lists (`GET /api/admin/movies`, `/series`).
     catalog: [Remote<Vec<Item>>; 2],
 }
@@ -223,9 +232,23 @@ pub struct Cx<'a> {
     pub movies: &'a [Item],
     pub series: &'a [Item],
     pub menu: Option<&'a str>,
+    /// Everyone who can sign in.
+    pub accounts: &'a [AdminUser],
+    /// The server lists its titles for admins (else the library stands in).
+    pub catalog: bool,
 }
 
-impl Cx<'_> {
+impl<'a> Cx<'a> {
+    /// A title by our id: the server's admin lists first, then the library.
+    pub fn find(&self, id: &str) -> Option<&'a Item> {
+        let (movies, series) = (self.movies, self.series);
+        movies
+            .iter()
+            .chain(series)
+            .find(|i| i.id == id)
+            .or_else(|| self.lib.find(id))
+    }
+
     pub fn titles(&self, kind: Kind) -> &[Item] {
         if kind == Kind::Movie {
             self.movies
@@ -242,6 +265,11 @@ impl State {
             Section::Dashboard => self.dashboard.refresh(),
             Section::Requests => self.requests.refresh(),
             Section::Moving => self.moving.refresh(),
+            Section::Library => self.library.refresh(),
+            Section::Analytics => self.analytics.refresh(),
+            Section::Collections => self.collections.refresh(),
+            Section::Layout => self.layout.refresh(),
+            Section::Addons => self.addons.refresh(),
             _ => {}
         }
         self.users.refresh();
@@ -256,7 +284,11 @@ impl State {
             Section::Requests => self.requests.missing(),
             Section::Moving => self.moving.missing(),
             Section::Users => self.users.missing(),
-            _ => false,
+            Section::Library => self.library.missing(),
+            Section::Analytics => self.analytics.missing(),
+            Section::Collections => self.collections.missing(),
+            Section::Layout => self.layout.missing(),
+            Section::Addons => self.addons.missing(),
         }
     }
 
@@ -267,6 +299,22 @@ impl State {
             || self.users.busy()
             || self.requests.busy()
             || self.moving.busy()
+            || self.library.busy()
+            || self.analytics.busy()
+            || self.collections.busy()
+            || self.layout.busy()
+            || self.addons.busy()
+    }
+
+    /// Every title we know: the server's admin lists, then the library.
+    fn all_items(&self, lib: Option<&Library>) -> Vec<Item> {
+        self.catalog
+            .iter()
+            .filter_map(|c| c.data.as_ref())
+            .flatten()
+            .cloned()
+            .chain(lib.into_iter().flat_map(|l| l.all().cloned()))
+            .collect()
     }
 
     /// Run `f` in the background; its outcome becomes the notice.
@@ -305,6 +353,7 @@ impl State {
                     self.refresh();
                     asks.reload_library |= done.library;
                     asks.reload_layout |= done.layout;
+                    asks.forget = done.forget;
                 }
                 Err(e) if e.is::<api::Unauthorized>() => asks.login = true,
                 Err(e) if e.is::<api::NoAdminApi>() => {
@@ -325,6 +374,11 @@ impl State {
         match self.section {
             Section::Dashboard => self.dashboard.work(client, &mut asks),
             Section::Moving => self.moving.work(client, &mut asks.login),
+            Section::Library => self.library.work(client, &mut asks),
+            Section::Analytics => self.analytics.work(client, &mut asks),
+            Section::Collections => self.collections.work(client, &mut asks),
+            Section::Layout => self.layout.work(client, &mut asks),
+            Section::Addons => self.addons.work(client, &mut asks),
             _ => {}
         }
         asks
@@ -353,8 +407,20 @@ impl State {
                 Section::Requests => self.requests.refresh(),
                 Section::Moving => self.moving.refresh(),
                 Section::Users => self.users.refresh(),
-                _ => {}
+                Section::Library => self.library.refresh(),
+                Section::Analytics => self.analytics.refresh(),
+                Section::Collections => self.collections.refresh(),
+                Section::Layout => self.layout.refresh(),
+                Section::Addons => self.addons.refresh(),
             },
+            Msg::Dash(dashboard::Msg::Goto(id)) => {
+                // a title on the dashboard: open it in Library
+                if let Some(i) = self.all_items(lib).iter().find(|i| i.id == id) {
+                    self.library.select(i);
+                }
+                self.section = Section::Library;
+                self.notice = None;
+            }
             Msg::Dash(m) => {
                 if let Some(job) = self.dashboard.update(m, client) {
                     self.run(client, job);
@@ -367,15 +433,35 @@ impl State {
                 }
             }
             Msg::Moving(m) => {
-                let items: Vec<Item> = self
-                    .catalog
-                    .iter()
-                    .filter_map(|c| c.data.as_ref())
-                    .flatten()
-                    .cloned()
-                    .chain(lib.into_iter().flat_map(|l| l.all().cloned()))
-                    .collect();
+                let items = self.all_items(lib);
                 if let Some(job) = self.moving.update(m, &items) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Addons(m) => {
+                if let Some(job) = self.addons.update(m) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Layout(m) => {
+                if let Some(job) = self.layout.update(m) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Collections(m) => {
+                let items = self.all_items(lib);
+                if let Some(job) = self.collections.update(m, &items) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Analytics(m) => {
+                if let analytics::Out::Goto(s) = self.analytics.update(m) {
+                    self.section = s;
+                }
+            }
+            Msg::Library(m) => {
+                let items = self.all_items(lib);
+                if let Some(job) = self.library.update(m, client, &items) {
                     self.run(client, job);
                 }
             }
@@ -384,7 +470,11 @@ impl State {
                 match self.users.update(m) {
                     users::Out::None => {}
                     users::Out::Run(job) => self.run(client, job),
-                    users::Out::Profile(name) => asks.profile = Some(name),
+                    users::Out::Profile(name) => {
+                        self.analytics.open(name, Section::Users);
+                        self.section = Section::Analytics;
+                        self.notice = None;
+                    }
                 }
             }
         }
@@ -411,7 +501,6 @@ impl State {
         for s in Section::ALL {
             let badge = match s {
                 Section::Requests if pending > 0 => Some(pending.to_string()),
-                _ if !s.ported() => Some("later".to_owned()),
                 _ if self.missing(s) => Some("not set up".into()),
                 _ => None,
             };
@@ -527,25 +616,27 @@ impl State {
             movies,
             series,
             menu: self.menu.as_deref(),
+            accounts: self.users.list(),
+            catalog: self.catalog[0].data.is_some(),
         };
         let body: Element<'a, LMsg> = match section {
             Section::Dashboard => self.dashboard.view(&cx, w),
             Section::Requests => self.requests.view(&cx, w),
             Section::Moving => self.moving.view(&cx),
             Section::Users => self.users.view(&cx, w),
-            _ => panel(column![
-                caps("Coming soon", c(WARN())),
-                gap(6.0),
-                text(format!("{} isn't in this build yet", section.label())).font(BOLD).size(20),
-                gap(6.0),
-                text("It's being moved to the new interface; use a release build to manage it for now.")
-                    .size(14.5)
-                    .color(style::MUTED()),
-            ]),
+            Section::Library => self.library.view(&cx, w),
+            Section::Analytics => self.analytics.view(&cx, w),
+            Section::Collections => self.collections.view(&cx, w),
+            Section::Layout => self.layout.view(&cx, w),
+            Section::Addons => self.addons.view(&cx, w),
         };
         let body: Element<'a, LMsg> = match section {
             // the dashboard and users lay out their own columns
-            Section::Dashboard | Section::Requests | Section::Users => body,
+            Section::Dashboard
+            | Section::Requests
+            | Section::Users
+            | Section::Layout
+            | Section::Addons => body,
             _ => container(container(body).width(inner))
                 .padding(Padding::default().left(m))
                 .into(),
@@ -769,10 +860,4 @@ impl Lib {
     pub(super) fn admin_open(&self) -> bool {
         self.view == super::View::Admin && self.search.trim().is_empty()
     }
-}
-
-/// Everyone who can sign in (for other sections).
-#[allow(dead_code)]
-pub fn accounts(st: &State) -> &[AdminUser] {
-    st.users.list()
 }

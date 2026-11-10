@@ -68,8 +68,7 @@ pub enum Msg {
     /// Open or shut one of the sync report's lists.
     Fold(String),
     /// A title a health check flagged: open it in the Library section.
-    /// Open this title in the Library section (ported in the next stage).
-    #[allow(dead_code)]
+    /// Open this title in the Library section.
     Goto(String),
 }
 
@@ -257,7 +256,7 @@ impl State {
                     self.flipped.insert(k);
                 }
             }
-            // the Library section isn't in this build yet
+            // the admin page opens the title in Library
             Msg::Goto(_) => {}
         }
         None
