@@ -267,7 +267,7 @@ impl Library {
                 .push(gap(12.0));
         }
         for ep in &season.episodes {
-            let seen = episode_watched(item, env.progress, &key, &ep.id);
+            let seen = episode_watched(env.progress, &key, &ep.id);
             let hk = format!("epl\u{1f}{}", ep.id);
             let lit = self.hovered.as_deref() == Some(hk.as_str());
             let art = ep.still.as_deref().or(item.backdrop.as_deref());
@@ -670,7 +670,7 @@ impl Library {
                     .push(gap(6.0));
             }
             for ep in &item.seasons[si].episodes {
-                let seen = episode_watched(item, env.progress, &key, &ep.id);
+                let seen = episode_watched(env.progress, &key, &ep.id);
                 let frac =
                     env.progress
                         .get(&self.key(&ep.id))

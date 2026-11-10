@@ -26,7 +26,7 @@ use super::Job;
 use crate::addons;
 use crate::api::SubtitleTrack;
 use crate::audio::AudioOut;
-use crate::config::{Config, Progress, MOVIE_FINISHED};
+use crate::config::{Config, Progress, FINISHED};
 use crate::inhibit::Inhibit;
 use crate::player::{Player, Source};
 use crate::subs::{self, Subs};
@@ -269,7 +269,7 @@ impl Watch {
             let done = p.finished()
                 // moved on with Next: this episode counts as watched
                 || self.moved_on == Some(i)
-                || (!item.episode && dur > 0.0 && p.clock() >= dur * MOVIE_FINISHED);
+                || (dur > 0.0 && p.clock() >= dur * FINISHED);
             let pos = if done && dur > 0.0 { dur } else { p.clock() };
             if pos > 1.0 {
                 progress.set(key, pos, dur);

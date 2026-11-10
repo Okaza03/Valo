@@ -36,8 +36,8 @@ class Prefs(context: Context) {
 data class Entry(val pos: Double, val dur: Double, val updated: Long) {
     val fraction get() = if (dur > 0) (pos / dur).coerceIn(0.0, 1.0).toFloat() else 0f
 
-    /** Started, but not finished (95% watched counts as finished, which skips the end credits). */
-    val inProgress get() = pos > 30 && (dur <= 0 || pos < dur * 0.95)
+    /** Started, but not finished (90% watched counts as finished, which skips the end credits). */
+    val inProgress get() = pos > 30 && (dur <= 0 || pos < dur * 0.90)
 
     val watched get() = dur > 0 && !inProgress && pos > 30
 }

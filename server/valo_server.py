@@ -1129,7 +1129,7 @@ def user_analytics(progress, users, lib, name, days):
         hours_of_day[when.hour] += 1
         weekdays[when.weekday()] += 1
         plays, hours = plays + 1, hours + h
-        done = dur > 0 and pos >= 0.95 * dur
+        done = dur > 0 and pos >= 0.90 * dur
         finished, started = finished + done, started + (not done)
         movies, episodes = movies + (kind == "movie"), episodes + (kind == "episode")
         item, ep, label = titles.get((kind, id), (None, None, None))
@@ -1188,7 +1188,7 @@ def watchers(progress, users, lib, kind, id, me):
         if not show:
             return None
         keys = [f"episode:{e['id']}" for se in show["seasons"] for e in se["episodes"]]
-    done = lambda e: e["duration"] > 0 and e["position"] >= 0.95 * e["duration"]
+    done = lambda e: e["duration"] > 0 and e["position"] >= 0.90 * e["duration"]
     out = []
     for user, entries in progress.data.items():
         played = [entries[k] for k in keys if k in entries]
@@ -1210,19 +1210,13 @@ def watchers(progress, users, lib, kind, id, me):
 
 
 def episodes_watched(entries, keys):
-    """Which of a series' episode keys (in order) these progress entries
-    count as watched: seen to 95%, or left past 90% (in the end credits)
-    for a later episode, which is what Next Episode does."""
-    seen = set()
-    for i, k in enumerate(keys):
-        e = entries.get(k)
-        if not e or e["duration"] <= 0 or e["position"] <= 30:
-            continue
-        frac = e["position"] / e["duration"]
-        later = any((entries.get(x) or {}).get("position", 0) > 1 for x in keys[i + 1:])
-        if frac >= 0.95 or (frac >= 0.90 and later):
-            seen.add(k)
-    return seen
+    """Which of a series' episode keys these progress entries count as
+    watched: seen to 90% (the app saves Next Episode as watched to the end)."""
+    return {
+        k for k in keys
+        if k in entries and entries[k]["duration"] > 0
+        and entries[k]["position"] >= 0.90 * entries[k]["duration"]
+    }
 
 
 def viewed(progress, users, lib, me, limit=100):
@@ -1234,7 +1228,7 @@ def viewed(progress, users, lib, me, limit=100):
         for se in s["seasons"]:
             for e in se["episodes"]:
                 owner[f"episode:{e['id']}"] = ("series", s["id"])
-    done = lambda e: e["duration"] > 0 and e["position"] >= 0.95 * e["duration"]
+    done = lambda e: e["duration"] > 0 and e["position"] >= 0.90 * e["duration"]
     titles = {}
     for user, entries in progress.data.items():
         if user == me or user not in users.users:
@@ -1478,7 +1472,7 @@ class Progress:
             "position": pos,
             "duration": dur,
             "percent": min(pct, 100),
-            "completed": dur > 0 and pos >= 0.95 * dur,
+            "completed": dur > 0 and pos >= 0.90 * dur,
             "updated": e["updated"],
         }
 

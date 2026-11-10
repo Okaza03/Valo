@@ -70,7 +70,7 @@ Clicking a user under _By user_ opens their page. `<name>` is the username (URL-
 | -------------- | ------ | ------------------------------------------------------------------- |
 | `plays`, `hours`, `days` | | As in the overview, for this user only                      |
 | `movies`, `episodes` | int | Optional: how many of each they played                         |
-| `finished`, `in_progress` | int | Optional: plays watched to the end (95 %) and not          |
+| `finished`, `in_progress` | int | Optional: plays watched to the end (90 %) and not          |
 | `hours_of_day` | array  | Optional: 24 counts, plays per hour of the day (server time), shown as _When they watch_ |
 | `weekdays`     | array  | Optional: 7 counts, Monday first                                    |
 | `top`          | array  | Most watched first, like the overview's; with `id` the title opens on click |

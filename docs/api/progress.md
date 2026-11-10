@@ -28,7 +28,7 @@ The signed-in user's watch progress, most recently watched first.
 | `id`        | string or int | The `id` the [library](library.md) gives that movie or episode                                              |
 | `position`  | number        | Seconds                                                                                                     |
 | `duration`  | number        | Seconds, `0` if unknown                                                                                     |
-| `completed` | bool          | Watched at least 95% (the app counts that as finished). The app shows it as watched whatever the position. |
+| `completed` | bool          | Watched at least 90% (the app counts that as finished). The app shows it as watched whatever the position. |
 | `updated`   | int           | Unix time of the last change, set by the server                                                             |
 | `percent`   | int           | Ignored by the app                                                                                          |
 
@@ -59,9 +59,9 @@ Who else played a movie, or any episode of a series, for the row of faces under 
 | -------------- | ------ | ------------------------------------------------------------ |
 | `name`         | string | Their username                                               |
 | `display_name` | string | Optional; shown instead of `name`                            |
-| `completed`    | bool   | Optional; watched at least 95% of the movie, or of every episode of the series |
+| `completed`    | bool   | Optional; watched at least 90% of the movie, or of every episode of the series |
 | `updated`      | int    | Unix time they last played it                                |
-| `episodes`     | array  | Optional, series only; ids (strings) of the episodes they watched: seen to 95%, or left past 90% for a later episode. Clients show who watched each episode and season from it |
+| `episodes`     | array  | Optional, series only; ids (strings) of the episodes they watched (seen to 90%). The app also accepts `"S01E02"` codes. Clients show who watched each episode and season from it |
 
 The app shows up to three faces, the two latest names ("Jo Ann, sam and 2 others watched this") and the rest on hover. An empty list, `401`, `404`, `405` or `501` hide the row. It's asked for when a title's page opens, and again every minute while it stays open.
 

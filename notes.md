@@ -4,12 +4,12 @@ Valo's desktop app has a new engine underneath, and series pages show who watche
 
 ### Fixed
 - **Play button:** a long label like "Resume S01 E01" stays on one line.
-- **Watched episodes:** an episode you left in its end credits for the next one counts as watched, including ones watched before v0.9.11. Series like that now say "You've watched this season" or "You've watched the whole series", tag every episode you've seen and leave Continue watching.
 
 ### New
-- **Who watched what:** a series page says who else has watched the whole series or the season you're looking at ("Artur has watched this season"), and each episode lists who watched it. Needs the updated server (`server/valo_server.py`); with an older one, only those who watched the whole series show.
+- **Who watched what:** a series page says who else has watched the whole series or the season you're looking at ("Artur has watched this season"), and each episode lists who watched it. Needs a server that lists the episodes each person watched (`episodes` in `/api/watchers/series/<id>`, by id or as "S01E02"); with an older one, only those who watched the whole series show.
 
 ### Changed
+- **Watched at 90%:** movies and episodes both count as watched once you're 90% of the way through, on the desktop and TV apps. Clicking **Next Episode** still counts the episode you left.
 - **New UI engine:** the desktop app is rebuilt on Iced. It looks and works the same, every app style included, and the Disney+ style's top tabs no longer overlap.
 
 ### Downloads

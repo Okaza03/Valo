@@ -1600,7 +1600,7 @@ impl Library {
         if let Some(a) = &ep.aired {
             facts = facts.push(text(date_short(a)).size(12).color(style::MUTED()));
         }
-        if crate::ui::browse::episode_watched(series, env.progress, &|i| self.key(i), &ep.id) {
+        if crate::ui::browse::episode_watched(env.progress, &|i| self.key(i), &ep.id) {
             facts = facts.push(text("Watched").font(BOLD).size(12).color(c(TEAL())));
         }
         let card = card.push(gap(6.0)).push(facts);

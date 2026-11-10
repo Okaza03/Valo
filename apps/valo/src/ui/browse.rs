@@ -116,11 +116,9 @@ pub(crate) fn next_up<'a>(
         .filter_map(|(i, (_, _, id))| progress.get(&key(id)).map(|e| (i, e)))
         .max_by_key(|(_, e)| e.updated);
     Some(match last_seen {
-        Some((i, e)) if e.in_progress() && !episode_watched(s, progress, key, eps[i].2) => {
-            at(i, Some(e), true)
-        }
+        Some((i, e)) if e.in_progress() => at(i, Some(e), true),
         // opened and left within its first seconds: that one again, not the next
-        Some((i, _)) if !episode_watched(s, progress, key, eps[i].2) => at(i, None, true),
+        Some((i, e)) if !e.watched() => at(i, None, true),
         Some(_) if series_done(s, progress, key) => NextUp {
             done: true,
             ..at(0, None, true)
@@ -138,32 +136,14 @@ fn story(s: &Item) -> impl Iterator<Item = &crate::api::Season> {
         .filter(|x| x.number != crate::api::FEATURETTES)
 }
 
-/// Whether this episode of `s` has been watched: seen to 95%, or left in
-/// its end credits (past 90%) for a later episode, which is what Next
-/// Episode does. Older saves didn't mark that as watched, so it's read
-/// from the progress itself.
-pub(crate) fn episode_watched(
-    s: &Item,
-    progress: &Progress,
-    key: &dyn Fn(&str) -> String,
-    id: &str,
-) -> bool {
-    let Some(e) = progress.get(&key(id)) else {
-        return false;
-    };
-    e.watched()
-        || (e.dur > 0.0
-            && e.pos >= e.dur * crate::config::MOVIE_FINISHED
-            && story(s)
-                .flat_map(|x| &x.episodes)
-                .skip_while(|x| x.id != id)
-                .skip(1)
-                .any(|x| progress.get(&key(&x.id)).is_some_and(|p| p.pos > 1.0)))
+/// Whether this episode has been watched: seen to 90%, or left with Next
+/// Episode (the player saves that as watched to the end).
+pub(crate) fn episode_watched(progress: &Progress, key: &dyn Fn(&str) -> String, id: &str) -> bool {
+    progress.get(&key(id)).is_some_and(Entry::watched)
 }
 
 /// Every episode of this season watched.
 pub(crate) fn season_watched(
-    s: &Item,
     season: &crate::api::Season,
     progress: &Progress,
     key: &dyn Fn(&str) -> String,
@@ -172,7 +152,7 @@ pub(crate) fn season_watched(
         && season
             .episodes
             .iter()
-            .all(|e| episode_watched(s, progress, key, &e.id))
+            .all(|e| episode_watched(progress, key, &e.id))
 }
 
 /// Every episode of every season watched (featurettes don't count).
@@ -182,7 +162,7 @@ pub(crate) fn whole_series_watched(
     key: &dyn Fn(&str) -> String,
 ) -> bool {
     story(s).any(|x| !x.episodes.is_empty())
-        && story(s).all(|x| x.episodes.is_empty() || season_watched(s, x, progress, key))
+        && story(s).all(|x| x.episodes.is_empty() || season_watched(x, progress, key))
 }
 
 /// The series counts as watched: every episode, or the last one was the
@@ -198,7 +178,7 @@ pub(crate) fn series_done(s: &Item, progress: &Progress, key: &dyn Fn(&str) -> S
         .flat_map(|x| &x.episodes)
         .filter_map(|e| progress.get(&key(&e.id)).map(|p| (e, p)))
         .max_by_key(|(_, p)| p.updated);
-    latest.is_some_and(|(e, _)| e.id == last.id && episode_watched(s, progress, key, &e.id))
+    latest.is_some_and(|(e, p)| e.id == last.id && p.watched())
 }
 
 /// What the series page says above a season's episodes, once it's all watched.
@@ -213,7 +193,7 @@ pub(crate) fn seen_note(
     } else if s
         .seasons
         .get(si)
-        .is_some_and(|x| season_watched(s, x, progress, key))
+        .is_some_and(|x| season_watched(x, progress, key))
     {
         Some("You've watched this season")
     } else {
@@ -518,32 +498,19 @@ mod tests {
     }
 
     #[test]
-    fn left_in_the_credits_for_the_next_counts_as_watched() {
-        // older saves: Next during the credits kept the episode at ~91%
-        let (s, p) = show(&[("a", 91.0, 1)]);
-        assert!(!episode_watched(&s, &p, &key, "a"), "nothing after it yet");
-        assert!(next_up(&s, &p, &key).unwrap().resume.is_some());
+    fn watched_at_90_percent() {
+        let (s, p) = show(&[("a", 91.0, 1), ("b", 89.0, 2)]);
+        assert!(episode_watched(&p, &key, "a"));
+        assert!(!episode_watched(&p, &key, "b"));
+        assert_eq!(seen_note(&s, 0, &p, &key), None);
+        let n = next_up(&s, &p, &key).unwrap();
+        assert_eq!((n.si, n.ei, n.resume.is_some()), (0, 1, true), "resumes b");
 
-        let (s, p) = show(&[("a", 91.0, 1), ("b", 91.0, 2), ("c", 40.0, 3)]);
-        assert!(episode_watched(&s, &p, &key, "a"));
-        assert!(episode_watched(&s, &p, &key, "b"));
-        assert!(!episode_watched(&s, &p, &key, "c"));
+        let (s, p) = show(&[("a", 90.0, 1), ("b", 95.0, 2)]);
         assert_eq!(
             seen_note(&s, 0, &p, &key),
             Some("You've watched this season")
         );
-        let n = next_up(&s, &p, &key).unwrap();
-        assert_eq!((n.si, n.ei), (1, 0), "resumes c");
-
-        // back to b afterwards: still watched, so on to c, not resume b
-        let (s, p) = show(&[("a", 91.0, 1), ("c", 40.0, 2), ("b", 91.0, 3)]);
-        assert!(episode_watched(&s, &p, &key, "b"));
-        let n = next_up(&s, &p, &key).unwrap();
-        assert_eq!((n.si, n.ei, n.resume.is_none()), (1, 0, true));
-
-        // stopped at 85%: not the credits
-        let (s, p) = show(&[("a", 85.0, 1), ("b", 40.0, 2)]);
-        assert!(!episode_watched(&s, &p, &key, "a"));
     }
 
     #[test]
