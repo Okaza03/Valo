@@ -277,7 +277,7 @@ pub(crate) fn watchers_season_notes(list: &[Watcher], s: &Item, si: usize) -> Ve
     out
 }
 
-/// Under an episode: "Artur watched this", for whoever else watched it.
+/// Under an episode: "Artur watched this episode", for whoever else watched it.
 pub(crate) fn watchers_episode_text(list: &[Watcher], s: &Item, ep: &str) -> Option<String> {
     let (season, e) = s.seasons.iter().find_map(|x| {
         x.episodes
@@ -289,7 +289,7 @@ pub(crate) fn watchers_episode_text(list: &[Watcher], s: &Item, ep: &str) -> Opt
         .iter()
         .filter(|w| saw(w, season, e) || (w.episodes.is_empty() && watched_series(w, s)))
         .collect();
-    (!who.is_empty()).then(|| format!("{} watched this", names(who.into_iter())))
+    (!who.is_empty()).then(|| format!("{} watched this episode", names(who.into_iter())))
 }
 
 const MONTHS: [&str; 12] = [
@@ -347,11 +347,11 @@ mod tests {
         );
         assert_eq!(
             watchers_episode_text(&list, &s, "a").as_deref(),
-            Some("artur, sam and 1 other watched this")
+            Some("artur, sam and 1 other watched this episode")
         );
         assert_eq!(
             watchers_episode_text(&list, &s, "c").as_deref(),
-            Some("kim watched this")
+            Some("kim watched this episode")
         );
         // named "S01E02" instead of by id, and ids as the app keeps them
         let mut s2 = s.clone();
@@ -368,7 +368,7 @@ mod tests {
         );
         assert_eq!(
             watchers_episode_text(&coded, &s2, "episode:01").as_deref(),
-            Some("havard and ruben watched this")
+            Some("havard and ruben watched this episode")
         );
         // an older server: only "completed"
         let old = [Watcher {
