@@ -1,5 +1,6 @@
 //! Artwork cards, the rows and grids they sit in, and artwork cropped to fit.
-//! Laid out like the default Valo style: posters with the title below.
+//! Shaped by the style: posters or 16:9 tiles, the title below, over the
+//! artwork, on hover, or a channel-style line (egui's `browse::card_at`).
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, space, stack, text, tooltip,
@@ -18,8 +19,19 @@ pub const POSTER: (f32, f32) = (150.0, 225.0);
 pub const WIDE: (f32, f32) = (288.0, 162.0);
 pub const GAP: f32 = 14.0;
 pub const SIDE: f32 = 40.0;
-/// Room for the title and year under a card.
-const TEXT_ROOM: f32 = 40.0;
+/// The room a card's text takes under its artwork.
+pub fn text_room(t: theme::TileText) -> f32 {
+    match t {
+        theme::TileText::Below => 40.0,
+        theme::TileText::Rich => 78.0,
+        theme::TileText::Over | theme::TileText::Hover => 0.0,
+    }
+}
+
+/// Whether cards are 16:9 tiles in this style (Continue watching always is).
+pub fn landscape(wide: bool) -> bool {
+    wide || theme::spec().layout.tiles == theme::Tiles::Landscape
+}
 
 /// What a card shows, and what clicking it does.
 pub struct Card {
@@ -28,6 +40,10 @@ pub struct Card {
     pub title: String,
     pub sub: Option<String>,
     pub art: Option<String>,
+    /// 16:9 artwork, for the styles with landscape cards.
+    pub wide_art: Option<String>,
+    /// "Movie · 2014 · 1h 26m", for the styles that show it on the card.
+    pub meta: Option<String>,
     pub progress: Option<f32>,
     /// A movie that's been watched.
     pub watched: bool,
@@ -223,14 +239,109 @@ pub fn card<'a>(
     hot: Hot<'_>,
     key: String,
 ) -> Element<'a, Msg> {
+    let land = landscape(wide);
+    let size = if land { WIDE } else { POSTER };
+    card_at(images, c, size, land, wide, hot, key)
+}
+
+/// [`card`] at any size (the video-style grid sizes its cards to the width).
+pub fn card_at<'a>(
+    images: &Images,
+    c: &Card,
+    size: (f32, f32),
+    land: bool,
+    wide: bool,
+    hot: Hot<'_>,
+    key: String,
+) -> Element<'a, Msg> {
+    use theme::TileText;
     let spec = theme::spec();
-    let (w, h) = if wide { WIDE } else { POSTER };
+    let words = spec.layout.text;
+    let (w, h) = size;
     let hovered = hot.card == Some(key.as_str());
     let menu_open = hot.menu == Some(key.as_str());
     let radius = f32::from(spec.card_radius);
-    let mut layers: Vec<Element<Msg>> = vec![art(images, c.art.as_deref(), &c.title, w, h, radius)];
+    let url = if land {
+        c.wide_art.as_deref().or(c.art.as_deref())
+    } else {
+        c.art.as_deref()
+    };
+    // the title goes over the art anyway: don't print it twice
+    let title_on_art = if words == TileText::Over {
+        ""
+    } else {
+        &c.title
+    };
+    let mut layers: Vec<Element<Msg>> = vec![art(images, url, title_on_art, w, h, radius)];
+    let lift = if c.progress.is_some() { 10.0 } else { 0.0 };
+    match words {
+        TileText::Over => {
+            layers.push(shade(w, h, 0.6, 0.75, radius));
+            let mut over = column![text(c.title.clone())
+                .font(style::BLACK)
+                .size(if land { 17 } else { 15 })
+                .color(Color::WHITE)];
+            if let (true, Some(s)) = (wide, &c.sub) {
+                over = over.push(
+                    text(s.clone())
+                        .size(12.5)
+                        .color(white(200))
+                        .wrapping(text::Wrapping::None),
+                );
+            }
+            layers.push(
+                container(over.width(w - 24.0))
+                    .height(h)
+                    .padding(Padding::default().left(12.0).bottom(12.0 + lift))
+                    .align_y(Vertical::Bottom)
+                    .clip(true)
+                    .into(),
+            );
+        }
+        TileText::Hover if hovered => {
+            layers.push(shade(w, h, 0.7, 0.85, radius));
+            let disc = container(icon::icon(Icon::Play, Color::WHITE, 16.0))
+                .center(30)
+                .style(|_| container::Style {
+                    background: Some(Background::Color(style::c(theme::ACCENT()))),
+                    border: iced::border::rounded(15),
+                    ..container::Style::default()
+                });
+            let mut info = column![text(c.title.clone())
+                .font(BOLD)
+                .size(15)
+                .color(Color::WHITE)
+                .wrapping(text::Wrapping::None)];
+            if let Some(m) = c.sub.as_ref().filter(|_| wide).or(c.meta.as_ref()) {
+                info = info.push(
+                    text(m.clone())
+                        .size(12.5)
+                        .color(white(200))
+                        .wrapping(text::Wrapping::None),
+                );
+            }
+            layers.push(
+                container(
+                    row![disc, info.spacing(2)]
+                        .spacing(10)
+                        .align_y(Vertical::Center),
+                )
+                .width(w)
+                .height(h)
+                .padding(Padding::default().left(11.0).right(4.0).bottom(13.0 + lift))
+                .align_y(Vertical::Bottom)
+                .clip(true)
+                .into(),
+            );
+        }
+        _ => {}
+    }
     if let Some(f) = c.progress {
-        layers.push(progress_bar(f, w));
+        layers.push(if words == TileText::Rich {
+            edge_bar(f, w)
+        } else {
+            progress_bar(f, w)
+        });
     }
     if c.watched && !hovered {
         layers.push(super::marks::sash(w, h, 1.0).into());
@@ -256,7 +367,7 @@ pub fn card<'a>(
                     .into(),
             );
         }
-        if wide {
+        if wide && words != TileText::Hover {
             layers.push(
                 container(
                     container(icon::icon(Icon::Play, Color::WHITE, 24.0))
@@ -271,32 +382,34 @@ pub fn card<'a>(
                 .into(),
             );
         }
-        let lift = if c.progress.is_some() { 16.0 } else { 8.0 };
-        let info = button(
-            container(text("More info").font(BOLD).size(12).color(Color::WHITE)).center_y(26),
-        )
-        .height(26)
-        .padding([0, 10])
-        .style(|_, s| {
-            let on = matches!(s, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: Some(Background::Color(black(if on { 235 } else { 170 }))),
-                border: Border {
-                    color: Color::WHITE.scale_alpha(if on { 0.9 } else { 0.4 }),
-                    width: 1.0,
-                    radius: 13.0.into(),
-                },
-                ..button::Style::default()
-            }
-        })
-        .on_press(Msg::Open(c.item.clone()));
-        layers.push(
-            container(info)
-                .height(h)
-                .padding(Padding::default().left(8.0).bottom(lift))
-                .align_y(Vertical::Bottom)
-                .into(),
-        );
+        if words == TileText::Below {
+            let lift = if c.progress.is_some() { 16.0 } else { 8.0 };
+            let info = button(
+                container(text("More info").font(BOLD).size(12).color(Color::WHITE)).center_y(26),
+            )
+            .height(26)
+            .padding([0, 10])
+            .style(|_, s| {
+                let on = matches!(s, button::Status::Hovered | button::Status::Pressed);
+                button::Style {
+                    background: Some(Background::Color(black(if on { 235 } else { 170 }))),
+                    border: Border {
+                        color: Color::WHITE.scale_alpha(if on { 0.9 } else { 0.4 }),
+                        width: 1.0,
+                        radius: 13.0.into(),
+                    },
+                    ..button::Style::default()
+                }
+            })
+            .on_press(Msg::Open(c.item.clone()));
+            layers.push(
+                container(info)
+                    .height(h)
+                    .padding(Padding::default().left(8.0).bottom(lift))
+                    .align_y(Vertical::Bottom)
+                    .into(),
+            );
+        }
     }
     if hovered || menu_open {
         let mut corners = row![].spacing(6);
@@ -370,7 +483,7 @@ pub fn card<'a>(
         .on_enter(Msg::Hover(Some(key)))
         .on_exit(Msg::Hover(None))
         .interaction(iced::mouse::Interaction::Pointer);
-    let art_area: Element<Msg> = if wide {
+    let art_area: Element<Msg> = if wide || words != TileText::Below {
         art_area.into()
     } else {
         tooltip(
@@ -382,31 +495,131 @@ pub fn card<'a>(
         )
         .into()
     };
-    let mut under = column![text(c.title.clone())
-        .size(14)
-        .color(if hovered {
-            style::TEXT()
-        } else {
-            style::TEXT().scale_alpha(0.85)
-        })
-        .wrapping(text::Wrapping::None)];
-    if let Some(s) = &c.sub {
-        under = under.push(
-            text(s.clone())
-                .size(12)
-                .color(style::MUTED())
-                .wrapping(text::Wrapping::None),
-        );
+    let room = text_room(words);
+    let under: Option<Element<Msg>> = match words {
+        TileText::Below => {
+            let mut under = column![text(c.title.clone())
+                .size(14)
+                .color(if hovered {
+                    style::TEXT()
+                } else {
+                    style::TEXT().scale_alpha(0.85)
+                })
+                .wrapping(text::Wrapping::None)];
+            if let Some(s) = &c.sub {
+                under = under.push(
+                    text(s.clone())
+                        .size(12)
+                        .color(style::MUTED())
+                        .wrapping(text::Wrapping::None),
+                );
+            }
+            Some(
+                container(under)
+                    .width(w)
+                    .height(room)
+                    .padding(Padding::default().left(2.0).top(8.0))
+                    .clip(true)
+                    .into(),
+            )
+        }
+        TileText::Rich => {
+            // a round "channel" badge, a two-line title, then the details
+            let initial: String = c.title.chars().take(1).collect::<String>().to_uppercase();
+            let badge_col = style::c(crate::util::color_for(&c.title));
+            let badge = container(
+                text(initial)
+                    .font(style::BLACK)
+                    .size(16)
+                    .color(Color::WHITE),
+            )
+            .center(36)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(badge_col)),
+                border: iced::border::rounded(18),
+                ..container::Style::default()
+            });
+            let mut info = column![container(
+                text(c.title.clone())
+                    .font(BOLD)
+                    .size(15.5)
+                    .color(style::TEXT())
+            )
+            .max_height(42.0)
+            .clip(true)];
+            let meta = if wide {
+                c.sub.as_ref()
+            } else {
+                c.meta.as_ref()
+            };
+            if let Some(m) = meta {
+                info = info.push(
+                    text(m.clone())
+                        .size(13.5)
+                        .color(style::MUTED())
+                        .wrapping(text::Wrapping::None),
+                );
+            }
+            Some(
+                container(
+                    row![badge, info.spacing(4).width(w - 48.0)]
+                        .spacing(12)
+                        .align_y(Vertical::Top),
+                )
+                .width(w)
+                .height(room)
+                .padding(Padding::default().top(12.0))
+                .clip(true)
+                .into(),
+            )
+        }
+        TileText::Over | TileText::Hover => None,
+    };
+    let mut col = column![art_area].width(w);
+    if let Some(u) = under {
+        col = col.push(u);
     }
-    column![
-        art_area,
-        container(under)
+    col.into()
+}
+
+/// A dark fade over the bottom `frac` of a card, `a` opaque at the bottom.
+fn shade<'a>(w: f32, h: f32, frac: f32, a: f32, radius: f32) -> Element<'a, Msg> {
+    let dark = Color::from_rgba(0.0, 0.0, 0.0, a);
+    container(
+        container(space())
             .width(w)
-            .height(TEXT_ROOM)
-            .padding(Padding::default().left(2.0).top(8.0))
-            .clip(true),
-    ]
-    .width(w)
+            .height(h * frac)
+            .style(move |_| container::Style {
+                border: iced::border::rounded(iced::border::Radius::default().bottom(radius)),
+                ..super::fill_gradient(std::f32::consts::PI, Color::TRANSPARENT, dark)
+            }),
+    )
+    .height(h)
+    .align_y(Vertical::Bottom)
+    .into()
+}
+
+/// The played part along a card's bottom edge (the video style's red line).
+fn edge_bar<'a>(f: f32, w: f32) -> Element<'a, Msg> {
+    let played = c(theme::played());
+    container(stack![
+        container(space())
+            .width(w)
+            .height(4)
+            .style(|_| container::Style {
+                background: Some(Background::Color(white(70))),
+                ..container::Style::default()
+            }),
+        container(space())
+            .width(w * f.clamp(0.0, 1.0))
+            .height(4)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(played)),
+                ..container::Style::default()
+            }),
+    ])
+    .height(Length::Fill)
+    .align_y(Vertical::Bottom)
     .into()
 }
 
@@ -435,7 +648,7 @@ pub fn row_of<'a>(
                 .interaction(iced::mouse::Interaction::Pointer),
         );
     }
-    let (card_w, card_h) = if wide { WIDE } else { POSTER };
+    let (card_w, card_h) = if landscape(wide) { WIDE } else { POSTER };
     let mut strip = row![Space::new().width(SIDE - GAP)].spacing(GAP);
     for c in cards {
         let key = format!("{title}\u{1f}{}", c.item);
@@ -452,7 +665,7 @@ pub fn row_of<'a>(
         ))
         .on_scroll(move |v| Msg::Scrolled(scroll_id.clone(), v.absolute_offset().x))
         .width(Length::Fill);
-    let h = card_h + TEXT_ROOM;
+    let h = card_h + text_room(theme::spec().layout.text);
     let mut layers: Vec<Element<'a, Msg>> = vec![strip.into()];
     if over && max > 0.0 {
         let step = width - 2.0 * SIDE;
@@ -531,13 +744,36 @@ pub fn grid_at<'a>(
     salt: &str,
     left: f32,
 ) -> Element<'a, Msg> {
-    let cols = ((avail + GAP) / (POSTER.0 + GAP)).floor().max(1.0) as usize;
-    let mut col = column![].spacing(20);
-    for chunk in cards.chunks(cols) {
+    grid_fit(images, cards, avail, hot, salt, left, false)
+}
+
+/// [`grid_at`] for any cards: landscape ones stretch to fill the row, like a
+/// video grid. `wide`: Continue watching cards.
+pub fn grid_fit<'a>(
+    images: &Images,
+    cards: &[Card],
+    avail: f32,
+    hot: Hot<'_>,
+    salt: &str,
+    left: f32,
+    wide: bool,
+) -> Element<'a, Msg> {
+    let land = landscape(wide);
+    let base = if land { WIDE } else { POSTER };
+    let cols = ((avail + GAP) / (base.0 + GAP)).floor().max(1.0);
+    let size = if land {
+        let w = (avail - GAP * (cols - 1.0)) / cols;
+        (w, w * 9.0 / 16.0)
+    } else {
+        base
+    };
+    let rich = theme::spec().layout.text == theme::TileText::Rich;
+    let mut col = column![].spacing(if rich { 8 } else { 20 });
+    for chunk in cards.chunks(cols as usize) {
         let mut r = row![].spacing(GAP);
         for c in chunk {
             let key = format!("{salt}\u{1f}{}", c.item);
-            r = r.push(card(images, c, false, hot, key));
+            r = r.push(card_at(images, c, size, land, wide, hot, key));
         }
         col = col.push(r);
     }
