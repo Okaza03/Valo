@@ -92,7 +92,7 @@ dependencies {
     // the Cast button, and playing on a Chromecast or Google TV
     "phoneImplementation"("com.google.android.gms:play-services-cast-framework:23.0.0")
     "phoneImplementation"("androidx.mediarouter:mediarouter:1.8.1")
-    "phoneImplementation"("androidx.appcompat:appcompat:1.7.1")
+    "phoneImplementation"("androidx.appcompat:appcompat:1.8.0")
     // surround sound as stereo, for Chromecasts that won't take it (StereoStream.kt)
     "phoneImplementation"("androidx.media3:media3-muxer:$media3")
     implementation("androidx.activity:activity-compose:1.9.3")
@@ -106,10 +106,10 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
 
-    implementation("com.squareup.okhttp3:okhttp:5.5.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     testImplementation("junit:junit:4.13.2")
