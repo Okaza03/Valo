@@ -219,18 +219,32 @@ fn have(n: usize) -> &'static str {
     }
 }
 
+/// `w` watched episode `e` of season number `season`. Servers name it by
+/// the library's id (which the app keeps as "episode:<id>") or as "S01E02".
+fn saw(w: &Watcher, season: u32, e: &crate::api::Episode) -> bool {
+    let id = e.id.strip_prefix("episode:").unwrap_or(&e.id);
+    let code = format!("S{season:02}E{:02}", e.number);
+    w.episodes
+        .iter()
+        .any(|x| x == id || x == &e.id || x.eq_ignore_ascii_case(&code))
+}
+
+/// Every episode of the season watched by `w`.
+fn saw_season(w: &Watcher, x: &crate::api::Season) -> bool {
+    !x.episodes.is_empty() && x.episodes.iter().all(|e| saw(w, x.number, e))
+}
+
 /// Every episode of the series (featurettes aside) watched by `w`.
 fn watched_series(w: &Watcher, s: &Item) -> bool {
     if w.episodes.is_empty() {
         return w.completed; // a server that doesn't list episodes
     }
-    let mut eps = s
+    let mut story = s
         .seasons
         .iter()
-        .filter(|x| x.number != crate::api::FEATURETTES)
-        .flat_map(|x| &x.episodes)
+        .filter(|x| x.number != crate::api::FEATURETTES && !x.episodes.is_empty())
         .peekable();
-    eps.peek().is_some() && eps.all(|e| w.episodes.contains(&e.id))
+    story.peek().is_some() && story.all(|x| saw_season(w, x))
 }
 
 /// What the series page says above a season's episodes about who else
@@ -247,12 +261,11 @@ pub(crate) fn watchers_season_notes(list: &[Watcher], s: &Item, si: usize) -> Ve
         ));
     }
     let season: Vec<&Watcher> = match s.seasons.get(si) {
-        Some(x) if !x.episodes.is_empty() => list
+        Some(x) => list
             .iter()
-            .filter(|w| !watched_series(w, s))
-            .filter(|w| x.episodes.iter().all(|e| w.episodes.contains(&e.id)))
+            .filter(|w| !watched_series(w, s) && saw_season(w, x))
             .collect(),
-        _ => Vec::new(),
+        None => Vec::new(),
     };
     if !season.is_empty() {
         out.push(format!(
@@ -266,11 +279,15 @@ pub(crate) fn watchers_season_notes(list: &[Watcher], s: &Item, si: usize) -> Ve
 
 /// Under an episode: "Artur watched this", for whoever else watched it.
 pub(crate) fn watchers_episode_text(list: &[Watcher], s: &Item, ep: &str) -> Option<String> {
+    let (season, e) = s.seasons.iter().find_map(|x| {
+        x.episodes
+            .iter()
+            .find(|e| e.id == ep)
+            .map(|e| (x.number, e))
+    })?;
     let who: Vec<&Watcher> = list
         .iter()
-        .filter(|w| {
-            w.episodes.iter().any(|e| e == ep) || (w.episodes.is_empty() && watched_series(w, s))
-        })
+        .filter(|w| saw(w, season, e) || (w.episodes.is_empty() && watched_series(w, s)))
         .collect();
     (!who.is_empty()).then(|| format!("{} watched this", names(who.into_iter())))
 }
@@ -335,6 +352,23 @@ mod tests {
         assert_eq!(
             watchers_episode_text(&list, &s, "c").as_deref(),
             Some("kim watched this")
+        );
+        // named "S01E02" instead of by id, and ids as the app keeps them
+        let mut s2 = s.clone();
+        for (i, x) in s2.seasons.iter_mut().enumerate() {
+            for (j, e) in x.episodes.iter_mut().enumerate() {
+                e.id = format!("episode:{i}{j}");
+                e.number = j as u32 + 1;
+            }
+        }
+        let coded = [w("havard", &["S01E01", "s01e02"]), w("ruben", &["01"])];
+        assert_eq!(
+            watchers_season_notes(&coded, &s2, 0),
+            ["havard has watched this season"]
+        );
+        assert_eq!(
+            watchers_episode_text(&coded, &s2, "episode:01").as_deref(),
+            Some("havard and ruben watched this")
         );
         // an older server: only "completed"
         let old = [Watcher {

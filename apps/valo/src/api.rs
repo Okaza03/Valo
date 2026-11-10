@@ -470,8 +470,8 @@ pub struct Watcher {
     /// Unix time they last played it.
     #[serde(deserialize_with = "null_as_default")]
     pub updated: i64,
-    /// For a series: the episodes they watched. Empty from servers that
-    /// don't send it.
+    /// For a series: the episodes they watched, by the library's episode id
+    /// or as "S01E02". Empty from servers that don't send it.
     #[serde(deserialize_with = "id_strings")]
     pub episodes: Vec<String>,
 }
@@ -1866,16 +1866,7 @@ impl Client {
         };
         let url = format!("{}/api/watchers/{kind}/{}", self.base, encode_segment(id));
         match self.get(&url).set("Accept", "application/json").call() {
-            Ok(r) => {
-                let mut list: Vec<Watcher> = r.into_json().unwrap_or_default();
-                // the library's episode ids carry this prefix (see `Item::finish`)
-                for w in &mut list {
-                    for e in &mut w.episodes {
-                        *e = format!("episode:{e}");
-                    }
-                }
-                Ok(list)
-            }
+            Ok(r) => Ok(r.into_json().unwrap_or_default()),
             Err(ureq::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(Vec::new()),
             Err(e) => Err(status_err(e, "can't load who watched this")),
         }
