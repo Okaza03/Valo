@@ -215,6 +215,16 @@ fn ymd(s: &str) -> Option<(u32, usize, u32)> {
     (1..=12).contains(&m).then_some((y, m, d))
 }
 
+/// "You've watched this season" (or the whole series), above the episodes.
+pub(crate) fn seen_banner(ui: &mut Ui, note: &str) {
+    ui.label(bold(note, 14.0).color(TEAL()));
+}
+
+/// "Watched", beside an episode the user has seen.
+pub(crate) fn watched_tag(ui: &mut Ui) {
+    ui.label(bold("Watched", 12.0).color(TEAL()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
