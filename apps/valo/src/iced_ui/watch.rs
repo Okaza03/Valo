@@ -26,7 +26,7 @@ use super::Job;
 use crate::addons;
 use crate::api::SubtitleTrack;
 use crate::audio::AudioOut;
-use crate::config::{Config, Progress};
+use crate::config::{Config, Progress, MOVIE_FINISHED};
 use crate::inhibit::Inhibit;
 use crate::player::{Player, Source};
 use crate::subs::{self, Subs};
@@ -139,6 +139,8 @@ pub struct Watch {
     player: Option<Player>,
     opening: Option<(usize, Job<Result<Player>>)>,
     queued: Option<usize>,
+    /// The episode left with Next: saved as watched to the end.
+    moved_on: Option<usize>,
     frame: Option<Arc<video::Frame>>,
     serial: u64,
     seek_drag: Option<f64>,
@@ -190,6 +192,7 @@ impl Watch {
             last_tick: now,
             last_motion: now,
             last_save: now,
+            moved_on: None,
             menu: None,
             vol_over: false,
             vol_left: None,
@@ -260,14 +263,16 @@ impl Watch {
         let (Some(i), Some(p)) = (self.current, self.player.as_ref()) else {
             return;
         };
-        if let Some(key) = &self.items[i].key {
-            let pos = if p.finished() {
-                p.meta.duration
-            } else {
-                p.clock()
-            };
+        let item = &self.items[i];
+        if let Some(key) = &item.key {
+            let dur = p.meta.duration;
+            let done = p.finished()
+                // moved on with Next: this episode counts as watched
+                || self.moved_on == Some(i)
+                || (!item.episode && dur > 0.0 && p.clock() >= dur * MOVIE_FINISHED);
+            let pos = if done && dur > 0.0 { dur } else { p.clock() };
             if pos > 1.0 {
-                progress.set(key, pos, p.meta.duration);
+                progress.set(key, pos, dur);
             }
         }
         self.last_save = Instant::now();
@@ -309,6 +314,7 @@ impl Watch {
             return;
         }
         self.save_progress(env.progress);
+        self.moved_on = None;
         self.player = None; // drop (and join) the old decoder first
         self.frame = None;
         self.current = Some(i);
@@ -436,6 +442,10 @@ impl Watch {
             }
             Msg::Next => {
                 if let Some(i) = self.current.filter(|_| self.has_next()) {
+                    // the episode left for the next one counts as watched
+                    if self.items[i].episode {
+                        self.moved_on = Some(i);
+                    }
                     self.open_index(i + 1, env);
                 }
             }

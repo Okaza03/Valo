@@ -1655,6 +1655,12 @@ impl Browse {
                     self.season = pick;
                     ui.add_space(14.0);
                 }
+                if let Some(note) =
+                    super::seen_note(item, self.season, progress, &|id| self.key(id))
+                {
+                    seen_banner(ui, note);
+                    ui.add_space(12.0);
+                }
                 if crate::ui::theme::spec().layout.episode_list {
                     self.episode_list(ui, item, images, progress)
                 } else {
@@ -1812,6 +1818,9 @@ impl Browse {
             }
             if let Some(a) = &ep.aired {
                 ui.label(RichText::new(date_short(a)).size(12.0).color(MUTED()));
+            }
+            if super::episode_watched(progress, &|id| self.key(id), &ep.id) {
+                watched_tag(ui);
             }
         });
         click
@@ -2348,4 +2357,14 @@ mod tests {
         );
         assert_eq!(file_name(None, "http://h/api/stream/movie/42"), None);
     }
+}
+
+/// "You've watched this season" (or the whole series), above the episodes.
+pub(crate) fn seen_banner(ui: &mut Ui, note: &str) {
+    ui.label(bold(note, 14.0).color(TEAL()));
+}
+
+/// "Watched", beside an episode the user has seen.
+pub(crate) fn watched_tag(ui: &mut Ui) {
+    ui.label(bold("Watched", 12.0).color(TEAL()));
 }

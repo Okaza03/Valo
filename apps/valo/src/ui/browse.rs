@@ -120,6 +120,9 @@ pub(crate) struct NextUp<'a> {
     pub ei: usize,
     pub resume: Option<&'a Entry>,
     pub started: bool,
+    /// The series is watched (see [`series_done`]): nothing to continue,
+    /// so it's off Continue watching and plays again from the start.
+    pub done: bool,
 }
 
 /// The play button's label while an admin moves a title's files.
@@ -136,7 +139,7 @@ struct Card {
     /// "Movie · 2014 · 1h 26m", under the title on YouTube-style cards.
     meta: Option<String>,
     progress: Option<f32>,
-    /// A movie that's been watched: gets the "WATCHED" sash.
+    /// A movie or series that's been watched: gets the "WATCHED" sash.
     watched: bool,
     /// Being moved between disks: gets the "MOVING" band.
     moving: bool,
@@ -148,7 +151,7 @@ pub struct Browse {
     client: Client,
     user: Option<String>,
     lib: Option<Arc<Library>>,
-    /// Ids of the titles watched to the end, gathered each frame.
+    /// Ids of the movies and series watched to the end, gathered each frame.
     seen: HashSet<String>,
     loading: Option<Task<Result<Library>>>,
     error: Option<String>,
@@ -283,9 +286,9 @@ impl Browse {
         format!("{}{id}", self.prefix())
     }
 
-    /// A movie that's been watched to the end (see [`Browse::seen`]).
+    /// A movie or series that's been watched to the end (see [`Browse::seen`]).
     fn watched(&self, item: &Item) -> bool {
-        item.kind == Kind::Movie && self.seen.contains(&item.id)
+        self.seen.contains(&item.id)
     }
 
     fn go(&mut self, v: View) {
@@ -364,6 +367,16 @@ impl Browse {
             .filter(|(_, e)| e.watched())
             .map(|(id, _)| id.to_owned())
             .collect();
+        // and the series watched to the end, under their own ids
+        if let Some(lib) = self.lib.clone() {
+            let key = |id: &str| format!("{prefix}{id}");
+            self.seen.extend(
+                lib.series
+                    .iter()
+                    .filter(|s| series_done(s, progress, &key))
+                    .map(|s| s.id.clone()),
+            );
+        }
         if let Some(r) = self.me.as_mut().and_then(|t| t.poll()) {
             self.me = None;
             if let Some(me) = r {
@@ -1155,7 +1168,7 @@ impl Browse {
                 if self.hidden.hides(&self.key(&s.id), e.updated) {
                     continue;
                 }
-                if let Some(n) = self.next_up(s, progress) {
+                if let Some(n) = self.next_up(s, progress).filter(|n| !n.done) {
                     let season = &s.seasons[n.si];
                     let ep = &season.episodes[n.ei];
                     let code = featurette(season.number, ep.number)
@@ -1455,7 +1468,7 @@ impl Browse {
                     .flat_map(|s| &s.episodes)
                     .map(|e| progress.get(&self.key(&e.id)))
                     .collect();
-                if !eps.is_empty() && eps.iter().all(|e| e.is_some_and(Entry::watched)) {
+                if series_done(i, progress, &|id| self.key(id)) {
                     Filter::Watched
                 } else if eps.iter().any(|e| e.is_some_and(|e| e.pos > 30.0)) {
                     Filter::InProgress
@@ -1595,6 +1608,7 @@ pub(crate) fn play_label(
             _ => ("Play".into(), false),
         },
         Kind::Series => match next_up(item, progress, key) {
+            Some(n) if n.done => ("Watch Again".into(), false),
             Some(n) => {
                 let s = &item.seasons[n.si];
                 let ep = &s.episodes[n.ei];
@@ -1639,6 +1653,7 @@ pub(crate) fn next_up<'a>(
         ei: eps[i].1,
         resume,
         started,
+        done: false,
     };
     if eps.is_empty() {
         return None;
@@ -1652,10 +1667,85 @@ pub(crate) fn next_up<'a>(
         Some((i, e)) if e.in_progress() => at(i, Some(e), true),
         // opened and left within its first seconds: that one again, not the next
         Some((i, e)) if !e.watched() => at(i, None, true),
+        Some(_) if series_done(s, progress, key) => NextUp {
+            done: true,
+            ..at(0, None, true)
+        },
         Some((i, _)) if i + 1 < eps.len() => at(i + 1, None, true),
         Some(_) => at(0, None, true),
         None => at(0, None, false),
     })
+}
+
+/// The episodes that make up the series, without its featurettes.
+fn story(s: &Item) -> impl Iterator<Item = &crate::api::Season> {
+    s.seasons
+        .iter()
+        .filter(|x| x.number != crate::api::FEATURETTES)
+}
+
+/// Whether this episode has been watched.
+pub(crate) fn episode_watched(progress: &Progress, key: &dyn Fn(&str) -> String, id: &str) -> bool {
+    progress.get(&key(id)).is_some_and(Entry::watched)
+}
+
+/// Every episode of this season watched.
+pub(crate) fn season_watched(
+    season: &crate::api::Season,
+    progress: &Progress,
+    key: &dyn Fn(&str) -> String,
+) -> bool {
+    !season.episodes.is_empty()
+        && season
+            .episodes
+            .iter()
+            .all(|e| episode_watched(progress, key, &e.id))
+}
+
+/// Every episode of every season watched (featurettes don't count).
+pub(crate) fn whole_series_watched(
+    s: &Item,
+    progress: &Progress,
+    key: &dyn Fn(&str) -> String,
+) -> bool {
+    story(s).any(|x| !x.episodes.is_empty())
+        && story(s).all(|x| x.episodes.is_empty() || season_watched(x, progress, key))
+}
+
+/// The series counts as watched: every episode, or the last one was the
+/// last thing watched of it.
+pub(crate) fn series_done(s: &Item, progress: &Progress, key: &dyn Fn(&str) -> String) -> bool {
+    if whole_series_watched(s, progress, key) {
+        return true;
+    }
+    let Some(last) = story(s).flat_map(|x| x.episodes.last()).last() else {
+        return false;
+    };
+    let latest = story(s)
+        .flat_map(|x| &x.episodes)
+        .filter_map(|e| progress.get(&key(&e.id)).map(|p| (e, p)))
+        .max_by_key(|(_, p)| p.updated);
+    latest.is_some_and(|(e, p)| e.id == last.id && p.watched())
+}
+
+/// What the series page says above a season's episodes, once it's all watched.
+pub(crate) fn seen_note(
+    s: &Item,
+    si: usize,
+    progress: &Progress,
+    key: &dyn Fn(&str) -> String,
+) -> Option<&'static str> {
+    if whole_series_watched(s, progress, key) {
+        Some("You've watched the whole series")
+    } else if s
+        .seasons
+        .get(si)
+        .is_some_and(|x| season_watched(x, progress, key))
+    {
+        Some("You've watched this season")
+    } else {
+        None
+    }
 }
 
 /// What to play for a click on `id` (and episode `ep`): a movie, or a
@@ -2339,5 +2429,99 @@ mod tests {
         assert_eq!(ids(&v), "cab");
         sort_by(&mut v, true, |i| i.year);
         assert_eq!(ids(&v), "acb");
+    }
+
+    /// Two seasons of two episodes, and progress at the given (id, pos, updated).
+    fn show(watched: &[(&str, f64, i64)]) -> (Item, Progress) {
+        let ep = |id: &str, number| crate::api::Episode {
+            id: id.into(),
+            number,
+            ..Default::default()
+        };
+        let s = Item {
+            id: "show".into(),
+            kind: Kind::Series,
+            seasons: vec![
+                crate::api::Season {
+                    number: 1,
+                    title: None,
+                    episodes: vec![ep("a", 1), ep("b", 2)],
+                },
+                crate::api::Season {
+                    number: 2,
+                    title: None,
+                    episodes: vec![ep("c", 1), ep("d", 2)],
+                },
+            ],
+            ..Default::default()
+        };
+        let mut p = Progress::default();
+        p.merge(
+            "",
+            watched
+                .iter()
+                .map(|(id, pos, updated)| {
+                    let e = Entry {
+                        pos: *pos,
+                        dur: 100.0,
+                        updated: *updated,
+                    };
+                    (id.to_string(), e)
+                })
+                .collect(),
+        );
+        (s, p)
+    }
+
+    fn key(id: &str) -> String {
+        id.to_owned()
+    }
+
+    #[test]
+    fn last_episode_watched_finishes_the_series() {
+        let (s, p) = show(&[("a", 100.0, 1), ("d", 100.0, 2)]);
+        let n = next_up(&s, &p, &key).unwrap();
+        assert!(
+            n.done,
+            "off Continue watching, not back to the first episode"
+        );
+        assert!(series_done(&s, &p, &key));
+        assert!(!whole_series_watched(&s, &p, &key));
+        assert_eq!(seen_note(&s, 0, &p, &key), None);
+    }
+
+    #[test]
+    fn next_episode_follows_a_watched_one() {
+        let (s, p) = show(&[("a", 100.0, 1), ("b", 96.0, 2)]);
+        let n = next_up(&s, &p, &key).unwrap();
+        assert!(!n.done);
+        assert_eq!((n.si, n.ei), (1, 0));
+        assert_eq!(
+            seen_note(&s, 0, &p, &key),
+            Some("You've watched this season")
+        );
+        assert_eq!(seen_note(&s, 1, &p, &key), None);
+    }
+
+    #[test]
+    fn every_episode_is_the_whole_series() {
+        let all = [
+            ("a", 100.0, 1),
+            ("b", 100.0, 2),
+            ("c", 100.0, 3),
+            ("d", 100.0, 4),
+        ];
+        let (s, p) = show(&all);
+        assert_eq!(
+            seen_note(&s, 1, &p, &key),
+            Some("You've watched the whole series")
+        );
+        // rewatching the first episode: back on Continue watching
+        let mut again = all.to_vec();
+        again[0] = ("a", 40.0, 5);
+        let (s, p) = show(&again);
+        let n = next_up(&s, &p, &key).unwrap();
+        assert!(!n.done);
+        assert_eq!((n.si, n.ei), (0, 0));
     }
 }
