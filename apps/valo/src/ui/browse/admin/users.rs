@@ -8,7 +8,10 @@ use super::{not_set_up, Cx, Done, Remote, Section};
 use crate::api::{AdminUser, Client};
 use crate::ui::chrome;
 use crate::ui::{bold, menu_item, mono, primary_button, small_button, text_field};
-use crate::ui::{ERROR, LINE, MUTED, TEXT};
+use crate::ui::{ERROR, LINE, MUTED, OK, TEXT};
+
+/// How often the list reloads while the admin page is open.
+const REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Default)]
 pub(in super::super) struct State {
@@ -105,17 +108,19 @@ impl State {
         self.list.data.as_ref().map(Vec::len)
     }
 
-    /// Keep the list loaded, whichever section is open.
+    /// Keep the list loaded, whichever section is open, and fresh enough
+    /// to tell who's active now.
     pub fn poll_and_load(&mut self, ctx: &egui::Context, client: &Client, login: &mut bool) {
         if self.list.poll(login) {
             if let Some(u) = self.list.data.as_mut() {
                 u.sort_by_key(|u| (!u.admin, u.name.to_lowercase()));
             }
         }
-        if self.list.idle() || (self.list.data.is_some() && self.list.stale(u64::MAX)) {
+        if self.list.idle() || (self.list.data.is_some() && self.list.stale(REFRESH.as_secs())) {
             let c = client.clone();
             self.list.load(ctx, move || c.admin_users());
         }
+        ctx.request_repaint_after(REFRESH);
     }
 
     pub fn ui(&mut self, ui: &mut Ui, cx: &mut Cx) {
@@ -218,10 +223,24 @@ fn user_line(u: &AdminUser) -> String {
     if u.must_change_password {
         parts.push("must change password".into());
     }
-    if let Some(t) = u.last_active {
-        parts.push(format!("active {}", ago(t)));
+    match u.last_active {
+        _ if u.active_now() => {}
+        Some(t) => parts.push(format!("active {}", ago(t))),
+        None => {}
     }
     parts.join("   ·   ")
+}
+
+/// A green dot and "ACTIVE NOW": used Valo in the last five minutes.
+fn active_badge(ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
+        ui.painter().circle_filled(r.center(), 4.0, OK());
+        ui.label(mono("ACTIVE NOW", 10.0).color(OK()));
+    })
+    .response
+    .on_hover_text("Used Valo in the last 5 minutes");
 }
 
 pub(super) fn danger_button(ui: &mut Ui, text: &str) -> egui::Response {
@@ -277,6 +296,9 @@ fn user_row(
                             }
                             if you {
                                 ui.label(mono("YOU", 10.0).color(TEAL()));
+                            }
+                            if u.active_now() {
+                                active_badge(ui);
                             }
                         });
                         ui.label(mono(user_line(u), 10.5).color(MUTED()));

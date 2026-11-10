@@ -160,8 +160,11 @@ pub struct Entry {
     pub updated: i64,
 }
 
-/// Watched this share of a title, it counts as finished.
+/// Watched this share of an episode, it counts as finished.
 pub const FINISHED: f64 = 0.95;
+/// A movie counts as finished sooner: its end credits run longer. The
+/// player saves a movie past this point as watched to the end.
+pub const MOVIE_FINISHED: f64 = 0.90;
 
 impl Entry {
     pub fn fraction(&self) -> f32 {

@@ -13,7 +13,7 @@ use super::{gradient, mono, ERROR, MUTED, TEXT};
 use crate::addons::{self, Lookup};
 use crate::api::SubtitleTrack;
 use crate::audio::AudioOut;
-use crate::config::{Config, Progress};
+use crate::config::{Config, Progress, MOVIE_FINISHED};
 use crate::inhibit::Inhibit;
 use crate::player::{Player, Source};
 use crate::subs::{self, Subs};
@@ -119,6 +119,8 @@ pub struct Watch {
     player: Option<Player>,
     opening: Option<(usize, Task<Result<Player>>)>,
     queued: Option<usize>,
+    /// The episode left with Next: saved as watched to the end.
+    moved_on: Option<usize>,
     tex: Option<egui::TextureHandle>,
     seek_drag: Option<f64>,
     status: String,
@@ -165,6 +167,7 @@ impl Watch {
             last_tick: Instant::now(),
             last_motion: Instant::now(),
             last_save: Instant::now(),
+            moved_on: None,
             menu: None,
             vol_hover: None,
             vol_key: None,
@@ -205,14 +208,16 @@ impl Watch {
         let (Some(i), Some(p)) = (self.current, self.player.as_ref()) else {
             return;
         };
-        if let Some(key) = &self.items[i].key {
-            let pos = if p.finished() {
-                p.meta.duration
-            } else {
-                p.clock()
-            };
+        let item = &self.items[i];
+        if let Some(key) = &item.key {
+            let dur = p.meta.duration;
+            let done = p.finished()
+                // moved on with Next: this episode counts as watched
+                || self.moved_on == Some(i)
+                || (!item.episode && dur > 0.0 && p.clock() >= dur * MOVIE_FINISHED);
+            let pos = if done && dur > 0.0 { dur } else { p.clock() };
             if pos > 1.0 {
-                progress.set(key, pos, p.meta.duration);
+                progress.set(key, pos, dur);
             }
         }
         self.last_save = Instant::now();
@@ -264,6 +269,7 @@ impl Watch {
             return;
         }
         self.save_progress(progress);
+        self.moved_on = None;
         self.player = None; // drop (and join) the old decoder first
         self.tex = None;
         self.current = Some(i);
@@ -1456,6 +1462,10 @@ impl Watch {
             }
         }
         if do_next && self.has_next() {
+            // the episode left for the next one counts as watched
+            if self.current.is_some_and(|i| self.items[i].episode) {
+                self.moved_on = self.current;
+            }
             pick = self.current.map(|i| i + 1);
         }
         if do_toggle {

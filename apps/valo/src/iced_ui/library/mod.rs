@@ -363,12 +363,14 @@ impl Library {
         format!("{}{id}", self.prefix())
     }
 
-    /// A movie that's been watched to the end.
+    /// A movie or series that's been watched to the end.
     fn watched(&self, item: &Item, progress: &Progress) -> bool {
-        item.kind == Kind::Movie
-            && progress
+        match item.kind {
+            Kind::Movie => progress
                 .get(&self.key(&item.id))
-                .is_some_and(Entry::watched)
+                .is_some_and(Entry::watched),
+            Kind::Series => crate::ui::browse::series_done(item, progress, &|i| self.key(i)),
+        }
     }
 
     /// The hovered card and the open card menu, for drawing cards.
@@ -1338,7 +1340,7 @@ impl Library {
                 if self.hidden.hides(&self.key(&s.id), e.updated) {
                     continue;
                 }
-                if let Some(n) = next_up(s, progress, &|i| self.key(i)) {
+                if let Some(n) = next_up(s, progress, &|i| self.key(i)).filter(|n| !n.done) {
                     let season = &s.seasons[n.si];
                     let ep = &season.episodes[n.ei];
                     let code = api::featurette(season.number, ep.number)

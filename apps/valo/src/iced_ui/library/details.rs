@@ -1378,7 +1378,7 @@ impl Library {
         }
         let body: Element<'a, Msg> = match self.tab {
             Tab::Episodes => match item.seasons.get(season) {
-                Some(s) => self.episodes_tab(item, &s.episodes, env, inner),
+                Some(s) => self.episodes_tab(item, season, &s.episodes, env, inner),
                 None => space().into(),
             },
             Tab::Related => {
@@ -1431,6 +1431,7 @@ impl Library {
     fn episodes_tab<'a>(
         &self,
         series: &Item,
+        si: usize,
         eps: &[Episode],
         env: Env<'a>,
         w: f32,
@@ -1442,9 +1443,15 @@ impl Library {
         let mut list = column![
             text(format!("{n} episode{}", if n == 1 { "" } else { "s" }))
                 .size(14)
-                .color(style::MUTED()),
-            gap(14.0),
+                .color(style::MUTED())
         ];
+        if let Some(note) = crate::ui::browse::seen_note(series, si, env.progress, &|i| self.key(i))
+        {
+            list = list
+                .push(gap(10.0))
+                .push(text(note).font(BOLD).size(14).color(c(TEAL())));
+        }
+        list = list.push(gap(14.0));
         for chunk in eps.chunks(cols as usize) {
             let mut r = row![].spacing(gap_x);
             for ep in chunk {
@@ -1522,6 +1529,9 @@ impl Library {
         }
         if let Some(a) = &ep.aired {
             facts = facts.push(text(date_short(a)).size(12).color(style::MUTED()));
+        }
+        if crate::ui::browse::episode_watched(env.progress, &|i| self.key(i), &ep.id) {
+            facts = facts.push(text("Watched").font(BOLD).size(12).color(c(TEAL())));
         }
         card.push(gap(6.0)).push(facts).into()
     }

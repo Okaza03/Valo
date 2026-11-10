@@ -319,6 +319,15 @@ impl Browse {
                     TEXT(),
                 );
             }
+            if super::super::episode_watched(progress, &|id| self.key(id), &ep.id) {
+                p.text(
+                    pos2(right, thumb.top() + 26.0),
+                    Align2::RIGHT_TOP,
+                    "Watched",
+                    bold_font(13.0),
+                    super::TEAL(),
+                );
+            }
             if !ep.overview.is_empty() {
                 let mut job = egui::text::LayoutJob::simple(
                     ep.overview.clone(),
@@ -686,14 +695,35 @@ impl Browse {
                             );
                         });
                         ui.add_space(6.0);
+                        let key = |id: &str| self.key(id);
+                        if let Some(note) =
+                            super::super::seen_note(item, self.season, progress, &key)
+                        {
+                            super::seen_banner(ui, note);
+                            ui.add_space(6.0);
+                        }
                         let season = &item.seasons[self.season];
                         for ep in &season.episodes {
-                            let frac = progress.get(&self.key(&ep.id)).map(|e| e.fraction());
-                            let sub = ep
+                            let seen = super::super::episode_watched(progress, &key, &ep.id);
+                            let frac = progress.get(&self.key(&ep.id)).map(|e| {
+                                if seen {
+                                    1.0
+                                } else {
+                                    e.fraction()
+                                }
+                            });
+                            let mut sub = ep
                                 .duration
                                 .filter(|d| *d > 0.0)
                                 .map(minutes)
                                 .unwrap_or_default();
+                            if seen {
+                                sub = if sub.is_empty() {
+                                    "Watched".into()
+                                } else {
+                                    format!("{sub} · Watched")
+                                };
+                            }
                             let thumb = ep.still.as_ref().or(item.backdrop.as_ref());
                             if row(ui, thumb, &ep.title, &sub, Some(ep.number), frac, images) {
                                 click =
