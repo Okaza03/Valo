@@ -12,11 +12,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use eframe::egui::{self, Align, Align2, Layout, RichText};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::ui::{chrome, mono, small_button, BG, LINE, MUTED, TEXT};
+use crate::ui::chrome;
 use crate::util::{Task, Waker};
 
 const REPO: &str = "Okaza03/Valo";
@@ -504,12 +503,6 @@ enum Toast {
     InstallFailed(String),
 }
 
-/// What the top-bar update control asked for.
-pub enum Click {
-    Check,
-    ShowUpdate,
-}
-
 pub struct Updates {
     task: Option<(bool, Task<Result<Option<Release>>>)>,
     pub available: Option<Release>,
@@ -568,7 +561,6 @@ impl Updates {
     }
 
     /// A check or an install is running, or a notice is up: poll often.
-    #[cfg_attr(not(feature = "iced"), allow(dead_code))]
     pub fn busy(&self) -> bool {
         self.task.is_some() || self.installing.is_some() || self.toast.is_some()
     }
@@ -727,70 +719,6 @@ impl Updates {
             }
         }
         self.toast = None;
-    }
-
-    /// Poll the check and draw its result: a popup with the release notes
-    /// once `quiet` (no splash or other dialog up), notices in the corner.
-    pub fn ui(&mut self, ctx: &egui::Context, quiet: bool) {
-        if self.poll() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        if quiet {
-            if let Some((r, in_place, flatpak)) = self.popup() {
-                if let Some(choice) =
-                    crate::ui::whats_new::update_available(ctx, r, in_place, flatpak)
-                {
-                    self.choose(choice, ctx);
-                }
-            }
-        }
-        let Some(toast) = self.toast() else {
-            return;
-        };
-        let mut close = None;
-        egui::Area::new(egui::Id::new("update_toast"))
-            .anchor(Align2::RIGHT_BOTTOM, [-16.0, -46.0])
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(BG())
-                    .stroke(egui::Stroke::new(1.0f32, LINE()))
-                    .corner_radius(4)
-                    .inner_margin(egui::Margin::symmetric(16, 12))
-                    .show(ui, |ui| {
-                        ui.set_max_width(380.0);
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 2.0;
-                                ui.label(mono(&toast.title, 11.0).color(MUTED()));
-                                ui.label(RichText::new(&toast.body).color(TEXT()));
-                            });
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if toast.busy {
-                                    ui.spinner();
-                                    return;
-                                }
-                                if crate::ui::small_icon_button(
-                                    ui,
-                                    crate::ui::chrome::Icon::Close,
-                                    "Dismiss",
-                                )
-                                .clicked()
-                                {
-                                    close = Some(false);
-                                }
-                                if toast.download && small_button(ui, "Download").clicked() {
-                                    close = Some(true);
-                                }
-                            });
-                        });
-                    });
-            });
-        if let Some(download) = close {
-            self.dismiss(download);
-        }
-        let every = if self.installing.is_some() { 100 } else { 500 };
-        ctx.request_repaint_after(Duration::from_millis(every));
     }
 }
 

@@ -514,4 +514,38 @@ mod tests {
         s.update(Msg::UsualOrder);
         assert!(s.draft.is_none());
     }
+
+    #[test]
+    fn hides_and_shows_rows() {
+        let mut l = ServerLayout::default();
+        assert!(l.shows("recent"));
+        set(&mut l, "recent", false);
+        set(&mut l, "recent", false);
+        assert!(!l.shows("recent"));
+        assert_eq!(l.home_hidden, ["recent"]);
+        set(&mut l, "recent", true);
+        assert!(l.shows("recent") && l.home_hidden.is_empty());
+    }
+
+    #[test]
+    fn orders_rows() {
+        let keys: Vec<String> = ["continue", "catalog:a", "movies", "genres"]
+            .map(String::from)
+            .to_vec();
+        let mut l = ServerLayout::default();
+        assert_eq!(l.ordered(&keys), keys);
+        l.home_order = ["genres", "gone", "continue", "genres"]
+            .map(String::from)
+            .to_vec();
+        // the rest follow the row they came after
+        assert_eq!(
+            l.ordered(&keys),
+            ["genres", "continue", "catalog:a", "movies"]
+        );
+        l.home_order = ["movies", "continue"].map(String::from).to_vec();
+        assert_eq!(
+            l.ordered(&keys),
+            ["movies", "genres", "continue", "catalog:a"]
+        );
+    }
 }

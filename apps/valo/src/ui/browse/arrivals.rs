@@ -1,17 +1,13 @@
 //! "New on the server": movies, series and seasons added since the user
 //! last saw the library, and titles taken off it, announced on the browse
 //! pages (never over the player).
-use std::collections::{HashMap, HashSet};
-
-use eframe::egui::{self, RichText, Ui};
-
-use super::details::poster_tile;
-use super::{Browse, Click, View, GAP};
-use crate::api::{Item, Kind, Library, FEATURETTES};
+use crate::api::Item;
+use crate::api::Kind;
+use crate::api::Library;
+use crate::api::FEATURETTES;
 use crate::config::Known;
-use crate::images::Images;
-use crate::ui::settings::{dialog, header};
-use crate::ui::{primary_button, MUTED};
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// At most this many posters; the rest are counted.
 pub(crate) const SHOWN: usize = 12;
@@ -260,87 +256,6 @@ impl Queue {
                 .collect(),
             gone,
         }
-    }
-}
-
-impl Browse {
-    /// A library (re)loaded: queue what's new and what's gone since last time.
-    pub(super) fn note_arrivals(&mut self, lib: &Library) {
-        let prefix = self.prefix();
-        let before = self.lib.clone();
-        self.arrivals
-            .note(&mut self.known, &prefix, lib, before.as_deref());
-    }
-
-    /// Show the queued arrivals once the user is on Home, Movies or TV Shows.
-    pub(super) fn arrivals_ui(
-        &mut self,
-        ctx: &egui::Context,
-        lib: &Library,
-        images: &mut Images,
-        allowed: bool,
-    ) -> Option<Click> {
-        let browsing =
-            matches!(self.view, View::Home | View::Movies | View::Series) && self.search.is_empty();
-        if self.arrivals.is_empty() || !allowed || !browsing {
-            return None;
-        }
-        let prefix = self.prefix();
-        self.arrivals.opening(&mut self.known, &prefix, lib);
-        let shown = self.arrivals.shown(lib, &self.client.info.name);
-        let mut open = None;
-        let (done, close) = dialog(ctx, "new-arrivals", 640.0, |ui: &mut Ui| {
-            header(ui, &shown.title, &shown.summary);
-            ui.add_space(8.0);
-            let w = ui.available_width();
-            let cols = ((w + GAP) / (140.0 + GAP)).floor().clamp(1.0, 4.0);
-            let tw = (w - GAP * (cols - 1.0)) / cols;
-            for row in shown
-                .items
-                .iter()
-                .take(SHOWN)
-                .collect::<Vec<_>>()
-                .chunks(cols as usize)
-            {
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = GAP;
-                    for (item, sub) in row {
-                        if poster_tile(ui, item, Some(sub), tw, self.watched(item), images) {
-                            open = Some(item.id.clone());
-                        }
-                    }
-                });
-                ui.add_space(12.0);
-            }
-            if shown.items.len() > SHOWN {
-                let more = shown.items.len() - SHOWN;
-                ui.label(RichText::new(format!("And {more} more.")).color(MUTED()));
-                ui.add_space(12.0);
-            }
-            if !shown.gone.is_empty() {
-                if !shown.items.is_empty() {
-                    ui.label(RichText::new("No longer on the server").strong());
-                    ui.add_space(4.0);
-                }
-                for n in shown.gone.iter().take(SHOWN) {
-                    ui.label(RichText::new(*n).color(MUTED()));
-                }
-                if shown.gone.len() > SHOWN {
-                    let more = shown.gone.len() - SHOWN;
-                    ui.label(RichText::new(format!("And {more} more.")).color(MUTED()));
-                }
-                ui.add_space(12.0);
-            }
-            let b = ui.add_sized([ui.available_width(), 40.0], |ui: &mut Ui| {
-                primary_button(ui, "Close", true)
-            });
-            b.clicked()
-        });
-        let empty = shown.items.is_empty() && shown.gone.is_empty();
-        if done || close || open.is_some() || empty {
-            self.arrivals.clear();
-        }
-        open.map(Click::Open)
     }
 }
 

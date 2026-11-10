@@ -15,7 +15,7 @@ Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT
 
 | Path                | What's in it                                                      |
 | ------------------- | ----------------------------------------------------------------- |
-| `apps/valo/`        | The desktop app (Rust, egui, FFmpeg)                              |
+| `apps/valo/`        | The desktop app (Rust, Iced, FFmpeg)                              |
 | `apps/androidtv/`   | The Android apps: `src/main` is shared, `src/tv` is Android TV / Google TV, `src/phone` is phones and tablets (`./gradlew assembleTvRelease assemblePhoneRelease`) |
 | `server/`           | The bundled Python server (standard library only)                 |
 | `docs/api/`         | The server API guide                                              |

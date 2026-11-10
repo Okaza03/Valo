@@ -1,6 +1,6 @@
 //! The profile page (watching stats, history, "Your devices"), "Viewed by
 //! other users", the "Change your password" prompt and the new-arrivals
-//! dialog, laid out like egui's `browse::people`, `devices`, `viewed`,
+//! dialog, laid out, `devices`, `viewed`,
 //! `password` and `arrivals`.
 use std::collections::HashMap;
 use std::time::Instant;
@@ -29,7 +29,7 @@ use crate::ui::browse::people::ago;
 use crate::ui::theme::{CARD, LINE};
 use crate::util::{color_for, fmt_runtime};
 
-/// Something loaded from the server, again when asked (egui's `admin::Remote`).
+/// Something loaded from the server, again when asked.
 pub(crate) struct Remote<T> {
     pub data: Option<T>,
     job: Option<Job<Result<T>>>,
@@ -171,7 +171,7 @@ fn names(w: &[Watcher]) -> Option<String> {
 /// "Viewed by other users"
 pub(super) const VIEWED: &str = "Viewed by other users";
 
-/// A section heading: a small kicker, the title and a count (egui's `section_title`).
+/// A section heading: a small kicker, the title and a count.
 pub(super) fn section_title<'a>(kicker: &str, title: &str, n: usize) -> Element<'a, Msg> {
     column![
         caps(kicker, c(TEAL())),
@@ -1163,7 +1163,7 @@ fn device_row<'a>(s: &DeviceSession, busy: bool) -> Element<'a, Msg> {
     .into()
 }
 
-/// A small monitor outline (egui's `devices::screen`).
+/// A small monitor outline.
 struct Monitor {
     color: Color,
 }
@@ -1208,7 +1208,7 @@ impl<M> canvas::Program<M> for Monitor {
     }
 }
 
-/// A text field's look, as egui's.
+/// A text field's look.
 pub(crate) fn field_style(_: &Theme, s: text_input::Status) -> text_input::Style {
     let p = crate::ui::theme::pal();
     text_input::Style {
@@ -1226,5 +1226,37 @@ pub(crate) fn field_style(_: &Theme, s: text_input::Status) -> text_input::Style
         placeholder: c(p.muted),
         value: c(p.text),
         selection: c(p.accent).scale_alpha(0.4),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_under_the_poster() {
+        let w = |n: &str| Watcher {
+            name: n.into(),
+            ..Default::default()
+        };
+        assert_eq!(names(&[]), None);
+        assert_eq!(names(&[w("jo")]).as_deref(), Some("jo"));
+        assert_eq!(
+            names(&[w("jo"), w("sam"), w("kim")]).as_deref(),
+            Some("jo +2")
+        );
+    }
+
+    #[test]
+    fn reloads_after_retry_even_with_data() {
+        let mut r: Remote<u32> = Remote::default();
+        assert!(r.due()); // never loaded
+        r.data = Some(1);
+        r.at = Some(std::time::Instant::now());
+        assert!(!r.due()); // loaded, fresh
+        r.retry(); // e.g. after a save
+        assert!(r.due() && r.data == Some(1)); // reloads, keeps showing the old data meanwhile
+        r.missing = true;
+        assert!(!r.due()); // the server doesn't have it: don't ask again
     }
 }

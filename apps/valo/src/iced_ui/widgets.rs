@@ -1,5 +1,5 @@
-//! Pieces the screens share, styled like the egui ones in `crate::ui`:
-//! buttons, text fields, the centered card, labels and links.
+//! Pieces the screens share, in the current style: buttons, text fields,
+//! the centered card, labels and links.
 use iced::alignment::Vertical;
 use iced::widget::{
     button, column, container, mouse_area, row, scrollable, space, text, text_input, Button,
@@ -175,7 +175,7 @@ pub fn card<'a, M: 'a>(height: f32, content: impl Into<Element<'a, M>>) -> Eleme
                 ..container::Style::default()
             }
         });
-    // like the egui card: a 540-high card would sit in the middle
+    // a 540-high card would sit in the middle
     let top = ((height - 540.0) / 2.0).max(24.0);
     scrollable(
         container(
@@ -214,12 +214,12 @@ pub fn admin_help<'a, M: Clone + 'a>(
     .into()
 }
 
-// ------------------------------------------------- the egui kit, ported
+// ------------------------------------------------- the button kit
 
 use crate::ui::theme::{Tabs, ACCENT, BG, INK, LINE, LINE_HI, PRIMARY, SURFACE_HI, TEXT};
-use eframe::egui::Color32;
+use ecolor::Color32;
 
-/// How a button is painted in the current style (egui's `ui::Kind`).
+/// How a button is painted in the current style.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
     /// White (or the accent): "Play", "Done".
@@ -234,7 +234,7 @@ fn hot(s: button::Status) -> bool {
     matches!(s, button::Status::Hovered | button::Status::Pressed)
 }
 
-/// A button's look: fill, outline and text color, like egui's `paint_button`.
+/// A button's look: fill, outline and text color.
 fn paint_button(kind: Kind, hovered: bool, enabled: bool, h: f32) -> button::Style {
     let skin = theme::skin();
     let pal = theme::pal();
@@ -296,7 +296,7 @@ fn paint_button(kind: Kind, hovered: bool, enabled: bool, h: f32) -> button::Sty
     }
 }
 
-/// `top` painted over `base` (egui paints fills one after the other).
+/// `top` painted over `base`, one fill after the other.
 fn over(base: Option<Color32>, top: Color32) -> Color32 {
     let Some(b) = base else {
         return top;
@@ -317,8 +317,7 @@ fn over(base: Option<Color32>, top: Color32) -> Color32 {
 
 /// A button in the current style with a label and an optional icon (before
 /// the text, or after it for external links and right arrows). `None`
-/// greys it out. Like egui's `primary_button`, `secondary_button`,
-/// `small_button` and their `_icon` versions.
+/// greys it out.
 pub fn button_with<'a, M: Clone + 'a>(
     kind: Kind,
     t: &str,
@@ -375,7 +374,7 @@ pub fn button_with<'a, M: Clone + 'a>(
 }
 
 /// A [`button_with`] as wide as its parent and `h` high, the label centered
-/// (egui's `add_sized` buttons in dialogs).
+/// (the buttons in dialogs).
 pub fn button_wide<'a, M: Clone + 'a>(
     kind: Kind,
     t: &str,
@@ -403,8 +402,7 @@ pub fn button_wide<'a, M: Clone + 'a>(
     .into()
 }
 
-/// A square 30px small button with a drawn icon (the "⋮" menu, close),
-/// egui's `small_icon_button`.
+/// A square 30px small button with a drawn icon (the "⋮" menu, close).
 pub fn small_icon_button<'a, M: Clone + 'a>(ic: icon::Icon, msg: M) -> Element<'a, M> {
     let col = style::TEXT();
     button(container(icon::icon(ic, col, 30.0)).center(30))
@@ -437,7 +435,7 @@ pub fn small_icon_button_maybe<'a, M: Clone + 'a>(
 }
 
 /// A top-bar tab in the current style: a filled block, bold text, an
-/// underline or a pill when selected (egui's `ui::tab`).
+/// underline or a pill when selected.
 pub fn tab<'a, M: Clone + 'a>(t: &str, selected: bool, msg: M) -> Element<'a, M> {
     let spec = theme::spec();
     let label: Element<'a, M> = if spec.tabs == Tabs::Plain {
@@ -468,7 +466,7 @@ pub fn tab<'a, M: Clone + 'a>(t: &str, selected: bool, msg: M) -> Element<'a, M>
         .into()
 }
 
-/// A tab's look (egui's `paint_tab`). `chip`: a filter chip, not a top tab.
+/// A tab's look. `chip`: a filter chip, not a top tab.
 fn tab_style(selected: bool, hovered: bool, chip: bool, h: f32) -> button::Style {
     let spec = theme::spec();
     let dim = TEXT().gamma_multiply(0.72);
@@ -509,7 +507,7 @@ fn tab_style(selected: bool, hovered: bool, chip: bool, h: f32) -> button::Style
     }
 }
 
-/// A row of options with one chosen (egui's `ui::segmented`): a bordered
+/// A row of options with one chosen: a bordered
 /// strip for Valo, chips for the other styles. Each item: its label, a
 /// count, whether it's chosen, and its message.
 pub fn segmented<'a, M: Clone + 'a>(
@@ -572,7 +570,7 @@ pub fn vline<'a, M: 'a>(h: f32) -> Element<'a, M> {
         .into()
 }
 
-/// A full-width row in a drop-down menu (egui's `ui::menu_item`).
+/// A full-width row in a drop-down menu.
 pub fn menu_item<'a, M: Clone + 'a>(t: &str, msg: M) -> Element<'a, M> {
     button(container(text(t.to_owned()).size(14.5)).center_y(32))
         .width(Length::Fill)
@@ -588,8 +586,7 @@ pub fn menu_item<'a, M: Clone + 'a>(t: &str, msg: M) -> Element<'a, M> {
         .into()
 }
 
-/// The word mark in the title bar: the server's name, or the app's (egui's
-/// `ui::logo`).
+/// The word mark in the title bar: the server's name, or the app's.
 pub fn logo<'a, M: 'a>(t: &str, size: f32) -> Element<'a, M> {
     let spec = theme::spec();
     let mut t = if spec.logo_lower {

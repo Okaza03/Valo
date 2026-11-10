@@ -1,7 +1,7 @@
-//! The Iced UI, built with `--features iced`. It's being ported from the egui
-//! UI (`crate::ui`) one screen at a time; it has every screen now (chrome,
-//! player, setup, the server check, sign-in, settings, updates, the library,
-//! profiles and admin), in every app style.
+//! The app's UI, drawn with Iced: the window chrome, the player, setup, the
+//! server check, sign-in, settings, updates, the library, profiles and admin,
+//! in every app style. What the screens share (the styles, what to show and
+//! play) is in `crate::ui`.
 //!
 //! Frames are presented with `PresentMode::Fifo` (vsync, no tearing), and
 //! fullscreen is a borderless window covering the screen, never exclusive mode.
@@ -190,7 +190,7 @@ struct App {
 }
 
 /// The dialog over the page, if any: Settings first, then the update
-/// popup, then "What's new" (as egui orders them).
+/// popup, then "What's new".
 #[derive(Clone, Copy, PartialEq)]
 enum Modal {
     Settings,
@@ -600,8 +600,7 @@ impl App {
     }
 
     /// The update control: the refresh icon that checks for a new Valo, a
-    /// spinner while it does, and an "Update" tab when one is out (egui's
-    /// `chrome::update_button`).
+    /// spinner while it does, and an "Update" tab when one is out.
     fn update_button(&self) -> Element<'_, Message> {
         let mut r = row![].align_y(iced::alignment::Vertical::Center);
         if let Some(rel) = &self.updates.available {
@@ -740,7 +739,7 @@ impl App {
         focus
     }
 
-    /// What the screens ask for: the same steps as the egui app's `handle`.
+    /// What the screens ask for.
     fn handle(&mut self, action: Action) -> Task<Message> {
         match action {
             Action::CheckServer(address) => {
@@ -853,7 +852,6 @@ impl App {
             Action::OpenSettings => self.settings = true,
             Action::CheckUpdates => self.updates.check(crate::util::Waker::none(), true),
             Action::ShowUpdate => self.updates.show(),
-            Action::None => {}
         }
         Task::none()
     }

@@ -1,6 +1,6 @@
 //! Admin › Library: edit a title's details and artwork by hand, or fetch
 //! them from IMDb and check them before saving. The form, its checks and
-//! what's sent are egui's (`browse::admin::library`), shared.
+//! what's sent are in `crate::ui::browse::admin::library`.
 mod extras;
 
 use anyhow::Result;

@@ -1,6 +1,6 @@
 //! Artwork cards, the rows and grids they sit in, and artwork cropped to fit.
 //! Shaped by the style: posters or 16:9 tiles, the title below, over the
-//! artwork, on hover, or a channel-style line (egui's `browse::card_at`).
+//! artwork, on hover, or a channel-style line.
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, space, stack, text, tooltip,
@@ -56,7 +56,7 @@ pub struct Card {
 }
 
 /// `url`'s artwork covering `w`×`h`: cropped to fit, keeping the top of tall
-/// images (faces, titles) like the egui `image_cover`. A colored stand-in
+/// images (faces, titles). A colored stand-in
 /// with the title until it's loaded, or if it can't be.
 pub fn art<'a>(
     images: &Images,
@@ -227,7 +227,7 @@ pub fn progress_bar<'a>(f: f32, w: f32) -> Element<'a, Msg> {
     .into()
 }
 
-/// One card, like egui's `card_at` in the Valo style: the artwork (growing
+/// One card in the Valo style: the artwork (growing
 /// a little and outlined while hovered), the played bar, the WATCHED sash
 /// and MOVING band, and on hover More info, the bookmark, and for Continue
 /// watching a "⋮" menu; the title and year under it. `wide`: a Continue
@@ -623,7 +623,7 @@ fn edge_bar<'a>(f: f32, w: f32) -> Element<'a, Msg> {
     .into()
 }
 
-/// A titled row of cards that scrolls sideways (egui's `Browse::row`):
+/// A titled row of cards that scrolls sideways:
 /// the heading, a "See all" link, and while the pointer is over the cards,
 /// arrows at the edges that page them. `width`: the page's; `offset`: how
 /// far the row is scrolled; `over`: the pointer is over the row.
@@ -723,7 +723,7 @@ fn arrow<'a>(glyph: &str, msg: Msg) -> Element<'a, Msg> {
     .into()
 }
 
-/// Cards in rows as wide as the page (`width`) allows (egui's `grid`).
+/// Cards in rows as wide as the page (`width`) allows.
 pub fn grid<'a>(
     images: &Images,
     cards: &[Card],
@@ -734,8 +734,7 @@ pub fn grid<'a>(
     grid_at(images, cards, width - 2.0 * SIDE, hot, salt, SIDE)
 }
 
-/// Cards in rows `avail` wide, `left` in from the side; 20 between rows
-/// (egui's 12 and its item spacing).
+/// Cards in rows `avail` wide, `left` in from the side; 20 between rows.
 pub fn grid_at<'a>(
     images: &Images,
     cards: &[Card],

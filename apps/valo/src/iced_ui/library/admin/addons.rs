@@ -311,3 +311,50 @@ fn addon_details<'a>(mut col: Column<'a, LMsg>, a: &Addon) -> Column<'a, LMsg> {
     }
     col
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listed(url: &str) -> Listed {
+        Listed {
+            name: url.to_owned(),
+            url: url.to_owned(),
+            description: "About it".to_owned(),
+        }
+    }
+
+    fn addon(id: &str, url: &str) -> Addon {
+        Addon {
+            id: id.to_owned(),
+            url: url.to_owned(),
+            name: url.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn list_first_then_the_servers_others() {
+        let offered = [
+            listed("https://a/manifest.json"),
+            listed("https://b/manifest.json"),
+        ];
+        let on = [
+            addon("x", "https://old/manifest.json"),
+            addon("y", "https://b/manifest.json"),
+        ];
+        let r = rows(&offered, &on);
+        let got: Vec<_> = r
+            .iter()
+            .map(|r| (r.url, r.on.map(|a| a.id.as_str()), r.listed))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("https://a/manifest.json", None, true),
+                ("https://b/manifest.json", Some("y"), true),
+                ("https://old/manifest.json", Some("x"), false),
+            ]
+        );
+    }
+}

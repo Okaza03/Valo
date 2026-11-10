@@ -14,7 +14,7 @@ use super::Message;
 pub const BAR_H: f32 = 46.0;
 
 /// Top bar: word mark, a divider, `left` (tabs), `right` (search and
-/// buttons), and the window buttons. Like egui's `chrome::title_bar`.
+/// buttons), and the window buttons.
 pub fn title_bar<'a>(
     name: &str,
     maximized: bool,
@@ -77,7 +77,7 @@ fn window_buttons<'a>(maximized: bool) -> Element<'a, Message> {
     .into()
 }
 
-/// A square bar button with a drawn icon (egui's `chrome::icon_button`).
+/// A square bar button with a drawn icon.
 pub fn bar_button<'a, M: Clone + 'a>(ic: Icon, tip: &str, msg: M) -> Element<'a, M> {
     let close = matches!(ic, Icon::Close);
     let text_col = style::TEXT();
@@ -166,7 +166,7 @@ pub fn frame<'a>(content: Element<'a, Message>, size: Size, framed: bool) -> Ele
 }
 
 /// The strip along the bottom: small labels on both sides. `refresh`:
-/// the left one reloads the library when clicked (egui's `status_bar`).
+/// the left one reloads the library when clicked.
 pub fn status_bar<'a>(
     left: String,
     right: String,

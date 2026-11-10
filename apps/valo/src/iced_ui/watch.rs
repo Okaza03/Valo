@@ -723,7 +723,7 @@ impl Watch {
             .into()
     }
 
-    /// Everything over the video, placed at the same spots as the egui player.
+    /// Everything over the video.
     fn screen(&self, size: Size, now: View, hide: bool) -> Element<'_, Msg> {
         let rect = R::new(0.0, 0.0, size.width, size.height);
         let pos = self.player.as_ref().map_or(0.0, Player::clock);
@@ -1191,7 +1191,7 @@ impl Watch {
             }
         };
         let icon_col = if row_layout { gray(235) } else { Color::WHITE };
-        // the play triangle sits a little right of center, like the egui player
+        // the play triangle sits a little right of center, to look centered
         let nudge = if playing { 0.0 } else { 3.0 };
         layers.push(at(
             play_r,

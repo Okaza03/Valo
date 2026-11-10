@@ -491,7 +491,6 @@ impl Library {
                     let before = self.lib.clone();
                     self.arrivals
                         .note(&mut self.known, &prefix, &lib, before.as_deref());
-                    crate::ui::set_moving_art(lib.moving_art());
                     if self.lib.is_none() {
                         images.set_client(Some(self.client.clone()));
                     }
@@ -745,7 +744,7 @@ impl Library {
         r.into()
     }
 
-    /// The title bar's search field (egui: 240 wide at most, 10×6 margins).
+    /// The title bar's search field.
     pub fn search_field(&self) -> Element<'_, Msg> {
         let p = theme::pal();
         text_input("Search movies & shows", &self.search)
@@ -789,7 +788,7 @@ impl Library {
         self.user.clone().unwrap_or_else(|| "Guest".to_owned())
     }
 
-    /// The profile button: avatar, name and a caret (egui's `profile_menu`).
+    /// The profile button: avatar, name and a caret.
     pub fn profile_button(&self) -> Element<'_, Msg> {
         let name = self.shown_name();
         let open = self.menu;
@@ -1220,7 +1219,7 @@ impl Library {
         )
     }
 
-    /// The featured banner (egui's `Browse::hero`, as a carousel): artwork
+    /// The featured banner: artwork
     /// on the right fading into the page, the title, what it is and the
     /// buttons on the left, dots for each featured title, and arrows while
     /// the pointer is over it. A click anywhere else opens the title.
@@ -1578,7 +1577,7 @@ impl Library {
             "Creator"
         };
 
-        // egui: the filter strip on the left; on the right, from the edge:
+        // the filter strip on the left; on the right, from the edge:
         // genre, its label, direction, sort, its label
         let chips = widgets::segmented(
             [
@@ -1764,7 +1763,7 @@ fn muted_center<'a>(t: &str) -> Element<'a, Msg> {
         .into()
 }
 
-/// A round avatar with the name's initial (egui's `chrome::avatar`).
+/// A round avatar with the name's initial.
 pub fn avatar<'a>(name: &str, r: f32) -> Element<'a, Msg> {
     let initial = name
         .chars()
@@ -1788,7 +1787,7 @@ pub fn avatar<'a>(name: &str, r: f32) -> Element<'a, Msg> {
     .into()
 }
 
-/// A drop-down panel (menus): egui's popup frame.
+/// A drop-down panel (menus).
 pub(super) fn popup_style(_: &iced::Theme) -> container::Style {
     let p = theme::pal();
     container::Style {

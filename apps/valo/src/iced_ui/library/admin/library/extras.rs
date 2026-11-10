@@ -1,6 +1,6 @@
 //! The editor's other tabs (files, subtitles, episodes) and its extra
 //! actions (TMDB matching, deleting a title), each on its own endpoint.
-//! Release matching and episode codes are egui's (`library::extras`), shared.
+//! Release matching and episode codes are in `crate::ui::browse::admin::library::extras`.
 use std::collections::HashSet;
 use std::fmt;
 

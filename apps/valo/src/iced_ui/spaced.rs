@@ -1,7 +1,6 @@
 //! Letter-spaced text, which Iced's text widget can't do: each character is
 //! measured and drawn on its own, `spacing` apart. The labels in the Valo
-//! style (tabs, buttons, row titles, the status line) are set this way, like
-//! egui's `extra_letter_spacing`.
+//! style (tabs, buttons, row titles, the status line) are set this way.
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::text::{self as atext, Paragraph as _};
@@ -39,7 +38,7 @@ impl Spaced {
 
 /// A small label (tabs, buttons, section headers) in the current style:
 /// letter-spaced monospace capitals for Valo, spaced bold capitals or plain
-/// sans for the others. Like egui's `ui::mono`.
+/// sans for the others.
 pub fn mono(t: &str, size: f32) -> Spaced {
     match theme::spec().labels {
         Labels::Mono => Spaced::new(t.to_uppercase(), size, size * 0.14, style::MONO),

@@ -69,7 +69,7 @@ pub enum Job {
 }
 
 /// Run `job` on a background thread. `wake` is called after each event, so
-/// the UI can redraw (egui) or knows to poll (Iced polls on its own ticks).
+/// the UI knows there's news (the Iced UI also polls on its own ticks).
 pub fn start(wake: impl Fn() + Send + 'static, job: Job) -> Receiver<Event> {
     let (tx, rx) = mpsc::channel();
     let mut run = Run {

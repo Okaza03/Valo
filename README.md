@@ -10,7 +10,7 @@
 
 </div>
 
-A desktop video player and media-library client (Rust, egui, FFmpeg).
+A desktop video player and media-library client (Rust, Iced, FFmpeg).
 
 1. **Setup**: enter your media server's address (`192.168.1.20`, `nas.local:8080`, …). It's remembered for next time.
 2. **Server check**: the first time you add a server, Valo checks every part of its API one by one (reachability, `/api/info`, sign-in, library, streaming, artwork) and shows how many titles have each piece of metadata. Problems that stop the app from working are errors and block the server. Missing extras, or a server without a sign-in, are warnings you can accept with _I know this is missing, continue_. _Copy report_ gives you the results to send to the server's admin.
