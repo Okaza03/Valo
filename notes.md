@@ -6,6 +6,7 @@ Valo's desktop app has a new engine underneath, and series pages show who watche
 - **Play button:** a long label like "Resume S01 E01" stays on one line.
 
 ### New
+- **Mouse back and forward:** the side buttons on your mouse go back and forward between pages. Back also closes the player or a dialog.
 - **Who watched what:** a series page says who else has watched the whole series or the season you're looking at ("Artur has watched this season"), and each episode lists who watched it. Needs a server that lists the episodes each person watched (`episodes` in `/api/watchers/series/<id>`, by id or as "S01E02"); with an older one, only those who watched the whole series show.
 
 ### Changed

@@ -221,6 +221,8 @@ pub enum Message {
     /// Escape, even one a text field took.
     Escape,
     Key(Key, Modifiers),
+    /// The mouse's back (false) or forward (true) button.
+    MouseNav(bool),
     Window(window::Event),
     Maximized(bool),
     OpenFiles,
@@ -336,6 +338,15 @@ impl App {
             }
             None => Subscription::none(),
         };
+        let mouse_nav = event::listen_with(|e, _, _| match e {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Back)) => {
+                Some(Message::MouseNav(false))
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Forward)) => {
+                Some(Message::MouseNav(true))
+            }
+            _ => None,
+        });
         let system = iced::system::theme_changes().map(Message::SystemTheme);
         // the splash fades a frame at a time; checks and installs report back
         let extra = if self.splash.is_some() && self.watch.is_none() {
@@ -345,7 +356,7 @@ impl App {
         } else {
             Subscription::none()
         };
-        Subscription::batch([keys, escape, window, ticks, system, extra])
+        Subscription::batch([keys, escape, mouse_nav, window, ticks, system, extra])
     }
 
     fn set_fullscreen(&mut self, on: bool) -> Task<Message> {
@@ -504,6 +515,27 @@ impl App {
                         }
                         _ => Task::none(),
                     }
+                } else {
+                    Task::none()
+                }
+            }
+            // like Backspace: the player leaves fullscreen, then closes; a
+            // dialog closes; the library goes back (or forward)
+            Message::MouseNav(forward) => {
+                if self.watch.is_some() {
+                    if forward {
+                        return Task::none();
+                    }
+                    let back = Key::Named(Named::Backspace);
+                    self.update_watch(watch::Msg::Key(back, Modifiers::empty()))
+                } else if self.modal().is_some() {
+                    if forward {
+                        return Task::none();
+                    }
+                    self.update_dialog(dialogs::Msg::Close)
+                } else if let Stage::Library(l) = &mut self.stage {
+                    let out = if forward { l.forward() } else { l.key_back() };
+                    self.out(out)
                 } else {
                     Task::none()
                 }
