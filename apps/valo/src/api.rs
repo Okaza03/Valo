@@ -713,6 +713,20 @@ pub struct AdminUser {
     pub last_active: Option<i64>,
 }
 
+/// Active this recently, a user counts as using Valo right now.
+pub const ACTIVE_NOW_SECS: i64 = 5 * 60;
+
+impl AdminUser {
+    /// Used Valo in the last five minutes: an open app talks to the server
+    /// at least once a minute, so this means it's open now.
+    pub fn active_now(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        self.last_active.is_some_and(|t| now - t < ACTIVE_NOW_SECS)
+    }
+}
+
 /// What `POST /api/admin/rescan` found.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
