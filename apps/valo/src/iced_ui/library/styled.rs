@@ -14,6 +14,7 @@ use crate::api::{self, FileInfo, Item, Kind};
 use crate::iced_ui::icon::Icon;
 use crate::iced_ui::style::{self, black, c, BOLD};
 use crate::ui::browse::details::{minutes, play_colors, similar, years, GOLD, TEAL};
+use crate::ui::browse::details::{watchers_episode_text, watchers_season_notes};
 use crate::ui::browse::{episode_watched, makers, play_label, seen_note};
 use crate::ui::theme::{self, Details, INK, LINE, PRIMARY, SURFACE_HI, TEXT};
 use crate::util::fmt_runtime;
@@ -259,6 +260,12 @@ impl Library {
                 .push(text(note).font(BOLD).size(14).color(c(TEAL())))
                 .push(gap(12.0));
         }
+        let others = self.watchers_of(item);
+        for note in watchers_season_notes(others, item, si) {
+            col = col
+                .push(text(note).font(BOLD).size(14).color(style::MUTED()))
+                .push(gap(12.0));
+        }
         for ep in &season.episodes {
             let seen = episode_watched(item, env.progress, &key, &ep.id);
             let hk = format!("epl\u{1f}{}", ep.id);
@@ -294,6 +301,9 @@ impl Library {
             }
             if seen {
                 right = right.push(text("Watched").font(BOLD).size(13).color(c(TEAL())));
+            }
+            if let Some(who) = watchers_episode_text(others, item, &ep.id) {
+                right = right.push(text(who).size(13).color(style::MUTED()));
             }
             head = head.push(right);
             let mut info: Column<'a, Msg> = column![head].spacing(8).width(Length::Fill);
@@ -650,6 +660,15 @@ impl Library {
                     )
                     .push(gap(6.0));
             }
+            let others = self.watchers_of(item);
+            for note in watchers_season_notes(others, item, si) {
+                col = col
+                    .push(
+                        container(text(note).font(BOLD).size(14).color(style::MUTED()))
+                            .padding(Padding::default().left(6.0)),
+                    )
+                    .push(gap(6.0));
+            }
             for ep in &item.seasons[si].episodes {
                 let seen = episode_watched(item, env.progress, &key, &ep.id);
                 let frac =
@@ -666,6 +685,13 @@ impl Library {
                         "Watched".into()
                     } else {
                         format!("{sub} · Watched")
+                    };
+                }
+                if let Some(who) = watchers_episode_text(others, item, &ep.id) {
+                    sub = if sub.is_empty() {
+                        who
+                    } else {
+                        format!("{sub} · {who}")
                     };
                 }
                 let thumb = ep.still.as_deref().or(item.backdrop.as_deref());

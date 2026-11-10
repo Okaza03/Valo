@@ -1178,8 +1178,9 @@ def user_analytics(progress, users, lib, name, days):
 
 def watchers(progress, users, lib, kind, id, me):
     """Everyone but `me` who played a movie, or any episode of a series, the
-    latest first; None for an unknown series. A series counts as watched once
-    they finished every episode."""
+    latest first; None for an unknown series. For a series, `episodes` lists
+    the ids of the episodes each one watched, and it counts as watched once
+    they watched every episode."""
     if kind == "movie":
         keys = [f"movie:{id}"]
     else:
@@ -1193,13 +1194,35 @@ def watchers(progress, users, lib, kind, id, me):
         played = [entries[k] for k in keys if k in entries]
         if user == me or not played or user not in users.users:
             continue
-        out.append({
+        w = {
             "name": user,
             "display_name": users.users[user].get("display_name"),
-            "completed": len(played) == len(keys) and all(map(done, played)),
             "updated": max(e["updated"] for e in played),
-        })
+        }
+        if kind == "movie":
+            w["completed"] = done(played[0])
+        else:
+            seen = episodes_watched(entries, keys)
+            w["completed"] = len(seen) == len(keys)
+            w["episodes"] = [k.split(":", 1)[1] for k in keys if k in seen]
+        out.append(w)
     return sorted(out, key=lambda w: -w["updated"])
+
+
+def episodes_watched(entries, keys):
+    """Which of a series' episode keys (in order) these progress entries
+    count as watched: seen to 95%, or left past 90% (in the end credits)
+    for a later episode, which is what Next Episode does."""
+    seen = set()
+    for i, k in enumerate(keys):
+        e = entries.get(k)
+        if not e or e["duration"] <= 0 or e["position"] <= 30:
+            continue
+        frac = e["position"] / e["duration"]
+        later = any((entries.get(x) or {}).get("position", 0) > 1 for x in keys[i + 1:])
+        if frac >= 0.95 or (frac >= 0.90 and later):
+            seen.add(k)
+    return seen
 
 
 def viewed(progress, users, lib, me, limit=100):

@@ -61,6 +61,7 @@ Who else played a movie, or any episode of a series, for the row of faces under 
 | `display_name` | string | Optional; shown instead of `name`                            |
 | `completed`    | bool   | Optional; watched at least 95% of the movie, or of every episode of the series |
 | `updated`      | int    | Unix time they last played it                                |
+| `episodes`     | array  | Optional, series only; ids (strings) of the episodes they watched: seen to 95%, or left past 90% for a later episode. Clients show who watched each episode and season from it |
 
 The app shows up to three faces, the two latest names ("Jo Ann, sam and 2 others watched this") and the rest on hover. An empty list, `401`, `404`, `405` or `501` hide the row. It's asked for when a title's page opens, and again every minute while it stays open.
 
