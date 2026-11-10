@@ -11,7 +11,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: windows-2022
+            runner: windows-2025
           # built natively: bindgen needs clang >= 19 for MSVC's ARM64 headers
           - arch: aarch64
             runner: windows-11-arm
@@ -97,7 +97,7 @@ jobs:
 
       - name: Static dav1d (so no libdav1d.so is needed at runtime)
         run: |
-          git clone --depth 1 --branch 1.4.3 https://code.videolan.org/videolan/dav1d.git
+          git clone --depth 1 --branch 1.5.4 https://code.videolan.org/videolan/dav1d.git
           cd dav1d
           meson setup build --buildtype=release --default-library=static \
             --prefix=/opt/dav1d --libdir=lib -Denable_tools=false -Denable_tests=false
@@ -192,7 +192,7 @@ jobs:
     needs: linux
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
       options: --privileged
     steps:
       - uses: actions/checkout@v7

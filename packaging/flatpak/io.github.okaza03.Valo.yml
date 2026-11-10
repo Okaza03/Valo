@@ -4,7 +4,7 @@
 # runtime's glibc must be at least as new as the build machine's.
 id: io.github.okaza03.Valo
 runtime: org.freedesktop.Platform
-runtime-version: '25.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 command: valo
 finish-args:
