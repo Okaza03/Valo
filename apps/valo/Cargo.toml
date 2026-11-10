@@ -9,7 +9,7 @@ description = "A small, fast video player and media library client"
 # the UI (src/iced_ui), drawn with wgpu
 iced = { version = "0.14", default-features = false, features = ["wgpu", "x11", "wayland", "image-without-codecs", "canvas", "advanced", "crisp", "tokio"] }
 # the colors of the app styles (src/ui/theme.rs)
-ecolor = "0.31"
+ecolor = "0.37"
 cpal = "0.18"
 rfd = "0.17"
 anyhow = "1"
