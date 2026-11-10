@@ -383,9 +383,14 @@ impl Decoder {
                 .ok_or_else(|| anyhow!("no video stream"))?;
             (s.index(), s.time_base(), s.parameters())
         };
-        let vdec = codec::context::Context::from_parameters(vpar)?
-            .decoder()
-            .video()?;
+        let mut vctx = codec::context::Context::from_parameters(vpar)?;
+        // libavcodec decodes on one thread unless told otherwise: too slow for
+        // 4K HEVC, which then falls behind in busy scenes and stutters
+        vctx.set_threading(codec::threading::Config {
+            kind: codec::threading::Type::Frame,
+            count: 0, // one per core
+        });
+        let vdec = vctx.decoder().video()?;
         let adec = if audio.available {
             open_audio(&ictx).ok().flatten()
         } else {

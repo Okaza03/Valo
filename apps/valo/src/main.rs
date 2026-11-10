@@ -88,6 +88,18 @@ fn main() -> eframe::Result<()> {
         // Alt+Tab and notifications keep working.
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             present_mode: eframe::wgpu::PresentMode::Fifo,
+            // eframe's default skips the frame on an outdated or lost surface and
+            // waits for a resize event to reconfigure it. Going fullscreen on
+            // Wayland (NVIDIA) can leave the surface outdated after the last
+            // resize event, so every frame was skipped: the picture froze in
+            // fullscreen and the UI spun until fullscreen was left. Reconfigure
+            // right away instead.
+            on_surface_error: std::sync::Arc::new(|err| match err {
+                eframe::wgpu::SurfaceError::Outdated | eframe::wgpu::SurfaceError::Lost => {
+                    eframe::egui_wgpu::SurfaceErrorAction::RecreateSurface
+                }
+                _ => eframe::egui_wgpu::SurfaceErrorAction::SkipFrame,
+            }),
             ..Default::default()
         },
         ..Default::default()
