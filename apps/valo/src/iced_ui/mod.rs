@@ -8,6 +8,7 @@
 mod check;
 mod chrome;
 mod dialogs;
+mod grow;
 mod icon;
 mod images;
 mod library;
