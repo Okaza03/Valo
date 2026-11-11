@@ -33,7 +33,7 @@ Either list can be empty, missing or `null`. Any field can be left out or set to
 | `genres`       | string[]               |              | genre rows and filter                           | `["Sci-Fi"]`             |
 | `rating`       | string                 |              | age rating badge                                | `"PG-13"`                |
 | `duration`     | number                 |              | runtime, in seconds                             | `8880`                   |
-| `added`        | int                    |              | _Recently added_, Unix time                     | `1760000000`             |
+| `added`        | int                    |              | _Recently added_, Unix time. For a series, the latest of when it or one of its episodes was added, so a new episode brings it back | `1760000000`             |
 | `released`     | string                 |              | details, `YYYY-MM-DD`                           | `"2010-07-16"`           |
 | `director`     | string                 |              | details                                         | `"Christopher Nolan"`    |
 | `cast`         | [Cast](#cast-member)[] |              | cast row                                        |                          |
@@ -87,6 +87,7 @@ Same as a movie, minus `stream`, `subtitles`, `director`, `budget`, `revenue` an
 | `file`     | [File](#file-info) |              |                             |
 | `subtitles` | [Subtitle](#subtitle)[] |         | The player's subtitle menu  |
 | `unavailable` | bool             |              | Being moved; its series' flag counts too |
+| `added`    | int                |              | Unix time it was added. The newest (Featurettes not counted) puts its series in _Recently added_ |
 
 ### Cast member
 

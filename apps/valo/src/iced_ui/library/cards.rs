@@ -475,9 +475,8 @@ pub fn card_at<'a>(
     } else {
         1.0
     };
-    let art_area: Element<Msg> = iced::widget::float(stack(layers).width(w).height(h))
-        .scale(grow)
-        .into();
+    let art_area: Element<Msg> =
+        crate::iced_ui::grow::grow(stack(layers).width(w).height(h), grow).into();
     let art_area = mouse_area(art_area)
         .on_press(click)
         .on_enter(Msg::Hover(Some(key)))
