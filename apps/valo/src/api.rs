@@ -804,6 +804,13 @@ pub struct SyncReport {
     /// sync downloads again (`missing_images`, or `missing_art`).
     #[serde(alias = "missing_art")]
     pub missing_images: MissingImages,
+    /// Files whose names don't follow the library's naming, often with the
+    /// name the server would give them after an arrow (`unrenamed`).
+    #[serde(skip)]
+    pub to_rename: Vec<String>,
+    /// Entries the server lists as not edited yet (`unedited`).
+    #[serde(skip)]
+    pub unedited_list: Vec<String>,
     /// Changes per kind (movies, series) when the server lists them apart.
     #[serde(skip)]
     split: Option<(usize, usize)>,
@@ -819,12 +826,27 @@ pub struct SyncReport {
     removed_series: Vec<String>,
     dry_run: Option<bool>,
     started: bool,
+    /// `{"movies": […], "series": […], "seasons": […], "episodes": […]}`
+    new: MissingImages,
+    unrenamed: MissingImages,
+    unedited: MissingImages,
 }
 
 impl SyncReport {
-    /// Fold per-kind lists, `dry_run` and `started` into the documented
-    /// fields; `accepted` is a `202` answer (started, not done).
+    /// Fold per-kind lists, `new`, `unrenamed`, `unedited`, `dry_run` and
+    /// `started` into the documented fields; `accepted` is a `202` answer
+    /// (started, not done).
     fn tidy(mut self, accepted: bool) -> Self {
+        let new = std::mem::take(&mut self.new);
+        self.added_movies.extend(new.movies);
+        self.added_series.extend(
+            new.series
+                .into_iter()
+                .chain(new.seasons)
+                .chain(new.episodes),
+        );
+        self.to_rename = std::mem::take(&mut self.unrenamed).into_lines();
+        self.unedited_list = std::mem::take(&mut self.unedited).into_lines();
         let movies = self.added_movies.len() + self.removed_movies.len();
         let series = self.added_series.len() + self.removed_series.len();
         if movies + series > 0 {
@@ -860,7 +882,7 @@ impl SyncReport {
         let m = &self.missing_images;
         let images = match kind {
             Kind::Movie => !m.movies.is_empty(),
-            Kind::Series => !m.series.is_empty() || !m.episodes.is_empty(),
+            Kind::Series => !m.series.is_empty() || !m.seasons.is_empty() || !m.episodes.is_empty(),
         };
         if self.running || images {
             return true;
@@ -897,20 +919,27 @@ fn path_kind(path: &str) -> Option<Kind> {
         .then_some(Kind::Series)
 }
 
-/// Titles whose image files are missing, from a folder scan, as lines like
-/// "Arcane (poster, logo)". Servers send `{"movies": […], "series": […],
+/// Lists from a folder scan grouped by kind, as lines: titles whose image
+/// files are missing ("Arcane (poster, logo)"), new files, files to rename.
+/// Servers send `{"movies": […], "series": […], "seasons": […],
 /// "episodes": […]}` with strings or objects (`title`, `year`, `season`,
 /// `episode`, `missing`), or one list of objects with a `type`.
 #[derive(Clone, Debug, Default)]
 pub struct MissingImages {
     pub movies: Vec<String>,
     pub series: Vec<String>,
+    pub seasons: Vec<String>,
     pub episodes: Vec<String>,
 }
 
 impl MissingImages {
     pub fn len(&self) -> usize {
-        self.movies.len() + self.series.len() + self.episodes.len()
+        self.movies.len() + self.series.len() + self.seasons.len() + self.episodes.len()
+    }
+
+    /// Every line, movies first.
+    fn into_lines(self) -> Vec<String> {
+        [self.movies, self.series, self.seasons, self.episodes].concat()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -921,6 +950,7 @@ impl MissingImages {
         match kind.to_lowercase().as_str() {
             "movies" | "movie" => Some(&mut self.movies),
             "series" | "show" | "shows" => Some(&mut self.series),
+            "seasons" | "season" => Some(&mut self.seasons),
             "episodes" | "episode" => Some(&mut self.episodes),
             _ => None,
         }
@@ -2957,6 +2987,26 @@ mod tests {
             (l[0].message.as_str(), l[0].time),
             ("[00:39:39] folders", 0)
         );
+    }
+
+    #[test]
+    fn grouped_scan_lists() {
+        // what the live PHP server answers for a folder dry run
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":[],"removed":[],"applied":false,"added_movies":[],"removed_movies":[],
+                "added_series":[],"removed_series":[],
+                "missing_images":{"movies":[],"series":[],"episodes":[]},
+                "new":{"seasons":[],"episodes":["VisionQuest \u00b7 S01E08"]},
+                "unrenamed":{"movies":[],"series":[],"seasons":[],"episodes":["a.mkv  \u2192  b.mkv"]},
+                "unedited":{"movies":[],"series":[],"seasons":["Chernobyl \u00b7 Season 999"],"episodes":[]}}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert_eq!(r.added, ["VisionQuest · S01E08"]);
+        assert_eq!(r.to_rename, ["a.mkv  →  b.mkv"]);
+        assert_eq!(r.unedited_list, ["Chernobyl · Season 999"]);
+        assert!(!r.applied);
+        assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
     }
 
     #[test]

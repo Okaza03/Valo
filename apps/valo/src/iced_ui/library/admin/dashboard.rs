@@ -674,6 +674,22 @@ impl State {
                     ),
                 ));
             }
+            if !rep.to_rename.is_empty() {
+                col = col.push(self.report_list(
+                    &format!("To rename: {}", rep.to_rename.len()),
+                    &rep.to_rename,
+                    c(WARN()),
+                    Some("Names that don't follow the library's naming, with the server's suggestion after the arrow."),
+                ));
+            }
+            if !rep.unedited_list.is_empty() {
+                col = col.push(self.report_list(
+                    &format!("Not edited: {}", rep.unedited_list.len()),
+                    &rep.unedited_list,
+                    c(WARN()),
+                    None,
+                ));
+            }
             let missing = &rep.missing_images;
             if !missing.is_empty() {
                 let key = format!("Missing images: {}", missing.len());
@@ -685,6 +701,7 @@ impl State {
                     for (label, list) in [
                         ("Movies", &missing.movies),
                         ("Series", &missing.series),
+                        ("Seasons", &missing.seasons),
                         ("Episodes", &missing.episodes),
                     ] {
                         if !list.is_empty() {
