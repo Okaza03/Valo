@@ -1,27 +1,28 @@
-# Valo v0.9.13
+# Valo v0.9.14
 
-Posters show up much faster, and series pages say who's been watching each season and episode.
+Hovering posters works again, new episodes show up in Recently added, and a folder sync dry run finds new files.
 
 ### Fixed
-- **Posters load faster:** the posters you're looking at load first, top to bottom, instead of the ones at the bottom of the page. Downloaded artwork is kept for a day, so the next start shows it right away.
-- **Hovering a poster:** the top of the poster you point at is no longer cut off under the row's title.
+- **Sync folders finds new files:** the dry run lists files that aren't in the library yet under **New on disk**, and turns on **Sync series** or **Sync movies** to add them. Before, a new episode didn't show up at all.
+- **Hovering posters:** posters in Continue watching, My list and Recently added no longer vanish when you hover them after scrolling down, and posters no longer flicker when you point at **More info**.
+- **New episodes in Recently added:** adding an episode brings its series back to the front of Recently added, the same as a new movie or series. Needs a server that sends `added` for episodes or updates the series' `added`; with an older one, only new series show.
 
-### Changed
-- **Who watched what:** "Artur has watched this season" shows on every season where they watched an episode, and "Artur has watched this episode" under every episode they played, even ones they didn't finish. Needs a server that lists the episodes each person played (`viewed` in `/api/watchers/series/<id>`); with an older one, only finished episodes count.
+### New
+- **More in the folder scan:** **To rename** lists files whose names don't follow the library's naming, with the server's suggested name after the arrow. **Not edited** lists entries no sync has fetched details for yet. Missing images can also list seasons.
 
 ### Downloads
 | File | For |
 |---|---|
-| `valo-v0.9.13-x86_64-setup.exe` | Windows 10/11 (updates itself) |
-| `valo-v0.9.13-aarch64-setup.exe` | Windows 11 on ARM64 (updates itself) |
-| `valo-0.9.13-windows-x86_64.zip` | Windows, portable |
-| `valo-0.9.13-windows-aarch64.zip` | Windows on ARM64, portable |
-| `valo-v0.9.13-x86_64.AppImage` | any Linux distro (`chmod +x` and run, updates itself) |
-| `valo-v0.9.13-x86_64.flatpak` | any distro with Flatpak (updates itself and through `flatpak update`; added a few minutes after the others) |
-| `valo_0.9.13-1_amd64.deb` | Debian / Ubuntu / Mint |
-| `valo-0.9.13-linux-x86_64.tar.gz` | manual install |
-| `valo-v0.9.13-androidtv.apk` | Android TV and Google TV (updates itself) |
-| `valo-v0.9.13-android.apk` | Android phones and tablets (updates itself) |
+| `valo-v0.9.14-x86_64-setup.exe` | Windows 10/11 (updates itself) |
+| `valo-v0.9.14-aarch64-setup.exe` | Windows 11 on ARM64 (updates itself) |
+| `valo-0.9.14-windows-x86_64.zip` | Windows, portable |
+| `valo-0.9.14-windows-aarch64.zip` | Windows on ARM64, portable |
+| `valo-v0.9.14-x86_64.AppImage` | any Linux distro (`chmod +x` and run, updates itself) |
+| `valo-v0.9.14-x86_64.flatpak` | any distro with Flatpak (updates itself and through `flatpak update`; added a few minutes after the others) |
+| `valo_0.9.14-1_amd64.deb` | Debian / Ubuntu / Mint |
+| `valo-0.9.14-linux-x86_64.tar.gz` | manual install |
+| `valo-v0.9.14-androidtv.apk` | Android TV and Google TV (updates itself) |
+| `valo-v0.9.14-android.apk` | Android phones and tablets (updates itself) |
 
 If you're using the Windows installer, the AppImage, the Flatpak or the TV app, click **Update** to get this version.
 
