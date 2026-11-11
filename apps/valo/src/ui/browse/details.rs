@@ -219,14 +219,23 @@ fn have(n: usize) -> &'static str {
     }
 }
 
-/// `w` watched episode `e` of season number `season`. Servers name it by
+/// Episode `e` of season number `season` is in `list`. Servers name it by
 /// the library's id (which the app keeps as "episode:<id>") or as "S01E02".
-fn saw(w: &Watcher, season: u32, e: &crate::api::Episode) -> bool {
+fn listed(list: &[String], season: u32, e: &crate::api::Episode) -> bool {
     let id = e.id.strip_prefix("episode:").unwrap_or(&e.id);
     let code = format!("S{season:02}E{:02}", e.number);
-    w.episodes
-        .iter()
+    list.iter()
         .any(|x| x == id || x == &e.id || x.eq_ignore_ascii_case(&code))
+}
+
+/// `w` watched episode `e` to the end.
+fn saw(w: &Watcher, season: u32, e: &crate::api::Episode) -> bool {
+    listed(&w.episodes, season, e)
+}
+
+/// `w` played episode `e` at all, finished or not.
+fn viewed(w: &Watcher, season: u32, e: &crate::api::Episode) -> bool {
+    saw(w, season, e) || listed(&w.viewed, season, e)
 }
 
 /// Every episode of the season watched by `w`.
@@ -248,8 +257,8 @@ fn watched_series(w: &Watcher, s: &Item) -> bool {
 }
 
 /// What the series page says above a season's episodes about who else
-/// watched it: "Artur has watched the whole series", or, for those who
-/// watched only this season, "Artur has watched this season".
+/// watched it: "Artur has watched the whole series", or, for the others who
+/// played any of this season's episodes, "Artur has watched this season".
 pub(crate) fn watchers_season_notes(list: &[Watcher], s: &Item, si: usize) -> Vec<String> {
     let mut out = Vec::new();
     let whole: Vec<&Watcher> = list.iter().filter(|w| watched_series(w, s)).collect();
@@ -263,7 +272,7 @@ pub(crate) fn watchers_season_notes(list: &[Watcher], s: &Item, si: usize) -> Ve
     let season: Vec<&Watcher> = match s.seasons.get(si) {
         Some(x) => list
             .iter()
-            .filter(|w| !watched_series(w, s) && saw_season(w, x))
+            .filter(|w| !watched_series(w, s) && x.episodes.iter().any(|e| viewed(w, x.number, e)))
             .collect(),
         None => Vec::new(),
     };
@@ -277,7 +286,8 @@ pub(crate) fn watchers_season_notes(list: &[Watcher], s: &Item, si: usize) -> Ve
     out
 }
 
-/// Under an episode: "Artur watched this episode", for whoever else watched it.
+/// Under an episode: "Artur has watched this episode", for whoever else
+/// played it at all.
 pub(crate) fn watchers_episode_text(list: &[Watcher], s: &Item, ep: &str) -> Option<String> {
     let (season, e) = s.seasons.iter().find_map(|x| {
         x.episodes
@@ -287,9 +297,15 @@ pub(crate) fn watchers_episode_text(list: &[Watcher], s: &Item, ep: &str) -> Opt
     })?;
     let who: Vec<&Watcher> = list
         .iter()
-        .filter(|w| saw(w, season, e) || (w.episodes.is_empty() && watched_series(w, s)))
+        .filter(|w| viewed(w, season, e) || (w.episodes.is_empty() && watched_series(w, s)))
         .collect();
-    (!who.is_empty()).then(|| format!("{} watched this episode", names(who.into_iter())))
+    (!who.is_empty()).then(|| {
+        format!(
+            "{} {} watched this episode",
+            names(who.iter().copied()),
+            have(who.len())
+        )
+    })
 }
 
 const MONTHS: [&str; 12] = [
@@ -308,6 +324,57 @@ fn ymd(s: &str) -> Option<(u32, usize, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn started_episodes_count_for_the_episode_and_its_season() {
+        let ep = |id: &str, number| crate::api::Episode {
+            id: id.into(),
+            number,
+            ..Default::default()
+        };
+        let s = Item {
+            seasons: vec![
+                crate::api::Season {
+                    number: 1,
+                    title: None,
+                    episodes: vec![ep("episode:1", 1), ep("episode:2", 2)],
+                },
+                crate::api::Season {
+                    number: 2,
+                    title: None,
+                    episodes: vec![ep("episode:3", 1)],
+                },
+            ],
+            ..Default::default()
+        };
+        // finished nothing, started S01E02 (by code) and episode 3 (by id)
+        let list = [Watcher {
+            name: "havard".into(),
+            viewed: vec!["S01E02".into(), "3".into()],
+            ..Default::default()
+        }];
+        assert_eq!(
+            watchers_season_notes(&list, &s, 0),
+            ["havard has watched this season"]
+        );
+        assert_eq!(
+            watchers_season_notes(&list, &s, 1),
+            ["havard has watched this season"]
+        );
+        assert_eq!(watchers_episode_text(&list, &s, "episode:1"), None);
+        assert_eq!(
+            watchers_episode_text(&list, &s, "episode:2").as_deref(),
+            Some("havard has watched this episode")
+        );
+        assert_eq!(
+            watchers_episode_text(&list, &s, "episode:3").as_deref(),
+            Some("havard has watched this episode")
+        );
+        // the server's field may also be called "started" or "watching"
+        let w: Watcher =
+            serde_json::from_str(r#"{"name":"jo","episodes":[],"started":["S01E01"]}"#).unwrap();
+        assert_eq!(w.viewed, ["S01E01"]);
+    }
 
     #[test]
     fn who_watched_seasons_and_episodes() {
@@ -338,7 +405,8 @@ mod tests {
             watchers_season_notes(&list, &s, 0),
             [
                 "kim has watched the whole series",
-                "artur has watched this season"
+                // sam watched one of its two episodes: that's enough
+                "artur and sam have watched this season"
             ]
         );
         assert_eq!(
@@ -347,11 +415,11 @@ mod tests {
         );
         assert_eq!(
             watchers_episode_text(&list, &s, "a").as_deref(),
-            Some("artur, sam and 1 other watched this episode")
+            Some("artur, sam and 1 other have watched this episode")
         );
         assert_eq!(
             watchers_episode_text(&list, &s, "c").as_deref(),
-            Some("kim watched this episode")
+            Some("kim has watched this episode")
         );
         // named "S01E02" instead of by id, and ids as the app keeps them
         let mut s2 = s.clone();
@@ -364,11 +432,11 @@ mod tests {
         let coded = [w("havard", &["S01E01", "s01e02"]), w("ruben", &["01"])];
         assert_eq!(
             watchers_season_notes(&coded, &s2, 0),
-            ["havard has watched this season"]
+            ["havard and ruben have watched this season"]
         );
         assert_eq!(
             watchers_episode_text(&coded, &s2, "episode:01").as_deref(),
-            Some("havard and ruben watched this episode")
+            Some("havard and ruben have watched this episode")
         );
         // an older server: only "completed"
         let old = [Watcher {
@@ -381,7 +449,12 @@ mod tests {
             ["jo has watched the whole series"]
         );
         assert!(watchers_episode_text(&old, &s, "b").is_some());
-        assert!(watchers_season_notes(&list[1..2], &s, 0).is_empty());
+        // one episode of a season is enough for it, and only for that season
+        assert_eq!(
+            watchers_season_notes(&list[1..2], &s, 0),
+            ["sam has watched this season"]
+        );
+        assert!(watchers_season_notes(&list[1..2], &s, 1).is_empty());
     }
 
     #[test]

@@ -1179,8 +1179,8 @@ def user_analytics(progress, users, lib, name, days):
 def watchers(progress, users, lib, kind, id, me):
     """Everyone but `me` who played a movie, or any episode of a series, the
     latest first; None for an unknown series. For a series, `episodes` lists
-    the ids of the episodes each one watched, and it counts as watched once
-    they watched every episode."""
+    the ids of the episodes each one watched (to 90%), `viewed` those they
+    played at all, and it counts as watched once they watched every episode."""
     if kind == "movie":
         keys = [f"movie:{id}"]
     else:
@@ -1205,6 +1205,7 @@ def watchers(progress, users, lib, kind, id, me):
             seen = episodes_watched(entries, keys)
             w["completed"] = len(seen) == len(keys)
             w["episodes"] = [k.split(":", 1)[1] for k in keys if k in seen]
+            w["viewed"] = [k.split(":", 1)[1] for k in keys if k in entries]
         out.append(w)
     return sorted(out, key=lambda w: -w["updated"])
 

@@ -474,6 +474,10 @@ pub struct Watcher {
     /// or as "S01E02". Empty from servers that don't send it.
     #[serde(deserialize_with = "id_strings")]
     pub episodes: Vec<String>,
+    /// For a series: every episode they played at all (0–100%), named like
+    /// `episodes`. Empty from servers that don't send it.
+    #[serde(deserialize_with = "id_strings", alias = "started", alias = "watching")]
+    pub viewed: Vec<String>,
 }
 
 /// A title other users played lately (`GET /api/watchers`).
