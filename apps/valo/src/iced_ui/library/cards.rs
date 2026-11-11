@@ -649,6 +649,10 @@ pub fn row_of<'a>(
         );
     }
     let (card_w, card_h) = if landscape(wide) { WIDE } else { POSTER };
+    // a hovered card grows past the row's top, and the row's scroll area clips
+    // what's drawn over it: room for that above the cards, taken off the gap
+    // under the heading so the page doesn't move
+    let rise = hover_rise(card_w, card_h);
     let mut strip = row![Space::new().width(SIDE - GAP)].spacing(GAP);
     for c in cards {
         let key = format!("{title}\u{1f}{}", c.item);
@@ -658,7 +662,7 @@ pub fn row_of<'a>(
     let content_w = 2.0 * SIDE + cards.len() as f32 * (card_w + GAP) - GAP;
     let max = (content_w - width).max(0.0);
     let scroll_id = id.clone();
-    let strip = scrollable(strip)
+    let strip = scrollable(container(strip).padding(Padding::default().top(rise)))
         .id(id.clone())
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new().width(0).scroller_width(0),
@@ -681,21 +685,38 @@ pub fn row_of<'a>(
                 .height(h - 40.0),
             )
             .width(width)
-            .height(h)
-            .padding(Padding::default().left(1.0).right(1.0).bottom(20.0))
+            .height(h + rise)
+            .padding(
+                Padding::default()
+                    .left(1.0)
+                    .right(1.0)
+                    .top(rise)
+                    .bottom(20.0),
+            )
             .align_y(Vertical::Center)
             .into(),
         );
     }
     let key = format!("row\u{1f}{title}");
     column![
-        container(head).padding(Padding::default().left(SIDE).top(18.0).bottom(14.0)),
-        mouse_area(stack(layers).width(Length::Fill).height(h))
+        container(head).padding(
+            Padding::default()
+                .left(SIDE)
+                .top(18.0)
+                .bottom((14.0 - rise).max(0.0))
+        ),
+        mouse_area(stack(layers).width(Length::Fill).height(h + rise))
             .on_enter(Msg::RowOver(Some(key)))
             .on_exit(Msg::RowOver(None)),
         space().height(8),
     ]
     .into()
+}
+
+/// How far a hovered `w`×`h` card grows above its top edge.
+fn hover_rise(w: f32, h: f32) -> f32 {
+    let g = theme::spec().hover_grow;
+    (g * h / w.max(1.0)).ceil() + 1.0
 }
 
 /// A row's paging arrow: a dark strip with a chevron.
