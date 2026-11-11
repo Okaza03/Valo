@@ -129,8 +129,8 @@ pub fn newer(latest: &str, current: &str) -> bool {
     a > b
 }
 
-fn agent(timeout: Option<Duration>) -> ureq::Agent {
-    let mut b = ureq::AgentBuilder::new()
+fn agent(timeout: Option<Duration>) -> crate::net::Agent {
+    let mut b = crate::net::Builder::new()
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(30))
         .user_agent(concat!("Valo/", env!("CARGO_PKG_VERSION")));
@@ -159,8 +159,8 @@ fn latest(flatpak: bool) -> Result<Option<Release>> {
         .call()
     {
         Ok(r) => r.into_json()?,
-        Err(ureq::Error::Status(404, _)) => return Err(anyhow!("no releases published yet")),
-        Err(ureq::Error::Status(code, _)) => return Err(anyhow!("GitHub answered {code}")),
+        Err(crate::net::Error::Status(404, _)) => return Err(anyhow!("no releases published yet")),
+        Err(crate::net::Error::Status(code, _)) => return Err(anyhow!("GitHub answered {code}")),
         Err(e) => return Err(anyhow!("can't reach GitHub ({e})")),
     };
     let version = r.tag_name.trim_start_matches(['v', 'V']).to_owned();

@@ -146,10 +146,10 @@ fn get_within<T: DeserializeOwned>(a: &Addon, path: &str, limit: Duration) -> Re
 
 /// One agent for every addon request, so connections are reused instead
 /// of a new TLS handshake each time.
-fn agent() -> &'static ureq::Agent {
-    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+fn agent() -> &'static crate::net::Agent {
+    static AGENT: std::sync::OnceLock<crate::net::Agent> = std::sync::OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::AgentBuilder::new()
+        crate::net::Builder::new()
             .timeout_connect(Duration::from_secs(5))
             .max_idle_connections_per_host(8)
             .user_agent(concat!("Valo/", env!("CARGO_PKG_VERSION")))

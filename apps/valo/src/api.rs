@@ -1442,11 +1442,11 @@ impl std::error::Error for NoAdminApi {}
 
 /// An admin request failed. The server's own message (`error` for the
 /// Python server, `message` for Laravel) says why, e.g. "user exists".
-fn admin_err(e: ureq::Error) -> anyhow::Error {
+fn admin_err(e: crate::net::Error) -> anyhow::Error {
     match e {
-        ureq::Error::Status(401, _) => anyhow!(Unauthorized),
-        ureq::Error::Status(403, _) => anyhow!("the server says this account isn't an admin"),
-        ureq::Error::Status(code, r) => {
+        crate::net::Error::Status(401, _) => anyhow!(Unauthorized),
+        crate::net::Error::Status(403, _) => anyhow!("the server says this account isn't an admin"),
+        crate::net::Error::Status(code, r) => {
             let text = r.status_text().to_owned();
             let msg = r.into_json::<Value>().ok().and_then(|v| {
                 let m = v.get("error").or_else(|| v.get("message"))?;
@@ -1458,15 +1458,15 @@ fn admin_err(e: ureq::Error) -> anyhow::Error {
                 None => anyhow!("server answered {code} {text}"),
             }
         }
-        ureq::Error::Transport(t) => anyhow!("can't reach the server: {t}"),
+        crate::net::Error::Transport(t) => anyhow!("can't reach the server: {t}"),
     }
 }
 
 /// Like [`admin_err`], but a `404`/`405`/`501` always means the server
 /// doesn't have this part of the admin API (even with a message).
-fn admin_missing(e: ureq::Error) -> anyhow::Error {
+fn admin_missing(e: crate::net::Error) -> anyhow::Error {
     match e {
-        ureq::Error::Status(404 | 405 | 501, _) => anyhow!(NoAdminApi),
+        crate::net::Error::Status(404 | 405 | 501, _) => anyhow!(NoAdminApi),
         e => admin_err(e),
     }
 }
@@ -1659,11 +1659,11 @@ pub struct Client {
     /// Signed in as an admin: show the Admin buttons. Only hides them;
     /// the server's /admin page must check permissions itself.
     pub admin: bool,
-    agent: ureq::Agent,
+    agent: crate::net::Agent,
 }
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+fn agent() -> crate::net::Agent {
+    crate::net::Builder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout_read(Duration::from_secs(30))
         .user_agent(concat!("Valo/", env!("CARGO_PKG_VERSION")))
@@ -1696,13 +1696,13 @@ pub fn join(base: &str, rel: &str) -> String {
     }
 }
 
-fn status_err(e: ureq::Error, what: &str) -> anyhow::Error {
+fn status_err(e: crate::net::Error, what: &str) -> anyhow::Error {
     match e {
-        ureq::Error::Status(401 | 403, _) => anyhow!(Unauthorized),
-        ureq::Error::Status(code, r) => {
+        crate::net::Error::Status(401 | 403, _) => anyhow!(Unauthorized),
+        crate::net::Error::Status(code, r) => {
             anyhow!("{what}: server answered {code} {}", r.status_text())
         }
-        ureq::Error::Transport(t) => anyhow!("{what}: {t}"),
+        crate::net::Error::Transport(t) => anyhow!("{what}: {t}"),
     }
 }
 
@@ -1732,7 +1732,7 @@ impl Client {
                 match agent.get(&format!("{base}/")).call() {
                     Ok(_) => {}
                     // it answered, so it's up, but there's nothing for us here
-                    Err(ureq::Error::Status(..)) => bail!(Missing::Api),
+                    Err(crate::net::Error::Status(..)) => bail!(Missing::Api),
                     Err(e) => return Err(status_err(e, "can't reach the server")),
                 }
                 ServerInfo {
@@ -1765,7 +1765,7 @@ impl Client {
         self.token.as_ref().map(|t| format!("Bearer {t}"))
     }
 
-    fn get(&self, url: &str) -> ureq::Request {
+    fn get(&self, url: &str) -> crate::net::Request {
         let r = self.agent.get(url);
         match self.auth_header() {
             Some(h) => r.set("Authorization", &h),
@@ -1784,10 +1784,10 @@ impl Client {
         match r {
             // e.g. a web app answering every path with its HTML page
             Ok(r) => r.into_json().map_err(|_| anyhow!(Missing::Login)),
-            Err(ureq::Error::Status(400 | 401 | 403 | 422, _)) => {
+            Err(crate::net::Error::Status(400 | 401 | 403 | 422, _)) => {
                 bail!("Wrong username or password")
             }
-            Err(ureq::Error::Status(404 | 405 | 501, _)) => bail!(Missing::Login),
+            Err(crate::net::Error::Status(404 | 405 | 501, _)) => bail!(Missing::Login),
             Err(e) => Err(status_err(e, "sign-in failed")),
         }
     }
@@ -1822,7 +1822,7 @@ impl Client {
                 .set("Accept", "application/json")
                 .call()
             {
-                Err(ureq::Error::Status(404 | 405 | 501, _)) => bail!(Missing::Library),
+                Err(crate::net::Error::Status(404 | 405 | 501, _)) => bail!(Missing::Library),
                 r => r.map_err(|e| status_err(e, "can't load the library"))?,
             }
             .into_json::<Library>()
@@ -1847,7 +1847,7 @@ impl Client {
                     .context("the server sent progress this app doesn't understand")?,
             )),
             // 401 also covers servers without sign-in, which have no user to keep it for
-            Err(ureq::Error::Status(401 | 404 | 405 | 501, _)) => Ok(None),
+            Err(crate::net::Error::Status(401 | 404 | 405 | 501, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't load watch progress")),
         }
     }
@@ -1867,7 +1867,7 @@ impl Client {
         let url = format!("{}/api/watchers/{kind}/{}", self.base, encode_segment(id));
         match self.get(&url).set("Accept", "application/json").call() {
             Ok(r) => Ok(r.into_json().unwrap_or_default()),
-            Err(ureq::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(Vec::new()),
+            Err(crate::net::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(Vec::new()),
             Err(e) => Err(status_err(e, "can't load who watched this")),
         }
     }
@@ -1881,7 +1881,7 @@ impl Client {
         let url = format!("{}/api/watchers", self.base);
         match self.get(&url).set("Accept", "application/json").call() {
             Ok(r) => Ok(r.into_json().ok()),
-            Err(ureq::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(None),
+            Err(crate::net::Error::Status(401 | 403 | 404 | 405 | 501, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't load what others watched")),
         }
     }
@@ -1901,7 +1901,7 @@ impl Client {
         });
         match r.send_json(body) {
             Ok(r) => Ok(r.into_json().ok()),
-            Err(ureq::Error::Status(404 | 422, _)) => Ok(None),
+            Err(crate::net::Error::Status(404 | 422, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't save watch progress")),
         }
     }
@@ -1922,7 +1922,7 @@ impl Client {
                 r.into_json()
                     .context("the server sent a list this app doesn't understand")?,
             )),
-            Err(ureq::Error::Status(401 | 404 | 405 | 501, _)) => Ok(None),
+            Err(crate::net::Error::Status(401 | 404 | 405 | 501, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't load your lists")),
         }
     }
@@ -1939,7 +1939,7 @@ impl Client {
         }
         match r.send_json(body) {
             Ok(r) => Ok(r.into_json().ok()),
-            Err(ureq::Error::Status(404 | 405 | 422 | 501, _)) => Ok(None),
+            Err(crate::net::Error::Status(404 | 405 | 422 | 501, _)) => Ok(None),
             Err(e) => Err(status_err(e, "can't save your lists")),
         }
     }
@@ -1969,12 +1969,12 @@ impl Client {
         }
         match r.send_json(serde_json::json!({ "current_password": current, "password": new })) {
             Ok(_) => Ok(()),
-            Err(ureq::Error::Status(401, _)) => Err(anyhow!(Unauthorized)),
-            Err(ureq::Error::Status(403, _)) => bail!("Your current password isn't right"),
-            Err(ureq::Error::Status(404 | 405 | 501, _)) => {
+            Err(crate::net::Error::Status(401, _)) => Err(anyhow!(Unauthorized)),
+            Err(crate::net::Error::Status(403, _)) => bail!("Your current password isn't right"),
+            Err(crate::net::Error::Status(404 | 405 | 501, _)) => {
                 bail!("This server can't change passwords from the app")
             }
-            Err(ureq::Error::Status(code, r)) => {
+            Err(crate::net::Error::Status(code, r)) => {
                 let msg = r
                     .into_json::<Value>()
                     .ok()
@@ -1994,7 +1994,7 @@ impl Client {
             .call()
         {
             Ok(r) => Ok(r.into_json().ok()),
-            Err(ureq::Error::Status(404 | 405 | 501, _)) => Ok(None),
+            Err(crate::net::Error::Status(404 | 405 | 501, _)) => Ok(None),
             Err(e) => Err(admin_err(e)),
         }
     }
@@ -2024,11 +2024,11 @@ impl Client {
         let url = format!("{}/admin", self.base);
         !matches!(
             self.agent.get(&url).call(),
-            Err(ureq::Error::Status(404 | 405 | 501, _) | ureq::Error::Transport(_))
+            Err(crate::net::Error::Status(404 | 405 | 501, _) | crate::net::Error::Transport(_))
         )
     }
 
-    fn admin(&self, method: &str, path: &str) -> ureq::Request {
+    fn admin(&self, method: &str, path: &str) -> crate::net::Request {
         let r = self
             .agent
             .request(method, &format!("{}/api/admin/{path}", self.base))
@@ -2043,7 +2043,7 @@ impl Client {
     pub fn admin_users(&self) -> Result<Vec<AdminUser>> {
         match self.admin("GET", "users").call() {
             Ok(r) => r.into_json().map_err(|_| anyhow!(NoAdminApi)), // e.g. a web app's HTML page
-            Err(ureq::Error::Status(404 | 405 | 501, _)) => bail!(NoAdminApi),
+            Err(crate::net::Error::Status(404 | 405 | 501, _)) => bail!(NoAdminApi),
             Err(e) => Err(admin_err(e)),
         }
     }
@@ -2355,7 +2355,7 @@ impl Client {
             .call()
         {
             Ok(r) => Ok(r.into_json().unwrap_or_default()),
-            Err(ureq::Error::Status(404 | 405 | 501, _)) => Ok(Vec::new()),
+            Err(crate::net::Error::Status(404 | 405 | 501, _)) => Ok(Vec::new()),
             Err(e) => Err(status_err(e, "addons")),
         }
     }
@@ -2372,7 +2372,7 @@ impl Client {
             .call()
         {
             Ok(r) => Ok(r.into_json().unwrap_or_default()),
-            Err(ureq::Error::Status(404 | 405 | 501, _)) => Ok(ServerLayout::default()),
+            Err(crate::net::Error::Status(404 | 405 | 501, _)) => Ok(ServerLayout::default()),
             Err(e) => Err(status_err(e, "layout")),
         }
     }
