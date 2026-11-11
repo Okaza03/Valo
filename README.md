@@ -5,7 +5,7 @@
 **A small, fast video player for your own media library.**
 
 [![CI](https://github.com/Okaza03/Valo/actions/workflows/ci.yml/badge.svg)](https://github.com/Okaza03/Valo/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/Okaza03/Valo?sort=semver)](https://github.com/Okaza03/Valo/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/Okaza03/Valo?sort=semver&color=brightgreen)](https://github.com/Okaza03/Valo/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Okaza03/Valo/total)](https://github.com/Okaza03/Valo/releases)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
