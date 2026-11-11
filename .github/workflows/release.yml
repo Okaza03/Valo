@@ -83,7 +83,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential git curl ca-certificates wget file xz-utils \
             pkg-config clang libclang-dev nasm ninja-build python3-pip patchelf \
-            librsvg2-bin desktop-file-utils \
+            librsvg2-bin desktop-file-utils appstream \
             libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev \
             libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
           pip3 install meson
@@ -131,8 +131,9 @@ jobs:
 
       - name: AppImage
         run: |
-          # adjust these two paths to wherever the files live in your repo
-          DESKTOP=packaging/valo.desktop
+          # named like the AppStream id, which must be reverse-DNS and match it
+          DESKTOP=io.github.okaza03.Valo.desktop
+          cp packaging/valo.desktop "$DESKTOP"
           ICON_SVG=packaging/valo.svg
 
           desktop-file-validate "$DESKTOP"
@@ -148,6 +149,10 @@ jobs:
             --icon-file valo.png
           # also ship the SVG so it stays sharp at any size
           install -Dm644 "$ICON_SVG" AppDir/usr/share/icons/hicolor/scalable/apps/valo.svg
+          # AppStream metadata for software centres, the same file the Flatpak ships;
+          # appimagetool wants it named after the desktop file
+          install -Dm644 packaging/flatpak/io.github.okaza03.Valo.metainfo.xml \
+            AppDir/usr/share/metainfo/io.github.okaza03.Valo.appdata.xml
 
           ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir \
             "target/dist/$APP-${GITHUB_REF_NAME}-x86_64.AppImage"
