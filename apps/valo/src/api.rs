@@ -804,6 +804,17 @@ pub struct SyncReport {
     /// sync downloads again (`missing_images`, or `missing_art`).
     #[serde(alias = "missing_art")]
     pub missing_images: MissingImages,
+    /// Files on disk that aren't in the library yet. Unlike `added`,
+    /// applying the folder sync doesn't add them: _Sync movies_ or _Sync
+    /// series_ does.
+    pub new: MissingImages,
+    /// Files whose names don't follow the library's naming, often with the
+    /// name the server would give them after an arrow (`unrenamed`).
+    #[serde(skip)]
+    pub to_rename: Vec<String>,
+    /// Entries no sync has fetched details for yet (`unedited`).
+    #[serde(skip)]
+    pub unedited_list: Vec<String>,
     /// Changes per kind (movies, series) when the server lists them apart.
     #[serde(skip)]
     split: Option<(usize, usize)>,
@@ -819,12 +830,18 @@ pub struct SyncReport {
     removed_series: Vec<String>,
     dry_run: Option<bool>,
     started: bool,
+    /// `{"movies": […], "series": […], "seasons": […], "episodes": […]}`
+    unrenamed: MissingImages,
+    unedited: MissingImages,
 }
 
 impl SyncReport {
-    /// Fold per-kind lists, `dry_run` and `started` into the documented
-    /// fields; `accepted` is a `202` answer (started, not done).
+    /// Fold per-kind lists, `unrenamed`, `unedited`, `dry_run` and
+    /// `started` into the documented fields; `accepted` is a `202` answer
+    /// (started, not done).
     fn tidy(mut self, accepted: bool) -> Self {
+        self.to_rename = self.unrenamed.lines();
+        self.unedited_list = self.unedited.lines();
         let movies = self.added_movies.len() + self.removed_movies.len();
         let series = self.added_series.len() + self.removed_series.len();
         if movies + series > 0 {
@@ -857,11 +874,11 @@ impl SyncReport {
     /// images (an episode's count for its series). A file the app can't
     /// place counts for both, and so does a scan still running.
     pub fn has_work(&self, kind: Kind) -> bool {
-        let m = &self.missing_images;
-        let images = match kind {
-            Kind::Movie => !m.movies.is_empty(),
-            Kind::Series => !m.series.is_empty() || !m.episodes.is_empty(),
+        let of_kind = |g: &MissingImages| match kind {
+            Kind::Movie => !g.movies.is_empty(),
+            Kind::Series => !g.series.is_empty() || !g.seasons.is_empty() || !g.episodes.is_empty(),
         };
+        let images = of_kind(&self.missing_images) || of_kind(&self.new);
         if self.running || images {
             return true;
         }
@@ -897,20 +914,31 @@ fn path_kind(path: &str) -> Option<Kind> {
         .then_some(Kind::Series)
 }
 
-/// Titles whose image files are missing, from a folder scan, as lines like
-/// "Arcane (poster, logo)". Servers send `{"movies": […], "series": […],
+/// Lists from a folder scan grouped by kind, as lines: titles whose image
+/// files are missing ("Arcane (poster, logo)"), new files, files to rename.
+/// Servers send `{"movies": […], "series": […], "seasons": […],
 /// "episodes": […]}` with strings or objects (`title`, `year`, `season`,
 /// `episode`, `missing`), or one list of objects with a `type`.
 #[derive(Clone, Debug, Default)]
 pub struct MissingImages {
     pub movies: Vec<String>,
     pub series: Vec<String>,
+    pub seasons: Vec<String>,
     pub episodes: Vec<String>,
 }
 
 impl MissingImages {
     pub fn len(&self) -> usize {
-        self.movies.len() + self.series.len() + self.episodes.len()
+        self.movies.len() + self.series.len() + self.seasons.len() + self.episodes.len()
+    }
+
+    /// Every line, movies first.
+    pub fn lines(&self) -> Vec<String> {
+        [&self.movies, &self.series, &self.seasons, &self.episodes]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -921,6 +949,7 @@ impl MissingImages {
         match kind.to_lowercase().as_str() {
             "movies" | "movie" => Some(&mut self.movies),
             "series" | "show" | "shows" => Some(&mut self.series),
+            "seasons" | "season" => Some(&mut self.seasons),
             "episodes" | "episode" => Some(&mut self.episodes),
             _ => None,
         }
@@ -947,7 +976,8 @@ impl MissingImages {
         match (num("season"), num("episode")) {
             (Some(s), Some(e)) => out.push_str(&format!(" S{s:02}E{e:02}")),
             (None, Some(e)) => out.push_str(&format!(" E{e:02}")),
-            _ => {}
+            (Some(s), None) => out.push_str(&format!(" Season {s}")),
+            (None, None) => {}
         }
         let missing: Vec<&str> = ["missing", "images", "fields", "art"]
             .iter()
@@ -2960,6 +2990,28 @@ mod tests {
     }
 
     #[test]
+    fn grouped_scan_lists() {
+        // what the live PHP server answers for a folder dry run
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":[],"removed":[],"applied":false,"added_movies":[],"removed_movies":[],
+                "added_series":[],"removed_series":[],
+                "missing_images":{"movies":[],"series":[],"episodes":[]},
+                "new":{"seasons":[],"episodes":["VisionQuest \u00b7 S01E08"]},
+                "unrenamed":{"movies":[],"series":[],"seasons":[],"episodes":["a.mkv  \u2192  b.mkv"]},
+                "unedited":{"movies":[],"series":[],"seasons":["Chernobyl \u00b7 Season 999"],"episodes":[]}}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        // new files aren't `added`: applying the folder sync only removes
+        assert!(r.added.is_empty());
+        assert_eq!(r.new.episodes, ["VisionQuest · S01E08"]);
+        assert_eq!(r.to_rename, ["a.mkv  →  b.mkv"]);
+        assert_eq!(r.unedited_list, ["Chernobyl · Season 999"]);
+        assert!(!r.applied);
+        assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
+    }
+
+    #[test]
     fn moving_shapes() {
         let ids = |s: &str| {
             let mut v: Vec<String> = moving_ids(&serde_json::from_str(s).unwrap())
@@ -3004,6 +3056,12 @@ mod tests {
         let r = r.tidy(false);
         assert_eq!(r.missing_images.series, ["Arcane (poster, logo)"]);
         assert_eq!(r.missing_images.episodes, ["Arcane S01E02 (thumbnail)"]);
+        let season: SyncReport = serde_json::from_str(
+            r#"{"missing_images": {"seasons": [{"title": "Arcane", "season": 2, "missing": ["poster"]}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(season.missing_images.seasons, ["Arcane Season 2 (poster)"]);
+        assert!(season.tidy(false).has_work(Kind::Series));
         assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
 
         let r: SyncReport = serde_json::from_str(

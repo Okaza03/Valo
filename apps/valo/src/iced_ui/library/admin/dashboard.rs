@@ -674,6 +674,30 @@ impl State {
                     ),
                 ));
             }
+            if !rep.new.is_empty() {
+                col = col.push(self.report_list(
+                    &format!("New on disk: {}", rep.new.len()),
+                    &rep.new.lines(),
+                    c(OK()),
+                    Some("Not in the library yet: Sync movies or Sync series adds them."),
+                ));
+            }
+            if !rep.to_rename.is_empty() {
+                col = col.push(self.report_list(
+                    &format!("To rename: {}", rep.to_rename.len()),
+                    &rep.to_rename,
+                    c(WARN()),
+                    Some("Names that don't follow the library's naming, with the server's suggestion after the arrow."),
+                ));
+            }
+            if !rep.unedited_list.is_empty() {
+                col = col.push(self.report_list(
+                    &format!("Not edited: {}", rep.unedited_list.len()),
+                    &rep.unedited_list,
+                    c(WARN()),
+                    Some("No details fetched yet: the next movie or series sync fills them in."),
+                ));
+            }
             let missing = &rep.missing_images;
             if !missing.is_empty() {
                 let key = format!("Missing images: {}", missing.len());
@@ -685,6 +709,7 @@ impl State {
                     for (label, list) in [
                         ("Movies", &missing.movies),
                         ("Series", &missing.series),
+                        ("Seasons", &missing.seasons),
                         ("Episodes", &missing.episodes),
                     ] {
                         if !list.is_empty() {
@@ -745,6 +770,7 @@ impl State {
                 && rep.removed.is_empty()
                 && rep.updated.is_empty()
                 && missing.is_empty()
+                && rep.new.is_empty()
                 && !rep.running
             {
                 col = col.push(
