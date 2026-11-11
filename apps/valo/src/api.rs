@@ -976,7 +976,8 @@ impl MissingImages {
         match (num("season"), num("episode")) {
             (Some(s), Some(e)) => out.push_str(&format!(" S{s:02}E{e:02}")),
             (None, Some(e)) => out.push_str(&format!(" E{e:02}")),
-            _ => {}
+            (Some(s), None) => out.push_str(&format!(" Season {s}")),
+            (None, None) => {}
         }
         let missing: Vec<&str> = ["missing", "images", "fields", "art"]
             .iter()
@@ -3055,6 +3056,12 @@ mod tests {
         let r = r.tidy(false);
         assert_eq!(r.missing_images.series, ["Arcane (poster, logo)"]);
         assert_eq!(r.missing_images.episodes, ["Arcane S01E02 (thumbnail)"]);
+        let season: SyncReport = serde_json::from_str(
+            r#"{"missing_images": {"seasons": [{"title": "Arcane", "season": 2, "missing": ["poster"]}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(season.missing_images.seasons, ["Arcane Season 2 (poster)"]);
+        assert!(season.tidy(false).has_work(Kind::Series));
         assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
 
         let r: SyncReport = serde_json::from_str(
