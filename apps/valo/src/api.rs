@@ -279,6 +279,8 @@ pub struct Episode {
     /// Being moved (see [`Item::unavailable`]).
     #[serde(alias = "moving")]
     pub unavailable: bool,
+    /// Unix time the episode was added to the library.
+    pub added: Option<i64>,
 }
 
 /// A subtitle file for a movie or episode (`"subtitles"` in the library).
@@ -393,6 +395,10 @@ impl Item {
                 }
                 e.id = format!("episode:{}", e.id);
                 e.unavailable |= self.unavailable;
+                // a new episode brings its series back to Recently added
+                if s.number != FEATURETTES && e.added > self.added {
+                    self.added = e.added;
+                }
             }
         }
     }
@@ -2987,6 +2993,19 @@ mod tests {
             (l[0].message.as_str(), l[0].time),
             ("[00:39:39] folders", 0)
         );
+    }
+
+    #[test]
+    fn a_new_episode_brings_its_series_back() {
+        let mut lib: Library = serde_json::from_str(
+            r#"{"series": [{"id": 7, "title": "S", "added": 100, "seasons": [
+                {"number": 1, "episodes": [{"id": 1, "number": 1, "stream": "/e/1", "added": 100},
+                                           {"id": 2, "number": 2, "stream": "/e/2", "added": 500}]},
+                {"number": 999, "episodes": [{"id": 3, "number": 1, "stream": "/e/3", "added": 900}]}]}]}"#,
+        )
+        .unwrap();
+        lib.finish("http://h");
+        assert_eq!(lib.series[0].added, Some(500));
     }
 
     #[test]

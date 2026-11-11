@@ -441,8 +441,11 @@ impl Library {
             let grow = if lit { (pw + 8.0) / pw } else { 1.0 };
             let tile = stack![
                 stack(numeral).width(num_w + 18.0).height(ph),
-                container(iced::widget::float(stack(poster).width(pw).height(ph)).scale(grow))
-                    .padding(Padding::default().left(num_w)),
+                container(crate::iced_ui::grow::grow(
+                    stack(poster).width(pw).height(ph),
+                    grow
+                ))
+                .padding(Padding::default().left(num_w)),
             ]
             .width(num_w + pw)
             .height(ph);
@@ -515,7 +518,7 @@ impl Library {
             let grow = if lit { (tw + 10.0) / tw } else { 1.0 };
             let movies = lib.movies.iter().any(|i| i.genres.contains(&g));
             r = r.push(
-                mouse_area(iced::widget::float(tile).scale(grow))
+                mouse_area(crate::iced_ui::grow::grow(tile, grow))
                     .on_press(Msg::GenreTile(g, movies))
                     .on_enter(Msg::Hover(Some(key)))
                     .on_exit(Msg::Hover(None))
