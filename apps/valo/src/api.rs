@@ -804,11 +804,15 @@ pub struct SyncReport {
     /// sync downloads again (`missing_images`, or `missing_art`).
     #[serde(alias = "missing_art")]
     pub missing_images: MissingImages,
+    /// Files on disk that aren't in the library yet. Unlike `added`,
+    /// applying the folder sync doesn't add them: _Sync movies_ or _Sync
+    /// series_ does.
+    pub new: MissingImages,
     /// Files whose names don't follow the library's naming, often with the
     /// name the server would give them after an arrow (`unrenamed`).
     #[serde(skip)]
     pub to_rename: Vec<String>,
-    /// Entries the server lists as not edited yet (`unedited`).
+    /// Entries no sync has fetched details for yet (`unedited`).
     #[serde(skip)]
     pub unedited_list: Vec<String>,
     /// Changes per kind (movies, series) when the server lists them apart.
@@ -827,26 +831,17 @@ pub struct SyncReport {
     dry_run: Option<bool>,
     started: bool,
     /// `{"movies": […], "series": […], "seasons": […], "episodes": […]}`
-    new: MissingImages,
     unrenamed: MissingImages,
     unedited: MissingImages,
 }
 
 impl SyncReport {
-    /// Fold per-kind lists, `new`, `unrenamed`, `unedited`, `dry_run` and
+    /// Fold per-kind lists, `unrenamed`, `unedited`, `dry_run` and
     /// `started` into the documented fields; `accepted` is a `202` answer
     /// (started, not done).
     fn tidy(mut self, accepted: bool) -> Self {
-        let new = std::mem::take(&mut self.new);
-        self.added_movies.extend(new.movies);
-        self.added_series.extend(
-            new.series
-                .into_iter()
-                .chain(new.seasons)
-                .chain(new.episodes),
-        );
-        self.to_rename = std::mem::take(&mut self.unrenamed).into_lines();
-        self.unedited_list = std::mem::take(&mut self.unedited).into_lines();
+        self.to_rename = self.unrenamed.lines();
+        self.unedited_list = self.unedited.lines();
         let movies = self.added_movies.len() + self.removed_movies.len();
         let series = self.added_series.len() + self.removed_series.len();
         if movies + series > 0 {
@@ -879,11 +874,11 @@ impl SyncReport {
     /// images (an episode's count for its series). A file the app can't
     /// place counts for both, and so does a scan still running.
     pub fn has_work(&self, kind: Kind) -> bool {
-        let m = &self.missing_images;
-        let images = match kind {
-            Kind::Movie => !m.movies.is_empty(),
-            Kind::Series => !m.series.is_empty() || !m.seasons.is_empty() || !m.episodes.is_empty(),
+        let of_kind = |g: &MissingImages| match kind {
+            Kind::Movie => !g.movies.is_empty(),
+            Kind::Series => !g.series.is_empty() || !g.seasons.is_empty() || !g.episodes.is_empty(),
         };
+        let images = of_kind(&self.missing_images) || of_kind(&self.new);
         if self.running || images {
             return true;
         }
@@ -938,8 +933,12 @@ impl MissingImages {
     }
 
     /// Every line, movies first.
-    fn into_lines(self) -> Vec<String> {
-        [self.movies, self.series, self.seasons, self.episodes].concat()
+    pub fn lines(&self) -> Vec<String> {
+        [&self.movies, &self.series, &self.seasons, &self.episodes]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -3002,7 +3001,9 @@ mod tests {
         )
         .unwrap();
         let r = r.tidy(false);
-        assert_eq!(r.added, ["VisionQuest · S01E08"]);
+        // new files aren't `added`: applying the folder sync only removes
+        assert!(r.added.is_empty());
+        assert_eq!(r.new.episodes, ["VisionQuest · S01E08"]);
         assert_eq!(r.to_rename, ["a.mkv  →  b.mkv"]);
         assert_eq!(r.unedited_list, ["Chernobyl · Season 999"]);
         assert!(!r.applied);

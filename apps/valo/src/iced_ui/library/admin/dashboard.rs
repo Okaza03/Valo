@@ -674,6 +674,14 @@ impl State {
                     ),
                 ));
             }
+            if !rep.new.is_empty() {
+                col = col.push(self.report_list(
+                    &format!("New on disk: {}", rep.new.len()),
+                    &rep.new.lines(),
+                    c(OK()),
+                    Some("Not in the library yet: Sync movies or Sync series adds them."),
+                ));
+            }
             if !rep.to_rename.is_empty() {
                 col = col.push(self.report_list(
                     &format!("To rename: {}", rep.to_rename.len()),
@@ -687,7 +695,7 @@ impl State {
                     &format!("Not edited: {}", rep.unedited_list.len()),
                     &rep.unedited_list,
                     c(WARN()),
-                    None,
+                    Some("No details fetched yet: the next movie or series sync fills them in."),
                 ));
             }
             let missing = &rep.missing_images;
@@ -762,6 +770,7 @@ impl State {
                 && rep.removed.is_empty()
                 && rep.updated.is_empty()
                 && missing.is_empty()
+                && rep.new.is_empty()
                 && !rep.running
             {
                 col = col.push(

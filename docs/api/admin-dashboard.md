@@ -79,9 +79,9 @@ Answer:
 | `message` | string   | One line shown above the lists                                                                   |
 | `unnamed` | string[] | Episode files without `S01E02` in the name: ones the server numbered from their season folder, and ones it couldn't place. Shown as a warning, so the admin knows what to rename |
 | `missing_images` | object | `folders` only: titles whose image files are gone (see below). `missing_art` works too |
-| `new` | object | New entries grouped as `{"movies", "series", "seasons", "episodes"}`; counted with `added` (movies for _Sync movies_, the rest for _Sync series_) |
+| `new` | object | Files on disk not in the library yet, grouped as `{"movies", "series", "seasons", "episodes"}`. Shown as _New on disk_; they turn on _Sync movies_ (movies) or _Sync series_ (the rest). Unlike `added`, they don't offer _Apply these changes_, since applying the folder sync only removes |
 | `unrenamed` | object | Same groups: files whose names don't follow the library's naming, e.g. `"old.mkv  →  New.S01E08.mkv"`. Shown as _To rename_ |
-| `unedited` | object | Same groups: entries not edited yet. Shown as _Not edited_ |
+| `unedited` | object | Same groups: entries no sync has fetched details for yet. Shown as _Not edited_ |
 
 ### Missing images
 
