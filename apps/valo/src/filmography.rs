@@ -67,7 +67,7 @@ fn commons(url: &str) -> String {
 }
 
 fn sparql(query: &str) -> Result<Value> {
-    Ok(ureq::AgentBuilder::new()
+    Ok(crate::net::Builder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout(Duration::from_secs(40))
         .user_agent(concat!(

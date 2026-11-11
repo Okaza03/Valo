@@ -10,6 +10,7 @@ mod fullscreen;
 mod iced_ui;
 mod inhibit;
 mod integrate;
+mod net;
 mod player;
 mod presence;
 mod specs;

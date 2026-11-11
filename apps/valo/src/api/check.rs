@@ -144,7 +144,7 @@ impl Run {
                         Some(body.contains("href=")),
                     )
                 }
-                Err(ureq::Error::Status(code, _)) => {
+                Err(crate::net::Error::Status(code, _)) => {
                     (Pass, format!("{base} answered ({code})."), Some(false))
                 }
                 Err(e) => (
@@ -168,7 +168,7 @@ impl Run {
                     Ok(i) => return (Pass, "Found.".to_owned(), Some(i)),
                     Err(_) => "It answered, but not with JSON".to_owned(),
                 },
-                Err(ureq::Error::Status(code, r)) => {
+                Err(crate::net::Error::Status(code, r)) => {
                     format!("It answered {code} {}", r.status_text())
                 }
                 Err(e) => return (Fail, format!("{e}"), None),
@@ -252,14 +252,14 @@ impl Run {
                 .send_json(serde_json::json!({ "username": "", "password": "" }));
             match r {
                 // 422: a validation error for the empty fields (Laravel)
-                Err(ureq::Error::Status(400 | 401 | 403 | 422, _)) => {
+                Err(crate::net::Error::Status(400 | 401 | 403 | 422, _)) => {
                     let msg = "Found; it turns down an empty username and password.".to_owned();
                     (Pass, msg, ())
                 }
-                Err(ureq::Error::Status(404 | 405 | 501, _)) => {
+                Err(crate::net::Error::Status(404 | 405 | 501, _)) => {
                     (Fail, Missing::Login.to_string(), ())
                 }
-                Err(ureq::Error::Status(code, r)) => {
+                Err(crate::net::Error::Status(code, r)) => {
                     let msg = format!("It answered {code} {}.", r.status_text());
                     (Fail, msg, ())
                 }
@@ -287,17 +287,17 @@ impl Run {
                 .set("Accept", "application/json")
                 .call();
             match r {
-                Ok(_) | Err(ureq::Error::Status(400 | 401 | 403 | 419 | 422, _)) => {
+                Ok(_) | Err(crate::net::Error::Status(400 | 401 | 403 | 419 | 422, _)) => {
                     (Pass, "Found.".to_owned(), ())
                 }
-                Err(ureq::Error::Status(404 | 405 | 501, _)) => {
+                Err(crate::net::Error::Status(404 | 405 | 501, _)) => {
                     let msg = "Missing, so signing out only forgets the token on this device \
                                and it keeps working on the server. Add POST /api/logout to \
                                invalidate it."
                         .to_owned();
                     (Warn, msg, ())
                 }
-                Err(ureq::Error::Status(code, r)) => {
+                Err(crate::net::Error::Status(code, r)) => {
                     let msg = format!("It answered {code} {}.", r.status_text());
                     (Warn, msg, ())
                 }
@@ -311,7 +311,7 @@ impl Run {
                 .set("Accept", "application/json")
                 .call()
             {
-                Err(ureq::Error::Status(401 | 403, _)) => (
+                Err(crate::net::Error::Status(401 | 403, _)) => (
                     Later,
                     "Protected. Checked after you sign in.".to_owned(),
                     (),
@@ -333,15 +333,15 @@ impl Run {
                 .set("Accept", "application/json")
                 .call()
             {
-                Err(ureq::Error::Status(401 | 403, _)) => (
+                Err(crate::net::Error::Status(401 | 403, _)) => (
                     Later,
                     "Protected. Checked after you sign in.".to_owned(),
                     (),
                 ),
-                Err(ureq::Error::Status(404 | 405 | 501, _)) => {
+                Err(crate::net::Error::Status(404 | 405 | 501, _)) => {
                     (Fail, Missing::Library.to_string(), ())
                 }
-                Err(ureq::Error::Status(code, r)) => {
+                Err(crate::net::Error::Status(code, r)) => {
                     let msg = format!("It answered {code} {}.", r.status_text());
                     (Fail, msg, ())
                 }
@@ -493,7 +493,7 @@ impl Run {
                             (Warn, msg, ())
                         }
                     }
-                    Err(ureq::Error::Status(code, r)) => {
+                    Err(crate::net::Error::Status(code, r)) => {
                         let msg = format!("{url} answered {code} {}.", r.status_text());
                         (Fail, msg, ())
                     }
@@ -603,13 +603,13 @@ impl Run {
         let found = self.step("Progress sync · GET /api/progress", || {
             let r = client.get(&url).set("Accept", "application/json").call();
             let list = match r {
-                Err(ureq::Error::Status(401 | 403, _)) if !client.info.auth => {
+                Err(crate::net::Error::Status(401 | 403, _)) if !client.info.auth => {
                     let msg = "Without a sign-in there's no user to keep watch progress for, \
                                so resume points stay on each device."
                         .to_owned();
                     return (Warn, msg, false);
                 }
-                Err(ureq::Error::Status(code @ (401 | 403), _)) => {
+                Err(crate::net::Error::Status(code @ (401 | 403), _)) => {
                     let msg = format!(
                         "It turned down the sign-in token ({code}), so resume points and \
                          watched marks stay on this device. Accept Authorization: Bearer \
@@ -617,14 +617,14 @@ impl Run {
                     );
                     return (Warn, msg, false);
                 }
-                Err(ureq::Error::Status(404 | 405 | 501, _)) => {
+                Err(crate::net::Error::Status(404 | 405 | 501, _)) => {
                     let msg = "Missing, so resume points and watched marks stay on this \
                                device. Add GET and POST /api/progress to sync them between \
                                devices."
                         .to_owned();
                     return (Warn, msg, false);
                 }
-                Err(ureq::Error::Status(code, r)) => {
+                Err(crate::net::Error::Status(code, r)) => {
                     let msg = format!(
                         "It answered {code} {}, so progress won't sync.",
                         r.status_text()
@@ -679,11 +679,11 @@ impl Run {
                 r = r.set("Authorization", &h);
             }
             match r.send_json(serde_json::json!({ "type": "valo-check" })) {
-                Err(ureq::Error::Status(400 | 422, _)) => {
+                Err(crate::net::Error::Status(400 | 422, _)) => {
                     let msg = "Found; it turns down an invalid entry.".to_owned();
                     (Pass, msg, ())
                 }
-                Err(ureq::Error::Status(code @ (404 | 405 | 501), _)) => {
+                Err(crate::net::Error::Status(code @ (404 | 405 | 501), _)) => {
                     let msg = format!(
                         "It answered {code}, so progress made in the app never reaches the \
                          server. Add POST /api/progress, and answer 422 for a body it can't \
@@ -691,14 +691,14 @@ impl Run {
                     );
                     (Warn, msg, ())
                 }
-                Err(ureq::Error::Status(code @ (401 | 403), _)) => {
+                Err(crate::net::Error::Status(code @ (401 | 403), _)) => {
                     let msg = format!(
                         "It turned down the sign-in token ({code}), so progress made in the \
                          app never reaches the server."
                     );
                     (Warn, msg, ())
                 }
-                Err(ureq::Error::Status(code, r)) => {
+                Err(crate::net::Error::Status(code, r)) => {
                     let msg = format!("It answered {code} {}.", r.status_text());
                     (Warn, msg, ())
                 }

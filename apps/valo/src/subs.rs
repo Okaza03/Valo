@@ -70,7 +70,7 @@ pub fn format_of(track: &SubtitleTrack) -> String {
 /// Download and parse a subtitle file. `auth` goes along as the
 /// Authorization header (the stream's, so only to our own server).
 pub fn load(track: &SubtitleTrack, auth: Option<&str>) -> Result<Subs> {
-    let agent = ureq::AgentBuilder::new()
+    let agent = crate::net::Builder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout_read(Duration::from_secs(30))
         .user_agent(concat!("Valo/", env!("CARGO_PKG_VERSION")))
@@ -80,7 +80,7 @@ pub fn load(track: &SubtitleTrack, auth: Option<&str>) -> Result<Subs> {
         req = req.set("Authorization", a);
     }
     let resp = req.call().map_err(|e| match e {
-        ureq::Error::Status(code, _) => anyhow!("the server answered {code}"),
+        crate::net::Error::Status(code, _) => anyhow!("the server answered {code}"),
         e => anyhow!("{e}"),
     })?;
     let mut buf = Vec::new();
