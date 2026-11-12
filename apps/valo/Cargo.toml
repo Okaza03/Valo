@@ -19,10 +19,13 @@ ureq = { version = "3", features = ["json"] }
 sha2 = "0.11"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 
-# Linux builds FFmpeg from source and links it statically.
+# Linux and macOS build FFmpeg from source and link it statically.
 [target.'cfg(not(windows))'.dependencies]
 ffmpeg-next = { version = "9.0", features = ["build", "build-lib-dav1d"] }
-# keeps the screen awake during playback (org.freedesktop.ScreenSaver)
+
+# keeps the screen awake during playback (org.freedesktop.ScreenSaver);
+# macOS uses IOKit instead (src/inhibit.rs)
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 zbus = "6"
 
 # FFmpeg's build needs a Unix shell, so Windows links a prebuilt FFmpeg

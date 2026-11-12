@@ -153,7 +153,8 @@ fn window_icon() -> Option<window::Icon> {
     window::icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
-/// Linux desktops take the icon from the .desktop file named by the app id.
+/// Linux desktops take the icon from the .desktop file named by the app id,
+/// macOS from the app bundle.
 #[cfg(not(windows))]
 fn window_icon() -> Option<window::Icon> {
     None

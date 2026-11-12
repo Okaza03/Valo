@@ -48,7 +48,9 @@ pub fn open_url(url: &str) {
     let res = std::process::Command::new("rundll32")
         .args(["url.dll,FileProtocolHandler", url])
         .spawn();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     let res = std::process::Command::new("xdg-open").arg(url).spawn();
     if let Err(e) = res {
         eprintln!("can't open {url}: {e}");

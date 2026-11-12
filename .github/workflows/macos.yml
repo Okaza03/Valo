@@ -1,0 +1,57 @@
+# Builds just the macOS .dmg, for trying a branch on a Mac without a release.
+#   - push a branch named macos-<anything>, or
+#   - gh workflow run macos.yml --ref <branch> [-f arch=x86_64]
+# then: gh run download --name macos-<arch>   (the .dmg lands in the current folder)
+name: macos
+on:
+  push:
+    branches: ["macos-*"]
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "aarch64 (Apple Silicon) or x86_64 (Intel)"
+        type: choice
+        options: [aarch64, x86_64]
+        default: aarch64
+permissions:
+  contents: read
+concurrency:
+  group: macos-${{ github.ref }}-${{ inputs.arch || 'aarch64' }}
+  cancel-in-progress: true
+jobs:
+  dmg:
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-15-intel' || 'macos-15' }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"   # keep in step with MACOS_MIN in xtask
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: System deps
+        run: brew install nasm pkg-config meson ninja librsvg
+
+      - name: Rust
+        run: rustup update stable --no-self-update
+
+      # same as the Linux release: static, so the app needs no libdav1d.dylib
+      - name: Static dav1d
+        run: |
+          git clone --depth 1 --branch 1.5.4 https://code.videolan.org/videolan/dav1d.git "$RUNNER_TEMP/dav1d-src"
+          cd "$RUNNER_TEMP/dav1d-src"
+          meson setup build --buildtype=release --default-library=static \
+            --prefix="$RUNNER_TEMP/dav1d" --libdir=lib -Denable_tools=false -Denable_tests=false
+          ninja -C build install
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/dav1d/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      # FFmpeg is built from source, so caching target/ saves most of the time
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo xtask dmg
+
+      - name: Linked libraries (only system ones should show)
+        run: otool -L target/release/valo
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ inputs.arch || 'aarch64' }}
+          path: target/dist/*.dmg
+          retention-days: 14
