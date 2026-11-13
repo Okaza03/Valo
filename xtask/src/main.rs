@@ -1,4 +1,4 @@
-//! `cargo xtask <install|uninstall|dist|deb|appimage|ffmpeg|installer|ci>`
+//! `cargo xtask <install|uninstall|dist|deb|appimage|dmg|ffmpeg|installer|ci>`
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -149,6 +149,10 @@ fn run() -> Res {
         Some("install" | "uninstall" | "deb" | "appimage") if cfg!(windows) => {
             Err("that's for Linux; on Windows use `cargo xtask dist` or `installer`".into())
         }
+        Some("dmg") if !cfg!(target_os = "macos") => {
+            Err("`cargo xtask dmg` runs on macOS (see .github/workflows/macos.yml)".into())
+        }
+        Some("dmg") => dmg(),
         Some("install") => install(a.next()),
         Some("uninstall") => uninstall(a.next()),
         Some("dist") if cfg!(windows) => dist_windows(Arch::parse(a.next())?).map(|_| ()),
@@ -170,7 +174,7 @@ fn run() -> Res {
             cargo(&["test", "--workspace"])
         }
         _ => {
-            eprintln!("usage: cargo xtask <install [prefix] | uninstall [prefix] | dist | deb | appimage | ffmpeg [arch] | installer [arch] | ci>\n  arch (Windows): x86_64 (default) or aarch64");
+            eprintln!("usage: cargo xtask <install [prefix] | uninstall [prefix] | dist | deb | appimage | dmg | ffmpeg [arch] | installer [arch] | ci>\n  arch (Windows): x86_64 (default) or aarch64");
             exit(2);
         }
     }
@@ -354,4 +358,102 @@ fn installer(arch: Arch) -> Res {
             arch.name()
         ))
         .arg(root().join("packaging/windows/valo.iss")))
+}
+
+/// macOS: Valo.app in a disk image, target/dist/valo-vX.Y.Z-macos-<arch>.dmg.
+/// Unsigned (ad-hoc signature only), so Gatekeeper asks before the first run.
+/// Needs rsvg-convert (`brew install librsvg`) for the icon.
+fn dmg() -> Res {
+    let r = root();
+    // FFmpeg and the app target the same oldest macOS as the Info.plist
+    sh(Command::new("cargo")
+        .args(["build", "--release", "-p", NAME])
+        .env("MACOSX_DEPLOYMENT_TARGET", MACOS_MIN)
+        .current_dir(&r))?;
+    let version = env!("CARGO_PKG_VERSION");
+    let arch = env::consts::ARCH;
+    let work = r.join("target/dmg");
+    let _ = fs::remove_dir_all(&work);
+    let app = work.join("root/Valo.app/Contents");
+    put(
+        &r.join("target/release").join(NAME),
+        &app.join("MacOS").join(NAME),
+        0o755,
+    )?;
+    fs::write(app.join("Info.plist"), info_plist(version))?;
+
+    // icon: every size iconutil wants, drawn from the SVG
+    let iconset = work.join("valo.iconset");
+    fs::create_dir_all(&iconset)?;
+    for px in [16, 32, 128, 256, 512] {
+        for (scale, suffix) in [(1, ""), (2, "@2x")] {
+            let size = (px * scale).to_string();
+            sh(Command::new("rsvg-convert")
+                .args(["-w", &size, "-h", &size, "-o"])
+                .arg(iconset.join(format!("icon_{px}x{px}{suffix}.png")))
+                .arg(r.join("packaging/valo.svg")))?;
+        }
+    }
+    fs::create_dir_all(app.join("Resources"))?;
+    sh(Command::new("iconutil")
+        .args(["-c", "icns", "-o"])
+        .arg(app.join("Resources/valo.icns"))
+        .arg(&iconset))?;
+
+    // Apple Silicon won't run unsigned code at all; an ad-hoc signature is enough
+    sh(Command::new("codesign")
+        .args(["--force", "--deep", "--sign", "-"])
+        .arg(work.join("root/Valo.app")))?;
+
+    // drag-to-install: the app next to a link to /Applications
+    // (`ln`, not std::os::unix, so this file still builds on Windows)
+    sh(Command::new("ln")
+        .args(["-s", "/Applications"])
+        .arg(work.join("root/Applications")))?;
+    let out = r.join("target/dist");
+    fs::create_dir_all(&out)?;
+    let dmg = out.join(format!("{NAME}-v{version}-macos-{arch}.dmg"));
+    let _ = fs::remove_file(&dmg);
+    sh(Command::new("hdiutil")
+        .args([
+            "create",
+            "-volname",
+            "Valo",
+            "-fs",
+            "HFS+",
+            "-format",
+            "UDZO",
+            "-srcfolder",
+        ])
+        .arg(work.join("root"))
+        .arg(&dmg))?;
+    println!("Built {}", dmg.display());
+    Ok(())
+}
+
+/// Oldest macOS the app runs on.
+const MACOS_MIN: &str = "11.0";
+
+fn info_plist(version: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Valo</string>
+  <key>CFBundleDisplayName</key><string>Valo</string>
+  <key>CFBundleIdentifier</key><string>io.github.okaza03.Valo</string>
+  <key>CFBundleExecutable</key><string>{NAME}</string>
+  <key>CFBundleIconFile</key><string>valo</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>{version}</string>
+  <key>CFBundleVersion</key><string>{version}</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>{MACOS_MIN}</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.entertainment</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+"#
+    )
 }

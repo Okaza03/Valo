@@ -1,7 +1,8 @@
 //! Keep the screen awake while a video plays, so the desktop doesn't blank,
 //! lock or suspend mid-movie. A worker thread holds the OS inhibition: on
 //! Linux over D-Bus (it must keep the connection open, since KDE drops an
-//! inhibit when its caller disconnects), on Windows per-thread execution state.
+//! inhibit when its caller disconnects), on Windows per-thread execution state,
+//! on macOS an IOKit power assertion.
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
@@ -68,7 +69,78 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::ffi::{c_char, c_void};
+
+    type CFStringRef = *const c_void;
+    const UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
+    const LEVEL_ON: u32 = 255; // kIOPMAssertionLevelOn
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            s: *const c_char,
+            encoding: u32,
+        ) -> CFStringRef;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        fn IOPMAssertionCreateWithName(
+            kind: CFStringRef,
+            level: u32,
+            name: CFStringRef,
+            id: *mut u32,
+        ) -> i32;
+        fn IOPMAssertionRelease(id: u32) -> i32;
+    }
+
+    fn cfstr(s: &std::ffi::CStr) -> CFStringRef {
+        unsafe { CFStringCreateWithCString(std::ptr::null(), s.as_ptr(), UTF8) }
+    }
+
+    pub struct Sys {
+        held: Option<u32>,
+    }
+
+    impl Sys {
+        pub fn new() -> Self {
+            Self { held: None }
+        }
+
+        pub fn set(&mut self, on: bool) {
+            match (on, self.held) {
+                (true, None) => {
+                    // keeps the display on, and with it the system
+                    let kind = cfstr(c"PreventUserIdleDisplaySleep");
+                    let name = cfstr(c"Valo: playing video");
+                    if kind.is_null() || name.is_null() {
+                        return;
+                    }
+                    let mut id = 0;
+                    let ok = unsafe { IOPMAssertionCreateWithName(kind, LEVEL_ON, name, &mut id) };
+                    unsafe {
+                        CFRelease(kind);
+                        CFRelease(name);
+                    }
+                    if ok == 0 {
+                        self.held = Some(id);
+                    }
+                }
+                (false, Some(id)) => {
+                    unsafe { IOPMAssertionRelease(id) };
+                    self.held = None;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 mod imp {
     // zbus is async; each call here is short, so it runs to the end on this thread
     use zbus::{block_on, Connection};
