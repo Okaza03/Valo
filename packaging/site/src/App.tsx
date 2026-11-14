@@ -1,7 +1,7 @@
 import { MotionConfig } from "motion/react"
 import { Closing, SiteFooter } from "@/blocks/closing"
 import { Download } from "@/blocks/download"
-import { Features, Stats } from "@/blocks/features"
+import { Features, Specs } from "@/blocks/features"
 import { Hero } from "@/blocks/hero"
 import { Servers } from "@/blocks/servers"
 import { SiteHeader } from "@/blocks/site-header"
@@ -18,7 +18,7 @@ export default function App() {
         <SiteHeader />
         <main>
           <Hero rel={rel} />
-          <Stats downloads={rel.totalDownloads} />
+          <Specs />
           <Features />
           <Download rel={rel} />
           <Servers />

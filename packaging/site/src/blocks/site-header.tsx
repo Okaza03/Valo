@@ -42,48 +42,50 @@ export function SiteHeader() {
   const active = useActiveSection()
 
   return (
-    <header
-      className={cn(
-        "sticky top-0 z-50 border-b border-transparent transition-[background-color,border-color,backdrop-filter] duration-300",
-        scrolled && "border-border bg-background/75 backdrop-blur-xl",
-      )}
-    >
-      <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6">
-        <a href="#top" className="group flex items-center gap-3" aria-label="Valo home">
-          <img src="./valo.svg" alt="" className="size-8 transition-transform duration-500 group-hover:rotate-[360deg]" />
-          <img src="./valo-text-white.svg" alt="Valo" className="h-[18px]" />
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center px-3 pt-3 sm:pt-4">
+      <motion.div
+        initial={{ y: -24, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.6, ease: [0.2, 0.7, 0.2, 1] }}
+        className={cn(
+          "pointer-events-auto relative flex h-14 w-full items-center gap-2 overflow-hidden rounded-full border pr-2 pl-4 transition-[max-width,background-color,border-color,box-shadow] duration-500",
+          scrolled
+            ? "max-w-3xl border-white/10 bg-black/55 shadow-[0_10px_40px_-10px_rgba(0,0,0,.8)] backdrop-blur-xl"
+            : "max-w-6xl border-transparent bg-transparent",
+        )}
+      >
+        <a href="#top" className="group mr-auto flex items-center gap-2.5" aria-label="Valo home">
+          <img src="./valo.svg" alt="" className="size-7 transition-transform duration-700 group-hover:rotate-[360deg]" />
+          <img src="./valo-text-white.svg" alt="Valo" className="h-4" />
         </a>
 
-        <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Sections">
+        <nav className="hidden items-center md:flex" aria-label="Sections">
           {links.map((l) => (
             <a
               key={l.id}
               href={`#${l.id}`}
               className={cn(
-                "relative rounded-full px-3.5 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground",
+                "relative rounded-full px-4 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground",
                 active === l.id && "text-foreground",
               )}
             >
               {active === l.id && (
                 <motion.span
                   layoutId="nav-pill"
-                  className="absolute inset-0 -z-10 rounded-full bg-muted"
+                  className="absolute inset-0 -z-10 rounded-full bg-white/[0.08]"
                   transition={{ type: "spring", stiffness: 400, damping: 32 }}
                 />
               )}
               {l.label}
             </a>
           ))}
-          <a
-            href={GITHUB}
-            className="ml-1 rounded-full p-2 text-muted-foreground transition-colors hover:text-foreground"
-            aria-label="Valo on GitHub"
-          >
-            <GitHubIcon className="size-5" />
-          </a>
         </nav>
 
-        <Button asChild size="lg" className="ml-auto hidden rounded-full px-4 sm:inline-flex md:ml-2">
+        <a href={GITHUB} className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:text-foreground md:block" aria-label="Valo on GitHub">
+          <GitHubIcon className="size-5" />
+        </a>
+
+        <Button asChild className="hidden h-10 rounded-full px-4 sm:inline-flex">
           <a href="#download">
             <DownloadIcon data-icon="inline-start" />
             Download
@@ -92,7 +94,7 @@ export function SiteHeader() {
 
         <Sheet>
           <SheetTrigger asChild>
-            <Button variant="ghost" size="icon-lg" className="ml-auto sm:ml-0 md:hidden" aria-label="Menu">
+            <Button variant="ghost" size="icon-lg" className="rounded-full md:hidden" aria-label="Menu">
               <MenuIcon />
             </Button>
           </SheetTrigger>
@@ -116,11 +118,13 @@ export function SiteHeader() {
             </nav>
           </SheetContent>
         </Sheet>
-      </div>
-      <motion.div
-        className="absolute inset-x-0 bottom-0 h-px origin-left bg-gradient-to-r from-primary via-violet-400 to-primary"
-        style={{ scaleX: progress }}
-      />
+
+        {/* how far down the page */}
+        <motion.div
+          className="absolute inset-x-6 bottom-0 h-px origin-left bg-gradient-to-r from-transparent via-primary to-transparent"
+          style={{ scaleX: progress, opacity: scrolled ? 1 : 0 }}
+        />
+      </motion.div>
     </header>
   )
 }
