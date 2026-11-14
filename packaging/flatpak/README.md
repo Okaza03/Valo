@@ -2,7 +2,7 @@
 
 - `io.github.okaza03.Valo.yml`: the manifest. It packages the binary the release workflow builds on Ubuntu 22.04, instead of compiling inside flatpak-builder.
 - `io.github.okaza03.Valo.metainfo.xml`: the app's metadata. Every release adds a `<release>` line here.
-- `publish-repo.sh`: turns flatpak-builder's repository into Valo's Flatpak remote, builds the release's `.flatpak` bundle from it, and puts the website from `packaging/site/` next to it with the release's version and download links filled in.
+- `publish-repo.sh`: turns flatpak-builder's repository into Valo's Flatpak remote, builds the release's `.flatpak` bundle from it, and puts the website (`packaging/site/`, built with `npm run build`) next to it with the release's version and download links filled in.
 
 ## The repository
 
@@ -16,9 +16,14 @@ Each release publishes a signed Flatpak repository to GitHub Pages, at <https://
 
 The bundle attached to each release names the same repository, so copies installed from a bundle also get `flatpak update`. The bundle is attached only after Pages has the new version, so the app's **Update now** never finds a release that `flatpak update` can't install yet.
 
-To try the script locally, serve its output and point it there:
+### Updating only the website
+
+A change to `packaging/site/` merged into main deploys by itself through `.github/workflows/pages.yml` (or run it by hand: `gh workflow run pages.yml`). No release needed. Since a Pages deploy replaces the whole site, that workflow rebuilds the repository from the latest release's `.flatpak` bundle with `flatpak build-import-bundle`. It's the same commit, signed with the same key, so `flatpak update` sees nothing new, and the download links keep pointing at that release. It fails, without deploying, while a release is still missing its bundle.
+
+To try the script locally, build the website, serve the script's output and point it there:
 
 ```
+(cd packaging/site && npm ci && npm run build)
 VALO_FLATPAK_BASE=http://127.0.0.1:8765 packaging/flatpak/publish-repo.sh repo site valo.flatpak [KEY-ID]
 (cd site && python3 -m http.server 8765)
 ```

@@ -193,8 +193,26 @@ jobs:
             target/dist/*
             target/debian/*.deb
 
+  # the website (packaging/site, React + shadcn); publish-repo.sh puts it on Pages
+  site:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packaging/site/package-lock.json
+      - name: Build
+        working-directory: packaging/site
+        run: npm ci && npm run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: site
+          path: packaging/site/dist
+
   flatpak:
-    needs: linux
+    needs: [linux, site]
     runs-on: ubuntu-24.04
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
@@ -206,6 +224,11 @@ jobs:
         with:
           name: valo-bin
           path: target/release
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: site
+          path: packaging/site/dist
 
       # signs the Flatpak repository (see packaging/flatpak/README.md)
       - name: Import the repository's signing key
@@ -254,6 +277,10 @@ jobs:
     needs: flatpak
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    # shared with pages.yml, so a site-only deploy never lands mid-release
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write

@@ -45,3 +45,16 @@ jobs:
           JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
         working-directory: apps/androidtv
         run: ./gradlew --no-daemon assembleDebug testTvDebugUnitTest testPhoneDebugUnitTest
+
+  # the website: type-checks and builds (pages.yml deploys it from main)
+  site:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packaging/site/package-lock.json
+      - working-directory: packaging/site
+        run: npm ci && npm run build

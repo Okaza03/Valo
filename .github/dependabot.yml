@@ -40,3 +40,14 @@ updates:
     groups:
       android-minor:
         update-types: [minor, patch]
+
+  # the website
+  - package-ecosystem: npm
+    directory: /packaging/site
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: build
+    groups:
+      site:
+        update-types: [minor, patch]
