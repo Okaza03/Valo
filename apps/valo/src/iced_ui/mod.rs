@@ -666,33 +666,35 @@ impl App {
                 false,
             ),
         };
-        let accent = style::c(crate::ui::theme::ACCENT());
+        // like the status line around it: small spaced capitals in the muted
+        // color, brighter on hover; an update waiting reads brighter still
         let b = button(
             row![
-                icon::icon(ic, if strong { accent } else { style::TEXT() }, 17.0),
-                text(label)
-                    .size(12.5)
-                    .color(if strong { accent } else { style::TEXT() }),
+                icon::icon_hover(
+                    ic,
+                    if strong {
+                        style::TEXT()
+                    } else {
+                        style::MUTED()
+                    },
+                    style::TEXT(),
+                    14.0
+                ),
+                crate::iced_ui::spaced::mono(label, 10.5),
             ]
             .spacing(6)
             .align_y(Vertical::Center),
         )
         .padding([3, 10])
-        .style(move |_, s| {
-            let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: if strong {
-                    Some(Background::Color(accent.scale_alpha(if hot {
-                        0.22
-                    } else {
-                        0.12
-                    })))
-                } else {
-                    hot.then(|| Background::Color(style::SURFACE_HI()))
-                },
-                border: iced::border::rounded(6),
-                ..button::Style::default()
-            }
+        .style(move |_, s| button::Style {
+            background: None,
+            text_color: if strong || matches!(s, button::Status::Hovered | button::Status::Pressed)
+            {
+                style::TEXT()
+            } else {
+                style::MUTED()
+            },
+            ..button::Style::default()
         })
         .on_press(msg);
         chrome::tip_above(b, &tip)
@@ -1113,7 +1115,7 @@ impl App {
             });
         let left = match &self.stage {
             Stage::Login(l) => {
-                format!("Connected to {}  ·  sign-in required", l.client().info.name)
+                format!("Connected to {}  |  sign-in required", l.client().info.name)
             }
             Stage::Check(c) => format!("Checking {}", c.address()),
             Stage::Library(l) => l.status().0,
@@ -1123,7 +1125,7 @@ impl App {
             Stage::Library(l) => (l.status().1, l.can_refresh().then_some(Message::Refresh)),
             _ => (
                 format!(
-                    "Valo {}  ·  {} {}",
+                    "Valo {}  |  {} {}",
                     env!("CARGO_PKG_VERSION"),
                     std::env::consts::OS,
                     std::env::consts::ARCH

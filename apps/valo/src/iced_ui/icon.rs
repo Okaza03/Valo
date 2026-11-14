@@ -303,26 +303,26 @@ pub fn draw(f: &mut Frame, c: Point, icon: Icon, col: Color) {
             );
         }
         Icon::CloudDownload => {
-            // three lobes over a flat base, open at the bottom middle for the arrow
+            // one continuous cloud outline (like the other outline icons), open
+            // in the middle of its base, and an arrow with a filled head (like
+            // Refresh's) dropping out of it
             let arc = |cx: f32, cy: f32, r: f32, a0: f32, a1: f32| -> Vec<Point> {
-                (0..=16)
+                (0..=12)
                     .map(|i| {
-                        let a = (a0 + (a1 - a0) * i as f32 / 16.0).to_radians();
+                        let a = (a0 + (a1 - a0) * i as f32 / 12.0).to_radians();
                         c + v(cx + r * a.cos(), cy + r * a.sin())
                     })
                     .collect()
             };
-            polyline(f, &arc(-5.5, -2.0, 3.5, 90.0, 270.0), s, col);
-            polyline(f, &arc(0.0, -4.5, 5.0, 205.0, 335.0), s, col);
-            polyline(f, &arc(5.5, -1.5, 3.0, 270.0, 450.0), s, col);
-            line(f, c + v(-5.5, 1.5), c + v(-2.5, 1.5), s, col);
-            line(f, c + v(2.5, 1.5), c + v(5.5, 1.5), s, col);
-            // the arrow drops out of the cloud through the gap in its base
-            line(f, c + v(0.0, -3.0), c + v(0.0, 9.0), s, col);
-            polyline(
-                f,
-                &[c + v(-3.0, 6.0), c + v(0.0, 9.0), c + v(3.0, 6.0)],
-                s,
+            let mut cloud = vec![c + v(-2.0, 2.5)];
+            cloud.extend(arc(-5.0, -1.0, 3.5, 90.0, 250.0));
+            cloud.extend(arc(0.0, -3.5, 4.5, 205.0, 335.0));
+            cloud.extend(arc(5.0, -1.0, 3.5, 290.0, 450.0));
+            cloud.push(c + v(2.0, 2.5));
+            polyline(f, &cloud, s, col);
+            line(f, c + v(0.0, -1.5), c + v(0.0, 5.5), s, col);
+            f.fill(
+                &polygon(&[c + v(-3.0, 5.0), c + v(3.0, 5.0), c + v(0.0, 8.5)]),
                 col,
             );
         }

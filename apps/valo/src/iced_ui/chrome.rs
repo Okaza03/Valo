@@ -209,7 +209,9 @@ pub fn status_bar<'a>(
             container(l).clip(true),
             space::horizontal(),
             mono(&right, 10.5).color(style::MUTED()),
-            space().width(14),
+            space().width(19),
+            mono("|", 10.5).color(style::MUTED()),
+            space().width(9),
             end,
         ]
         .align_y(Vertical::Center)
