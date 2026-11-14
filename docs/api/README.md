@@ -22,6 +22,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | Group titles into collections (Batman, Harry Potter, …)      | [Collections](admin-collections.md)        |
 | Show a series' Featurettes folder as its own season          | [Featurettes](featurettes.md)              |
 | Lock titles while their files move between disks             | [Moving](admin-moving.md)                  |
+| Find episodes' recap, intro and credits for the skip buttons | [Skip markers](admin-skip-markers.md)      |
 | Add Stremio addons (catalogs, metadata, subtitles) for everyone | [Addons](admin-addons.md)               |
 | Choose and order the rows everyone sees on the home page     | [Layout](admin-layout.md)                  |
 | List and sign out a user's devices                           | [Sign-in](auth.md#get-apisessions-optional) |
@@ -50,6 +51,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | `/api/admin/movies/…`, `/api/admin/series/…` | optional                | [Library editing](admin-library.md)   |
 | `/api/admin/collections`                | optional                     | [Collections](admin-collections.md)   |
 | `/api/admin/moving`                     | optional                     | [Moving](admin-moving.md)             |
+| `/api/admin/skip-markers`               | optional                     | [Skip markers](admin-skip-markers.md) |
 | `GET /api/addons`, `/api/admin/addons`  | optional                     | [Addons](admin-addons.md)             |
 | `GET /api/layout`, `/api/admin/layout`  | optional                     | [Layout](admin-layout.md)             |
 | `/api/admin/subtitles/bulk`, `/api/admin/episodes/…` | optional        | [Library editing](admin-library.md)   |

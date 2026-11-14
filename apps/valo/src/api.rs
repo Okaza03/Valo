@@ -281,6 +281,18 @@ pub struct Episode {
     pub unavailable: bool,
     /// Unix time the episode was added to the library.
     pub added: Option<i64>,
+    /// Where its recap, intro and credits are, when the server knows.
+    pub markers: Option<Markers>,
+}
+
+/// An episode's recap, intro and credits as `[start, end]` seconds
+/// (`"markers"` in the library), for the player's skip buttons.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Markers {
+    pub recap: Option<[f64; 2]>,
+    pub intro: Option<[f64; 2]>,
+    pub credits: Option<[f64; 2]>,
 }
 
 /// A subtitle file for a movie or episode (`"subtitles"` in the library).
@@ -1551,6 +1563,8 @@ pub const ADMIN_DOCS_LAYOUT: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-layout.md";
 pub const ADMIN_DOCS_MOVING: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-moving.md";
+pub const ADMIN_DOCS_SKIP: &str =
+    "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-skip-markers.md";
 
 /// Our ids ("movie:12", "series:7") of the titles `GET /api/admin/moving`
 /// marks as being moved. It may list just those (`{"movies": [12], "series":

@@ -64,6 +64,34 @@ pub fn from_chapters(chapters: &[(f64, Option<String>)], duration: f64) -> Vec<M
     out
 }
 
+/// The server's times for an episode.
+pub fn from_server(m: &crate::api::Markers) -> Vec<Marker> {
+    [
+        (Kind::Recap, m.recap),
+        (Kind::Intro, m.intro),
+        (Kind::Credits, m.credits),
+    ]
+    .into_iter()
+    .filter_map(|(kind, t)| {
+        let [start, end] = t?;
+        (end > start).then_some(Marker { kind, start, end })
+    })
+    .collect()
+}
+
+/// The server's times, with the chapters' for whatever the server doesn't
+/// know (an admin may have fixed the server's by hand), in order.
+pub fn merge(server: Vec<Marker>, chapters: Vec<Marker>) -> Vec<Marker> {
+    let mut out = server;
+    for m in chapters {
+        if !out.iter().any(|s| s.kind == m.kind) {
+            out.push(m);
+        }
+    }
+    out.sort_by(|a, b| a.start.total_cmp(&b.start));
+    out
+}
+
 /// The marker playing at `t`.
 pub fn at(markers: &[Marker], t: f64) -> Option<Marker> {
     markers.iter().find(|m| m.start <= t && t < m.end).copied()
@@ -153,6 +181,60 @@ mod tests {
                 start: 1200.0,
                 end: 1290.0
             }
+        );
+    }
+
+    #[test]
+    fn reads_the_servers_times_from_the_library() {
+        let e: crate::api::Episode = serde_json::from_str(
+            r#"{"id": "812", "number": 1, "title": "Pilot", "stream": "/s",
+                "markers": {"intro": [19.07, 49.15], "credits": [319.65, 360.08]}}"#,
+        )
+        .unwrap();
+        let m = from_server(e.markers.as_ref().unwrap());
+        assert_eq!(
+            m[0],
+            Marker {
+                kind: Kind::Intro,
+                start: 19.07,
+                end: 49.15
+            }
+        );
+        assert_eq!(m[1].kind, Kind::Credits);
+        // no times on the server: nothing
+        let e: crate::api::Episode = serde_json::from_str(
+            r#"{"id": 1, "number": 1, "title": "", "stream": "", "markers": null}"#,
+        )
+        .unwrap();
+        assert!(e.markers.is_none());
+    }
+
+    #[test]
+    fn server_times_win_over_chapters() {
+        let server = from_server(&crate::api::Markers {
+            intro: Some([40.0, 100.0]),
+            credits: Some([1300.0, 1290.0]), // ends before it starts: ignored
+            ..Default::default()
+        });
+        let chapters = from_chapters(
+            &ch(&[(0.0, "Recap"), (30.0, "Opening"), (95.0, "")]),
+            1400.0,
+        );
+        let m = merge(server, chapters);
+        assert_eq!(
+            m,
+            vec![
+                Marker {
+                    kind: Kind::Recap,
+                    start: 0.0,
+                    end: 30.0
+                },
+                Marker {
+                    kind: Kind::Intro,
+                    start: 40.0,
+                    end: 100.0
+                },
+            ]
         );
     }
 
