@@ -639,10 +639,11 @@ impl State {
     }
 
     fn episode_row<'a>(&'a self, e: &'a Episode, busy: bool) -> Element<'a, LMsg> {
+        // a long name wraps inside its column instead of running into Recap
         let name = text(format!("E{:02}  {}", e.number, e.title))
             .size(14)
             .width(250)
-            .wrapping(text::Wrapping::None);
+            .wrapping(text::Wrapping::WordOrGlyph);
         if let Some(f) = self.form.as_ref().filter(|f| f.episode == e.id) {
             let mut r = row![name].spacing(8).align_y(Vertical::Center);
             for i in 0..3 {
