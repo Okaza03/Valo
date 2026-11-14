@@ -189,7 +189,7 @@ pub fn button_with<'a, M: Clone + 'a>(
                 i,
                 icon::Icon::External | icon::Icon::ChevronRight | icon::Icon::ArrowRight
             );
-            let glyph: Element<'a, M> = icon::icon(i, fg, 15.0).into();
+            let glyph: Element<'a, M> = icon::icon(i, fg, 15.0);
             if after {
                 row![label, glyph]
                     .spacing(6)

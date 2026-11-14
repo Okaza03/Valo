@@ -346,7 +346,7 @@ pub fn button_with<'a, M: Clone + 'a>(
                 i,
                 icon::Icon::External | icon::Icon::ChevronRight | icon::Icon::ArrowRight
             );
-            let glyph: Element<'a, M> = icon::icon(i, col(false), 16.0).into();
+            let glyph: Element<'a, M> = icon::icon(i, col(false), 16.0);
             let label: Element<'a, M> = mono(t, size).into();
             if after {
                 row![label, glyph]
