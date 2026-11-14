@@ -648,9 +648,9 @@ impl State {
             .wrapping(text::Wrapping::WordOrGlyph);
         if let Some(f) = self.form.as_ref().filter(|f| f.episode == e.id) {
             let mut r = row![name].spacing(8).align_y(Vertical::Center);
-            for i in 0..3 {
+            for (i, field) in f.fields.iter().enumerate() {
                 r = r.push(
-                    text_input("0:00 – 0:00", &f.fields[i])
+                    text_input("0:00 – 0:00", field)
                         .on_input(move |v| send(Msg::Field(i, v)))
                         .on_submit_maybe((!busy).then(|| send(Msg::Save)))
                         .size(13.5)
