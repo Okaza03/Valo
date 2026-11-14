@@ -29,9 +29,9 @@ export function RotatingWords({
 
   return (
     <span className={cn("inline-grid whitespace-nowrap", className)}>
-      {/* sizers: invisible, one per word, all in the same cell */}
+      {/* sizers: invisible, one per word, all in the same cell, styled like the visible word so they measure the same */}
       {words.map((w) => (
-        <span key={w} aria-hidden="true" className="invisible [grid-area:1/1]">
+        <span key={w} aria-hidden="true" className={cn("[grid-area:1/1]", wordClassName, "invisible")}>
           {w}
         </span>
       ))}

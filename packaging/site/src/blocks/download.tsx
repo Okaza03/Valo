@@ -10,7 +10,7 @@ import {
   TvIcon,
 } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useState } from "react"
+import { useSyncExternalStore, useState } from "react"
 import { CopyButton } from "@/components/copy-button"
 import { PlatformIcon } from "@/components/brand-icons"
 import { SectionHeading } from "@/components/section-heading"
@@ -265,8 +265,22 @@ function AndroidSteps() {
 
 // ---- the section
 
+/** Whether the screen is md (768px) or wider: the platforms are a sidebar there, a row of tabs below. */
+const MD = "(min-width: 768px)"
+function useWide() {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(MD)
+      mq.addEventListener("change", cb)
+      return () => mq.removeEventListener("change", cb)
+    },
+    () => window.matchMedia(MD).matches,
+  )
+}
+
 export function Download({ rel }: { rel: ReleaseInfo }) {
   const detected = useDetected()
+  const wide = useWide()
   // the visitor's platform until they pick a tab
   const [chosen, setTab] = useState<PlatformId | null>(null)
   const tab: PlatformId = chosen ?? (detected?.kind === "file" ? detected.platform : detected?.kind === "flatpak" ? "linux" : "windows")
@@ -300,7 +314,8 @@ export function Download({ rel }: { rel: ReleaseInfo }) {
         <BlurFade inView delay={0.1}>
           <Tabs
             id="all-downloads"
-            orientation="vertical"
+            // arrow keys follow the layout: up/down in the sidebar, left/right in the row
+            orientation={wide ? "vertical" : "horizontal"}
             value={tab}
             onValueChange={(v) => setTab(v as PlatformId)}
             className="mt-6 grid scroll-mt-24 grid-cols-1 gap-6 rounded-3xl border border-white/[0.07] bg-white/[0.015] p-3 sm:p-4 md:grid-cols-[260px_minmax(0,1fr)]"
