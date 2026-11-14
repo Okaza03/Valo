@@ -82,12 +82,9 @@ pub fn from_server(m: &crate::api::Markers) -> Vec<Marker> {
 /// The server's times, with the chapters' for whatever the server doesn't
 /// know (an admin may have fixed the server's by hand), in order.
 pub fn merge(server: Vec<Marker>, chapters: Vec<Marker>) -> Vec<Marker> {
+    let known: Vec<Kind> = server.iter().map(|m| m.kind).collect();
     let mut out = server;
-    for m in chapters {
-        if !out.iter().any(|s| s.kind == m.kind) {
-            out.push(m);
-        }
-    }
+    out.extend(chapters.into_iter().filter(|m| !known.contains(&m.kind)));
     out.sort_by(|a, b| a.start.total_cmp(&b.start));
     out
 }
@@ -236,6 +233,23 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn every_chapter_of_a_kind_the_server_lacks_stays() {
+        // two credits stretches apart (a mid-episode break), no times on the server
+        let chapters = from_chapters(
+            &ch(&[
+                (0.0, ""),
+                (600.0, "Credits"),
+                (660.0, ""),
+                (1300.0, "Credits"),
+            ]),
+            1400.0,
+        );
+        let m = merge(Vec::new(), chapters);
+        assert_eq!(m.len(), 2);
+        assert_eq!((m[0].start, m[1].start), (600.0, 1300.0));
     }
 
     #[test]

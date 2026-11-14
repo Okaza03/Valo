@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use super::super::details::{caps, gap, panel};
 use super::super::profile::Remote;
 use super::super::{spin_secs, Msg as LMsg};
-use super::{danger_button, not_set_up, Cx, Done, JobFn, Msg as AMsg, Section};
+use super::{danger_button, not_set_up, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::api::{Client, Item, Kind};
 use crate::iced_ui::icon;
 use crate::iced_ui::spaced::mono;
@@ -106,6 +106,9 @@ struct Form {
     episode: String,
     /// recap, intro, credits
     fields: [String; 3],
+    /// The fields as first shown: unchanged ones aren't sent, so times
+    /// with fractions of a second aren't rounded by saving.
+    shown: [String; 3],
     error: Option<String>,
 }
 
@@ -173,15 +176,24 @@ impl State {
         })
     }
 
-    pub fn work(&mut self, client: &Client, login: &mut bool) {
-        self.list.poll(login);
+    pub fn work(&mut self, client: &Client, asks: &mut Asks) {
+        let was = self.detecting();
+        // a run just finished: the library has new times for the player
+        if self.list.poll(&mut asks.login) && was && !self.detecting() {
+            asks.reload_library = true;
+        }
+        let login = &mut asks.login;
         if self.list.due() || (self.detecting() && self.list.stale(POLL)) {
             let c = client.clone();
             self.list.load(move || c.admin_get("skip-markers"));
         }
         self.detail.poll(login);
         if let Some(id) = self.open.clone() {
-            let wrong = self.detail.data.as_ref().is_some_and(|d| d.id != id);
+            // another series' episodes are shown: load this one's, but not again
+            // and again after a failed try (Open and Refresh retry)
+            let wrong = self.detail.data.as_ref().is_some_and(|d| d.id != id)
+                && self.detail.error.is_none()
+                && !self.detail.missing;
             let running = self
                 .detail
                 .data
@@ -215,7 +227,12 @@ impl State {
             }
             Msg::PickAll(on) => {
                 if on {
-                    self.picked = self.shown(cx_rows).iter().map(|r| r.id.clone()).collect();
+                    self.picked = self
+                        .shown(cx_rows)
+                        .iter()
+                        .take(SHOW)
+                        .map(|r| r.id.clone())
+                        .collect();
                 } else {
                     self.picked.clear();
                 }
@@ -257,10 +274,12 @@ impl State {
                     .episodes
                     .iter()
                     .find(|e| e.id == id)?;
+                let fields =
+                    [ep.recap, ep.intro, ep.credits].map(|t| t.map(range_text).unwrap_or_default());
                 self.form = Some(Form {
                     episode: id,
-                    fields: [ep.recap, ep.intro, ep.credits]
-                        .map(|t| t.map(range_text).unwrap_or_default()),
+                    shown: fields.clone(),
+                    fields,
                     error: None,
                 });
             }
@@ -274,6 +293,9 @@ impl State {
                 let f = self.form.as_mut()?;
                 let mut body = serde_json::Map::new();
                 for (i, kind) in KINDS.iter().enumerate() {
+                    if f.fields[i].trim() == f.shown[i].trim() {
+                        continue;
+                    }
                     match parse_range(&f.fields[i]) {
                         Ok(t) => {
                             body.insert(
@@ -289,6 +311,9 @@ impl State {
                 }
                 let id = f.episode.clone();
                 self.form = None;
+                if body.is_empty() {
+                    return None; // nothing changed
+                }
                 return Some(Box::new(move |c: &Client| {
                     c.admin_call(
                         "PATCH",
@@ -378,7 +403,8 @@ impl State {
             1 => "Find times for 1 series".to_owned(),
             n => format!("Find times for {n} series"),
         };
-        let all_on = !shown.is_empty() && shown.iter().all(|r| self.picked.contains(&r.id));
+        let all_on =
+            !shown.is_empty() && shown.iter().take(SHOW).all(|r| self.picked.contains(&r.id));
         let mut col: Column<'a, LMsg> =
             column![
                 panel(column![
@@ -539,7 +565,8 @@ impl State {
                     Btn::Small,
                     "Find missing times",
                     None,
-                    (!busy && r.any < r.episodes).then(|| send(Msg::Again(id.clone(), false)))
+                    (!busy && (r.intro < r.episodes || r.credits < r.episodes))
+                        .then(|| send(Msg::Again(id.clone(), false)))
                 ),
                 widgets::button_with(
                     Btn::Small,
@@ -611,7 +638,7 @@ impl State {
                 r = r.push(
                     text_input("0:00 – 0:00", &f.fields[i])
                         .on_input(move |v| send(Msg::Field(i, v)))
-                        .on_submit(send(Msg::Save))
+                        .on_submit_maybe((!busy).then(|| send(Msg::Save)))
                         .size(13.5)
                         .padding([5, 8])
                         .width(130)
@@ -878,6 +905,28 @@ fn field<'a>(v: &str) -> Element<'a, LMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_untouched_times_sends_nothing() {
+        let mut st = State::default();
+        st.detail.data = Some(Detail {
+            id: "7".into(),
+            episodes: vec![Episode {
+                id: "812".into(),
+                intro: Some([19.07, 49.15]), // shown rounded: 0:19 – 0:49
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        st.update(Msg::Edit(Some("812".into())), &[]);
+        assert!(
+            st.update(Msg::Save, &[]).is_none(),
+            "nothing changed, nothing sent"
+        );
+        st.update(Msg::Edit(Some("812".into())), &[]);
+        st.update(Msg::Field(0, "0:00 - 0:10".into()), &[]);
+        assert!(st.update(Msg::Save, &[]).is_some(), "the recap changed");
+    }
 
     #[test]
     fn times_typed_by_hand() {

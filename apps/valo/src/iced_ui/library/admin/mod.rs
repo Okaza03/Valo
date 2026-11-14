@@ -389,7 +389,7 @@ impl State {
         match self.section {
             Section::Dashboard => self.dashboard.work(client, &mut asks),
             Section::Moving => self.moving.work(client, &mut asks.login),
-            Section::SkipMarkers => self.skip.work(client, &mut asks.login),
+            Section::SkipMarkers => self.skip.work(client, &mut asks),
             Section::Library => self.library.work(client, &mut asks),
             Section::Analytics => self.analytics.work(client, &mut asks),
             Section::Collections => self.collections.work(client, &mut asks),
