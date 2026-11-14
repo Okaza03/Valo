@@ -29,6 +29,7 @@ use crate::audio::AudioOut;
 use crate::config::{Config, Progress, FINISHED};
 use crate::inhibit::Inhibit;
 use crate::player::{Player, Source};
+use crate::skip::{self, Kind, Marker};
 use crate::subs::{self, Subs};
 use crate::ui::theme::{self, PlayerLayout, Skin, Times, TitleAt};
 use crate::ui::watch::PlayItem;
@@ -45,6 +46,11 @@ const VOL_SHOW: Duration = Duration::from_secs(3);
 /// A click on the video waits this long for a second one (a double click
 /// toggles fullscreen) before it plays or pauses.
 const DOUBLE_CLICK: Duration = Duration::from_millis(300);
+/// Seconds the Next Episode button counts down before it plays the next one.
+const AUTO_NEXT: f64 = 5.0;
+/// Without a known start of the credits, Next Episode shows this many
+/// seconds before the end (and doesn't count down: it may still be the story).
+const NEXT_NEAR_END: f64 = 20.0;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Menu {
@@ -90,6 +96,10 @@ pub enum Msg {
     Drag,
     /// The top bar was double-clicked: maximize or restore.
     ToggleMaximize,
+    /// Skip Intro / Skip Recap: jump to this time.
+    SkipTo(f64),
+    /// Watch Credits: stop the countdown and hide Next Episode.
+    KeepWatching,
 }
 
 /// What the app should do after a message.
@@ -172,6 +182,21 @@ pub struct Watch {
     delay_changed: Option<Instant>,
     /// A click on the video waiting out the double-click window.
     click_at: Option<Instant>,
+    /// The episode's intro, recap and credits, from its chapters.
+    markers: Vec<Marker>,
+    /// Seconds left before Next Episode plays the next one by itself.
+    auto_next: Option<f64>,
+    /// Watch Credits was pressed: no Next Episode popup for this episode.
+    credits_kept: bool,
+}
+
+/// The button over the corner of the timeline.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Popup {
+    /// Skip Intro / Skip Recap, to the end of it.
+    Skip(Kind, f64),
+    /// Next Episode; `counts`: it plays it by itself after a countdown.
+    Next { counts: bool },
 }
 
 impl Watch {
@@ -205,6 +230,9 @@ impl Watch {
             sub_delay: 0.0,
             delay_changed: None,
             click_at: None,
+            markers: Vec::new(),
+            auto_next: None,
+            credits_kept: false,
         }
     }
 
@@ -315,6 +343,9 @@ impl Watch {
         }
         self.save_progress(env.progress);
         self.moved_on = None;
+        self.markers.clear();
+        self.auto_next = None;
+        self.credits_kept = false;
         self.player = None; // drop (and join) the old decoder first
         self.frame = None;
         self.current = Some(i);
@@ -362,6 +393,28 @@ impl Watch {
 
     fn has_next(&self) -> bool {
         self.current.is_some_and(|i| i + 1 < self.items.len())
+    }
+
+    /// The popup for this moment of an episode: Skip Intro, Skip Recap, or
+    /// Next Episode at the credits (or near the end, when they aren't known).
+    fn popup(&self, autoplay: bool) -> Option<Popup> {
+        let p = self.player.as_ref()?;
+        if !self.items[self.current?].episode || !self.status.is_empty() {
+            return None;
+        }
+        let t = self.seek_drag.unwrap_or_else(|| p.clock());
+        match skip::at(&self.markers, t) {
+            Some(m) if m.kind != Kind::Credits => return Some(Popup::Skip(m.kind, m.end)),
+            Some(_) if self.has_next() && !self.credits_kept => {
+                return Some(Popup::Next { counts: autoplay })
+            }
+            _ => {}
+        }
+        let has_credits = self.markers.iter().any(|m| m.kind == Kind::Credits);
+        let dur = p.meta.duration;
+        let near_end = dur > NEXT_NEAR_END * 3.0 && t >= dur - NEXT_NEAR_END && !p.finished();
+        (near_end && !has_credits && self.has_next() && !self.credits_kept)
+            .then_some(Popup::Next { counts: false })
     }
 
     fn vol_shown(&self) -> bool {
@@ -439,6 +492,15 @@ impl Watch {
                 self.save_progress(env.progress);
                 env.progress.flush();
                 out = Out::Close;
+            }
+            Msg::SkipTo(t) => {
+                if let Some(p) = self.player.as_mut() {
+                    p.seek(t);
+                }
+            }
+            Msg::KeepWatching => {
+                self.credits_kept = true;
+                self.auto_next = None;
             }
             Msg::Next => {
                 if let Some(i) = self.current.filter(|_| self.has_next()) {
@@ -530,6 +592,12 @@ impl Watch {
                 return self.update(Msg::Delay(if mods.shift() { 1.0 } else { 0.1 }), env)
             }
             (_, Some("n")) => return self.update(Msg::Next, env),
+            // S: Skip Intro / Skip Recap
+            (_, Some("s")) => {
+                if let Some(Popup::Skip(_, to)) = self.popup(false) {
+                    return self.update(Msg::SkipTo(to), env);
+                }
+            }
             (_, Some("p")) => return self.update(Msg::Prev, env),
             (_, Some("l")) => self.show_list = !self.show_list,
             (_, Some("f")) | (Key::Named(Named::F11), _) if !mods.command() => {
@@ -565,6 +633,9 @@ impl Watch {
                         p.seek(start);
                     }
                     self.items[i].start = 0.0;
+                    if self.items[i].episode {
+                        self.markers = skip::from_chapters(&p.meta.specs.chapters, p.meta.duration);
+                    }
                     self.player = Some(p);
                 }
                 Some(Err(e)) => {
@@ -624,6 +695,24 @@ impl Watch {
                 }));
             }
             finished = p.finished() && !p.paused;
+        }
+        // Next Episode counts down while it shows (and playback runs), then plays it
+        match self.popup(env.cfg.autoplay_next) {
+            Some(Popup::Next { counts: true }) => {
+                let left = self.auto_next.unwrap_or(AUTO_NEXT)
+                    - if self.playing() && self.seek_drag.is_none() {
+                        dt
+                    } else {
+                        0.0
+                    };
+                self.auto_next = Some(left);
+                if left <= 0.0 {
+                    self.auto_next = None;
+                    self.update(Msg::Next, env);
+                    return;
+                }
+            }
+            _ => self.auto_next = None,
         }
         if finished {
             self.save_progress(env.progress);
@@ -819,10 +908,114 @@ impl Watch {
         if !hide {
             self.controls(&mut layers, rect, pos, dur, now);
         }
+        if let Some(pop) = self.popup(now.autoplay) {
+            // right corner, above the timeline while it's up, else near the bottom
+            let row_layout = theme::spec().player.layout == PlayerLayout::Row;
+            let bottom = R::new(rect.x, rect.bottom() - BOTTOM_H, rect.w, BOTTOM_H);
+            let y = if hide {
+                rect.bottom() - 36.0
+            } else {
+                seek_y(bottom, row_layout) - 8.0 - seekbar::ABOVE - 14.0
+            };
+            layers.push(place(
+                rect.right() - 28.0,
+                y,
+                1.0,
+                1.0,
+                self.popup_view(pop),
+            ));
+        }
         stack(layers)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    /// Skip Intro / Skip Recap, or Next Episode filling up as it counts down.
+    fn popup_view(&self, pop: Popup) -> Element<'_, Msg> {
+        // dark with a light rim; white when hovered
+        let outline = |_: &Theme, s: button::Status| {
+            let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: Some(Background::Color(if hot { white(240) } else { black(150) })),
+                text_color: if hot { Color::BLACK } else { Color::WHITE },
+                border: iced::border::rounded(6).width(1.5).color(white(if hot {
+                    240
+                } else {
+                    190
+                })),
+                ..button::Style::default()
+            }
+        };
+        let label = |s: String| text(s).font(BOLD).size(15);
+        match pop {
+            Popup::Skip(kind, to) => {
+                let name = if kind == Kind::Recap {
+                    "Skip Recap"
+                } else {
+                    "Skip Intro"
+                };
+                tip(
+                    button(
+                        row![
+                            label(name.into()),
+                            icon::icon(Icon::ChevronRight, Color::WHITE, 16.0)
+                        ]
+                        .spacing(8)
+                        .align_y(Vertical::Center),
+                    )
+                    .padding([11, 18])
+                    .style(outline)
+                    .on_press(Msg::SkipTo(to)),
+                    format!("{name} (S)"),
+                    Above,
+                )
+            }
+            Popup::Next { counts } => {
+                let left = self.auto_next.filter(|_| counts);
+                let words = match left {
+                    Some(l) => format!("Next episode in {}", l.ceil().max(1.0) as u32),
+                    None => "Next Episode".into(),
+                };
+                // the part already counted down is white, the rest grey
+                let done = left.map_or(1.0, |l| (1.0 - l / AUTO_NEXT).clamp(0.0, 0.998) as f32);
+                let next = button(
+                    row![
+                        label(words),
+                        icon::icon(Icon::ChevronRight, Color::BLACK, 16.0)
+                    ]
+                    .spacing(8)
+                    .align_y(Vertical::Center),
+                )
+                .padding([11, 18])
+                .style(move |_, s| {
+                    let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
+                    let (a, b) = (white(255), white(if hot { 225 } else { 165 }));
+                    let g = gradient::Linear::new(Radians(std::f32::consts::FRAC_PI_2))
+                        .add_stop(0.0, a)
+                        .add_stop(done, a)
+                        .add_stop(done + 0.001, b)
+                        .add_stop(1.0, b);
+                    button::Style {
+                        background: Some(Background::Gradient(g.into())),
+                        text_color: Color::BLACK,
+                        border: iced::border::rounded(6),
+                        ..button::Style::default()
+                    }
+                })
+                .on_press(Msg::Next);
+                let mut r = row![].spacing(10).align_y(Vertical::Center);
+                if counts {
+                    r = r.push(
+                        button(label("Watch Credits".into()))
+                            .padding([11, 18])
+                            .style(outline)
+                            .on_press(Msg::KeepWatching),
+                    );
+                }
+                r.push(tip(next, "Next (N)", Above)).into()
+            }
+        }
     }
 
     fn controls<'a>(
@@ -925,11 +1118,14 @@ impl Watch {
 
         // where the rows go: the seek bar, and (Row) the buttons under it
         let row_cy = bottom.bottom() - 32.0;
-        let by = if row_layout {
-            bottom.bottom() - 68.0
-        } else {
-            bottom.bottom() - 86.0
-        };
+        let by = seek_y(bottom, row_layout);
+        // a click under the timeline, between the buttons, mustn't pause:
+        // this takes it before the video does (the buttons sit on top of it)
+        let under = by + seekbar::HIT / 2.0;
+        layers.push(at(
+            R::new(bottom.x, under, bottom.w, rect.bottom() - under),
+            mouse_area(space().width(bottom.w).height(rect.bottom() - under)).on_press(Msg::Moved),
+        ));
 
         // ---- the other buttons: top right, or the right of the bottom row
         let (slot_y, step) = if row_layout {
@@ -1524,6 +1720,8 @@ impl Watch {
 /// What the view needs from the app's settings and window.
 #[derive(Clone, Copy)]
 pub struct View {
+    /// Next Episode counts down (the "play the next episode" setting).
+    pub autoplay: bool,
     pub volume: f32,
     pub muted: bool,
     pub skip: f64,
@@ -1556,6 +1754,11 @@ impl R {
     fn center_x(&self) -> f32 {
         self.x + self.w / 2.0
     }
+}
+
+/// Where the seek bar runs across the bottom panel.
+fn seek_y(bottom: R, row_layout: bool) -> f32 {
+    bottom.bottom() - if row_layout { 68.0 } else { 86.0 }
 }
 
 /// The video's place in `r`: as big as fits, its shape kept.
