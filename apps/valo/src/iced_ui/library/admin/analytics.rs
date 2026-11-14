@@ -655,16 +655,28 @@ fn hero<'a>(name: &str, a: Option<&UserAnalytics>, back: &str) -> Element<'a, LM
 
 /// One play in the history list; opens the title when clicked.
 fn recent_row<'a>(cx: &Cx<'a>, e: &RecentPlay, w: f32) -> Element<'a, LMsg> {
-    let owner = if e.series_id.is_empty() {
-        &e.id
-    } else {
-        &e.series_id
-    };
-    let item = cx.find(owner);
-    let still = cx
+    // the server tags its ids ("e:812", "m:12", "s:<series name>"); the
+    // library tags its own ("episode:812", "movie:12")
+    let bare = e.id.split_once(':').map_or(e.id.as_str(), |(_, id)| id);
+    let episode = cx
         .lib
-        .find_episode(&e.id)
-        .and_then(|(s, si, ei)| s.seasons[si].episodes[ei].still.as_deref());
+        .find_episode(&format!("episode:{bare}"))
+        .or_else(|| cx.lib.find_episode(&e.id));
+    let item = episode.map(|(s, _, _)| s).or_else(|| {
+        let owner = if e.series_id.is_empty() {
+            &e.id
+        } else {
+            &e.series_id
+        };
+        cx.find(owner)
+            .or_else(|| cx.find(&format!("movie:{bare}")))
+            // "s:Smallville": the series by its title
+            .or_else(|| {
+                let name = e.series_id.split_once(':').map(|(_, n)| n)?;
+                cx.series.iter().find(|i| i.title == name)
+            })
+    });
+    let still = episode.and_then(|(s, si, ei)| s.seasons[si].episodes[ei].still.as_deref());
     let art = still
         .or(item.and_then(|i| i.backdrop.as_deref()))
         .or(item.and_then(|i| i.poster.as_deref()));

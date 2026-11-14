@@ -769,9 +769,13 @@ impl State {
             Section::Addons => self.addons.view(&cx, w),
         };
         let body: Element<'a, LMsg> = match section {
-            // the dashboard and users lay out their own columns
+            // these lay out their own columns (and margin): wrapping them
+            // again put a second margin on the left
             Section::Dashboard
+            | Section::Analytics
             | Section::Requests
+            | Section::Library
+            | Section::Collections
             | Section::Users
             | Section::Layout
             | Section::Addons => body,
