@@ -269,9 +269,10 @@ fn stat<'a, M: 'a>(w: f32, value: String, label: &str) -> Element<'a, M> {
 /// Stat cards in rows, as many across as fit `w`.
 pub fn stats<'a, M: 'a>(tiles: Vec<(String, &str)>, w: f32) -> Element<'a, M> {
     let g = 14.0;
-    let cols = ((w + g) / (180.0 + g))
-        .floor()
-        .clamp(1.0, tiles.len().max(1) as f32) as usize;
+    let n = tiles.len().max(1);
+    let fit = ((w + g) / (150.0 + g)).floor().clamp(1.0, n as f32) as usize;
+    // rows of even length: 6 tiles where 5 fit are two rows of 3, not 5 + 1
+    let cols = n.div_ceil(n.div_ceil(fit));
     let tw = (w - g * (cols as f32 - 1.0)) / cols as f32;
     let mut out: Column<'a, M> = column![].spacing(g);
     let mut it = tiles.into_iter().peekable();

@@ -522,7 +522,7 @@ impl State {
                     link(
                         "Manage in Users",
                         13.0,
-                        c(GOLD()),
+                        super::ui::accent(),
                         None,
                         LMsg::Admin(AMsg::Section(Section::Users))
                     ),
@@ -727,9 +727,9 @@ fn recent_row<'a>(cx: &Cx<'a>, e: &RecentPlay, w: f32) -> Element<'a, LMsg> {
         .into()
 }
 
-/// A thin gold progress line over a white track.
+/// A thin progress line in the accent color over a white track.
 fn progress<'a>(f: f32, w: f32) -> Element<'a, LMsg> {
-    let gold = c(GOLD());
+    let gold = super::ui::accent();
     container(
         container(space())
             .width(w * f)
@@ -889,17 +889,22 @@ impl<M> canvas::Program<M> for Bars {
                 .enumerate()
                 .map(|(i, v)| Point::new(slot * (i as f32 + 0.5), h - (h - 8.0) * v / max))
                 .collect();
+            // a smooth curve: each step a bezier with its handles halfway across
+            let curve = |b: &mut canvas::path::Builder| {
+                for w2 in pts.windows(2) {
+                    let (p, q) = (w2[0], w2[1]);
+                    let mx = (p.x + q.x) / 2.0;
+                    b.bezier_curve_to(Point::new(mx, p.y), Point::new(mx, q.y), q);
+                }
+            };
             let line_path = Path::new(|b| {
                 b.move_to(pts[0]);
-                for p in &pts[1..] {
-                    b.line_to(*p);
-                }
+                curve(b);
             });
             let area_path = Path::new(|b| {
                 b.move_to(Point::new(pts[0].x, h));
-                for p in &pts {
-                    b.line_to(*p);
-                }
+                b.line_to(pts[0]);
+                curve(b);
                 b.line_to(Point::new(pts[pts.len() - 1].x, h));
                 b.close();
             });
