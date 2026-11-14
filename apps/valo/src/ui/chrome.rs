@@ -3,8 +3,6 @@
 
 #[derive(Clone, Copy)]
 pub enum Icon {
-    /// The admin page's Refresh (PR #55); unused on main until then.
-    #[allow(dead_code)]
     Refresh,
     Settings,
     Minimize,
