@@ -176,10 +176,21 @@ impl State {
         })
     }
 
+    /// How many times the list counts, all series together: a change means
+    /// new times for the player.
+    fn coverage_total(&self) -> Option<usize> {
+        let l = self.list.data.as_ref()?;
+        Some(l.series.iter().map(|r| r.intro + r.recap + r.credits).sum())
+    }
+
     pub fn work(&mut self, client: &Client, asks: &mut Asks) {
-        let was = self.detecting();
-        // a run just finished: the library has new times for the player
-        if self.list.poll(&mut asks.login) && was && !self.detecting() {
+        let (was, before) = (self.detecting(), self.coverage_total());
+        // a run finished, seen running or not (a quick one can end between
+        // polls): the library has new times for the player
+        if self.list.poll(&mut asks.login)
+            && !self.detecting()
+            && (was || (before.is_some() && before != self.coverage_total()))
+        {
             asks.reload_library = true;
         }
         let login = &mut asks.login;
@@ -926,6 +937,29 @@ mod tests {
         st.update(Msg::Edit(Some("812".into())), &[]);
         st.update(Msg::Field(0, "0:00 - 0:10".into()), &[]);
         assert!(st.update(Msg::Save, &[]).is_some(), "the recap changed");
+    }
+
+    #[test]
+    fn a_quick_run_still_counts_as_new_times() {
+        let row = |intro| Row {
+            id: "7".into(),
+            episodes: 4,
+            intro,
+            ..Default::default()
+        };
+        let mut st = State::default();
+        st.list.data = Some(List {
+            running: false,
+            series: vec![row(0)],
+        });
+        let before = st.coverage_total();
+        // the run started and ended between two polls: never seen running
+        st.list.data = Some(List {
+            running: false,
+            series: vec![row(4)],
+        });
+        assert!(!st.detecting());
+        assert_ne!(before, st.coverage_total());
     }
 
     #[test]
