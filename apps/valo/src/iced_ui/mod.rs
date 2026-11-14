@@ -633,33 +633,69 @@ impl App {
         self.cfg.save();
     }
 
-    /// The update control: the refresh icon that checks for a new Valo, a
-    /// spinner while it does, and an "Update" tab when one is out.
+    /// The update control at the right of the status line: Check for Updates;
+    /// a spinner while it checks; Download Updates when a new Valo is out.
     fn update_button(&self) -> Element<'_, Message> {
-        let mut r = row![].align_y(iced::alignment::Vertical::Center);
-        if let Some(rel) = &self.updates.available {
-            r = r.push(space().width(8)).push(chrome::tip_below(
-                widgets::tab(
-                    &format!("Update {}", rel.version),
-                    true,
-                    Message::ShowUpdate,
-                ),
-                &format!("Valo {} is available — click to update", rel.version),
-            ));
-            r = r.push(space().width(8));
-        }
+        use iced::alignment::Vertical;
+        use iced::widget::{button, text};
         if self.updates.checking() {
-            r = r.push(
-                container(icon::spinner(spin_secs(), style::TEXT(), 16.0)).center(chrome::BAR_H),
-            );
-        } else {
-            r = r.push(chrome::bar_button(
-                Icon::Refresh,
-                "Check for updates",
-                Message::CheckUpdates,
-            ));
+            return row![
+                icon::spinner(spin_secs(), style::MUTED(), 12.0),
+                text("Checking for updates…")
+                    .size(12.5)
+                    .color(style::MUTED()),
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center)
+            .padding([0, 10])
+            .into();
         }
-        r.into()
+        let (label, ic, msg, tip, strong) = match &self.updates.available {
+            Some(rel) => (
+                "Download Updates",
+                Icon::ArrowDown,
+                Message::ShowUpdate,
+                format!("Valo {} is available — click to update", rel.version),
+                true,
+            ),
+            None => (
+                "Check for Updates",
+                Icon::CloudDownload,
+                Message::CheckUpdates,
+                "Look for a newer Valo".to_owned(),
+                false,
+            ),
+        };
+        let accent = style::c(crate::ui::theme::ACCENT());
+        let b = button(
+            row![
+                icon::icon(ic, if strong { accent } else { style::TEXT() }, 17.0),
+                text(label)
+                    .size(12.5)
+                    .color(if strong { accent } else { style::TEXT() }),
+            ]
+            .spacing(6)
+            .align_y(Vertical::Center),
+        )
+        .padding([3, 10])
+        .style(move |_, s| {
+            let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: if strong {
+                    Some(Background::Color(accent.scale_alpha(if hot {
+                        0.22
+                    } else {
+                        0.12
+                    })))
+                } else {
+                    hot.then(|| Background::Color(style::SURFACE_HI()))
+                },
+                border: iced::border::rounded(6),
+                ..button::Style::default()
+            }
+        })
+        .on_press(msg);
+        chrome::tip_above(b, &tip)
     }
 
     /// Show the library of `client`'s server, the wordmark over it while it loads.
@@ -1031,7 +1067,6 @@ impl App {
             Stage::Library(l) => l.client().info.name.clone(),
             _ => "Valo".to_owned(),
         };
-        let update = self.update_button();
         let settings = chrome::bar_button(Icon::Settings, "Settings", Message::OpenSettings);
         let (left, right): (Element<Message>, Element<Message>) = match &self.stage {
             Stage::Library(l) => (
@@ -1040,8 +1075,6 @@ impl App {
                     space().width(10),
                     l.search_field().map(Message::Library),
                     space().width(10),
-                    chrome::vsep(),
-                    update,
                     chrome::vsep(),
                     settings,
                     chrome::vsep(),
@@ -1052,7 +1085,7 @@ impl App {
             ),
             _ => (
                 column![].into(),
-                row![update, chrome::vsep(), settings]
+                row![settings]
                     .align_y(iced::alignment::Vertical::Center)
                     .into(),
             ),
@@ -1097,8 +1130,12 @@ impl App {
                 None,
             ),
         };
-        let page: Element<Message> =
-            column![bar, body, chrome::status_bar(left, right, refresh)].into();
+        let page: Element<Message> = column![
+            bar,
+            body,
+            chrome::status_bar(left, right, refresh, self.update_button())
+        ]
+        .into();
         match &self.stage {
             Stage::Library(l) => match l.menu_overlay() {
                 Some(menu) => iced::widget::stack![page, menu.map(Message::Library)].into(),

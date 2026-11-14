@@ -3,6 +3,8 @@
 
 #[derive(Clone, Copy)]
 pub enum Icon {
+    /// The admin page's Refresh (PR #55); unused on main until then.
+    #[allow(dead_code)]
     Refresh,
     Settings,
     Minimize,
@@ -39,6 +41,8 @@ pub enum Icon {
     Film,
     /// Sidebar: a screen on a stand.
     Tv,
+    /// A cloud with an arrow down (check for updates).
+    CloudDownload,
 }
 
 /// Open a link in the user's browser.

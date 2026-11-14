@@ -120,6 +120,18 @@ pub fn tip_below<'a, M: 'a>(content: impl Into<Element<'a, M>>, tip: &str) -> El
     .into()
 }
 
+/// `content` with a hover tip over it (for the status line at the bottom).
+pub fn tip_above<'a, M: 'a>(content: impl Into<Element<'a, M>>, tip: &str) -> Element<'a, M> {
+    tooltip(
+        content,
+        container(text(tip.to_owned()).size(12.5))
+            .padding([4, 8])
+            .style(style::tip),
+        tooltip::Position::Top,
+    )
+    .into()
+}
+
 /// Resize handles along the window's edges and a hairline border, over `content`.
 /// Maximized and fullscreen windows get neither.
 pub fn frame<'a>(content: Element<'a, Message>, size: Size, framed: bool) -> Element<'a, Message> {
@@ -171,6 +183,8 @@ pub fn status_bar<'a>(
     left: String,
     right: String,
     refresh: Option<Message>,
+    // at the far right: the update button
+    end: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let l: Element<'a, Message> = match refresh {
         Some(msg) => tip_below(
@@ -195,11 +209,13 @@ pub fn status_bar<'a>(
             container(l).clip(true),
             space::horizontal(),
             mono(&right, 10.5).color(style::MUTED()),
+            space().width(14),
+            end,
         ]
         .align_y(Vertical::Center)
         .height(30),
     )
-    .padding([0, 18])
+    .padding(Padding::default().left(18.0).right(8.0))
     .width(Length::Fill)
     .style(|_| container::Style {
         background: Some(Background::Color(style::BG())),

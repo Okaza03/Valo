@@ -302,6 +302,30 @@ pub fn draw(f: &mut Frame, c: Point, icon: Icon, col: Color) {
                 col,
             );
         }
+        Icon::CloudDownload => {
+            // three lobes over a flat base, open at the bottom middle for the arrow
+            let arc = |cx: f32, cy: f32, r: f32, a0: f32, a1: f32| -> Vec<Point> {
+                (0..=16)
+                    .map(|i| {
+                        let a = (a0 + (a1 - a0) * i as f32 / 16.0).to_radians();
+                        c + v(cx + r * a.cos(), cy + r * a.sin())
+                    })
+                    .collect()
+            };
+            polyline(f, &arc(-5.5, -2.0, 3.5, 90.0, 270.0), s, col);
+            polyline(f, &arc(0.0, -4.5, 5.0, 205.0, 335.0), s, col);
+            polyline(f, &arc(5.5, -1.5, 3.0, 270.0, 450.0), s, col);
+            line(f, c + v(-5.5, 1.5), c + v(-2.5, 1.5), s, col);
+            line(f, c + v(2.5, 1.5), c + v(5.5, 1.5), s, col);
+            // the arrow drops out of the cloud through the gap in its base
+            line(f, c + v(0.0, -3.0), c + v(0.0, 9.0), s, col);
+            polyline(
+                f,
+                &[c + v(-3.0, 6.0), c + v(0.0, 9.0), c + v(3.0, 6.0)],
+                s,
+                col,
+            );
+        }
         Icon::Tv => {
             rect(f, c + v(0.0, -1.5), 17.0, 12.0, 2.0, 1.6, col);
             line(f, c + v(-4.0, 7.5), c + v(4.0, 7.5), 1.6, col);
