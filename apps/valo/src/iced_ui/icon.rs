@@ -302,6 +302,30 @@ pub fn draw(f: &mut Frame, c: Point, icon: Icon, col: Color) {
                 col,
             );
         }
+        Icon::CloudDownload => {
+            // one continuous cloud outline (like the other outline icons), open
+            // in the middle of its base, and an arrow with a filled head (like
+            // Refresh's) dropping out of it
+            let arc = |cx: f32, cy: f32, r: f32, a0: f32, a1: f32| -> Vec<Point> {
+                (0..=12)
+                    .map(|i| {
+                        let a = (a0 + (a1 - a0) * i as f32 / 12.0).to_radians();
+                        c + v(cx + r * a.cos(), cy + r * a.sin())
+                    })
+                    .collect()
+            };
+            let mut cloud = vec![c + v(-2.0, 2.5)];
+            cloud.extend(arc(-5.0, -1.0, 3.5, 90.0, 250.0));
+            cloud.extend(arc(0.0, -3.5, 4.5, 205.0, 335.0));
+            cloud.extend(arc(5.0, -1.0, 3.5, 290.0, 450.0));
+            cloud.push(c + v(2.0, 2.5));
+            polyline(f, &cloud, s, col);
+            line(f, c + v(0.0, -1.5), c + v(0.0, 5.5), s, col);
+            f.fill(
+                &polygon(&[c + v(-3.0, 5.0), c + v(3.0, 5.0), c + v(0.0, 8.5)]),
+                col,
+            );
+        }
         Icon::Tv => {
             rect(f, c + v(0.0, -1.5), 17.0, 12.0, 2.0, 1.6, col);
             line(f, c + v(-4.0, 7.5), c + v(4.0, 7.5), 1.6, col);

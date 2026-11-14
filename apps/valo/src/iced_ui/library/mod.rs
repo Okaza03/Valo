@@ -983,12 +983,12 @@ impl Library {
                     .map(|s| s.episodes.len())
                     .sum();
                 let kind = if self.client.info.mode == Mode::Directory {
-                    "  ·  file server"
+                    "  |  file server"
                 } else {
                     ""
                 };
                 format!(
-                    "{} movies  ·  {} series  ·  {eps} episodes{kind}  ·  ",
+                    "{} movies  |  {} series  |  {eps} episodes{kind}  |  ",
                     l.movies.len(),
                     l.series.len()
                 )
@@ -996,7 +996,7 @@ impl Library {
             None => String::new(),
         };
         (
-            format!("{when}  ·  {host}"),
+            format!("{when}  |  {host}"),
             format!("{right}Valo {}", crate::update::VERSION),
         )
     }
