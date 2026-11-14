@@ -1,5 +1,6 @@
-import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react"
-import { useEffect, useRef, useState } from "react"
+import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { useEffect, useState } from "react"
+import { Poster } from "@/components/poster"
 import { BorderBeam } from "@/components/ui/border-beam"
 
 // An illustrated Valo window: shapes, not a screenshot. The featured banner
@@ -7,168 +8,141 @@ import { BorderBeam } from "@/components/ui/border-beam"
 // posters like a TV remote would.
 
 const banners = [
-  { bg: "linear-gradient(135deg,#2b3f7c 0%,#6c3f8f 45%,#c46a4a 100%)", t: 150, s: 110 },
-  { bg: "linear-gradient(135deg,#16473c 0%,#2f7d6b 50%,#a8963d 100%)", t: 120, s: 140 },
-  { bg: "linear-gradient(135deg,#47162a 0%,#8a3da8 55%,#3d5ea8 100%)", t: 170, s: 90 },
-]
-
-const posters = [
-  "linear-gradient(160deg,#3d5ea8,#1d2a4f)",
-  "linear-gradient(160deg,#8a3da8,#351647)",
-  "linear-gradient(160deg,#a8963d,#47401a)",
-  "linear-gradient(160deg,#a83d5e,#47162a)",
-  "linear-gradient(160deg,#3da88a,#16473c)",
-  "linear-gradient(160deg,#a8573d,#4a2216)",
-  "linear-gradient(160deg,#3d8aa8,#163947)",
+  { bg: "linear-gradient(120deg,#1b2a5c 0%,#5a3384 45%,#c46a4a 100%)", t: "44%", s: "30%" },
+  { bg: "linear-gradient(120deg,#0f3a31 0%,#2f7d6b 50%,#c9a447 100%)", t: "36%", s: "38%" },
+  { bg: "linear-gradient(120deg,#3a0f22 0%,#8a3da8 55%,#3d5ea8 100%)", t: "50%", s: "26%" },
 ]
 
 const continuing = [
   { bg: "linear-gradient(160deg,#a8573d,#4a2216)", p: 62 },
   { bg: "linear-gradient(160deg,#3d8aa8,#163947)", p: 28 },
   { bg: "linear-gradient(160deg,#3da88a,#16473c)", p: 81 },
+  { bg: "linear-gradient(160deg,#8a3da8,#351647)", p: 45 },
 ]
 
 export function AppWindow() {
   const reduce = useReducedMotion()
   const [banner, setBanner] = useState(0)
-  const [focus, setFocus] = useState(1)
+  const [focus, setFocus] = useState(2)
 
   useEffect(() => {
     if (reduce) return
-    const a = setInterval(() => setBanner((b) => (b + 1) % banners.length), 4200)
-    const b = setInterval(() => setFocus((f) => (f + 1) % 6), 1400)
+    const a = setInterval(() => setBanner((b) => (b + 1) % banners.length), 4800)
+    const b = setInterval(() => setFocus((f) => (f + 1) % 8), 1300)
     return () => {
       clearInterval(a)
       clearInterval(b)
     }
   }, [reduce])
 
-  // tilt toward the pointer
-  const ref = useRef<HTMLDivElement>(null)
-  const mx = useMotionValue(0)
-  const my = useMotionValue(0)
-  const rx = useSpring(useTransform(my, [-0.5, 0.5], [7, -7]), { stiffness: 120, damping: 18 })
-  const ry = useSpring(useTransform(mx, [-0.5, 0.5], [-10, 10]), { stiffness: 120, damping: 18 })
-
-  function onMove(e: React.PointerEvent) {
-    if (reduce || e.pointerType !== "mouse") return
-    const r = ref.current!.getBoundingClientRect()
-    mx.set((e.clientX - r.left) / r.width - 0.5)
-    my.set((e.clientY - r.top) / r.height - 0.5)
-  }
-  function onLeave() {
-    mx.set(0)
-    my.set(0)
-  }
-
   const b = banners[banner]
 
   return (
-    <div ref={ref} onPointerMove={onMove} onPointerLeave={onLeave} className="[perspective:1400px]" aria-hidden="true">
-      <motion.div
-        style={{ rotateX: rx, rotateY: ry }}
-        initial={{ opacity: 0, y: 40, rotateY: -14 }}
-        animate={{ opacity: 1, y: 0, rotateY: -6 }}
-        transition={{ duration: 1, ease: [0.2, 0.7, 0.2, 1], delay: 0.25 }}
-        className="relative overflow-hidden rounded-xl border border-white/10 bg-[#0b0c0f] shadow-[0_40px_120px_-20px_rgba(0,0,0,.75),0_0_80px_-30px_rgba(74,124,247,.5)] [transform-style:preserve-3d]"
-      >
-        <BorderBeam size={120} duration={9} colorFrom="#6a93fa" colorTo="#b38bfa" borderWidth={1.5} />
+    <div
+      aria-hidden="true"
+      className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0b0c0f] shadow-[0_50px_140px_-30px_rgba(0,0,0,.9),0_0_120px_-40px_rgba(74,124,247,.55)]"
+    >
+      <BorderBeam size={180} duration={10} colorFrom="#6a93fa" colorTo="#b38bfa" borderWidth={1.5} />
 
-        {/* top bar */}
-        <div className="flex h-9 items-center gap-3.5 border-b border-white/5 bg-[#121317] px-3.5">
-          <img src="./valo-text-white.svg" alt="" className="h-2.5 opacity-90" />
-          <div className="h-1.5 w-9 rounded-full bg-white/90" />
-          <div className="h-1.5 w-9 rounded-full bg-white/25" />
-          <div className="h-1.5 w-9 rounded-full bg-white/25" />
-          <div className="ml-auto h-4 w-24 rounded border border-white/10" />
+      {/* top bar: wordmark, Home / Movies / TV, search */}
+      <div className="flex h-11 items-center gap-5 border-b border-white/5 bg-[#101115] px-5">
+        <img src="./valo-text-white.svg" alt="" className="h-3 opacity-90" />
+        <div className="flex gap-4 text-[11px] font-medium">
+          <span className="text-white">Home</span>
+          <span className="text-white/40">Movies</span>
+          <span className="text-white/40">TV</span>
+          <span className="hidden text-white/40 sm:inline">My list</span>
         </div>
+        <div className="ml-auto h-6 w-32 rounded-md border border-white/10 sm:w-44" />
+      </div>
 
-        {/* featured banner */}
-        <div className="relative h-40 overflow-hidden sm:h-44">
-          <AnimatePresence initial={false}>
-            <motion.div
-              key={banner}
-              className="absolute inset-0"
-              style={{ background: b.bg }}
-              initial={{ opacity: 0, scale: 1.08 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 1.1, ease: "easeOut" }}
-            />
-          </AnimatePresence>
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0b0c0f] from-15% via-[#0b0c0f]/40 to-transparent" />
-          <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[#0b0c0f] to-transparent" />
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={banner}
-              className="absolute bottom-4 left-4 flex flex-col gap-2"
-              initial={{ opacity: 0, x: -14 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 8 }}
-              transition={{ duration: 0.45 }}
-            >
-              <div className="h-4 rounded-sm bg-white" style={{ width: b.t }} />
-              <div className="h-1.5 rounded-full bg-white/45" style={{ width: b.s }} />
-              <div className="mt-1.5 flex gap-2">
-                <div className="flex h-5 w-[70px] items-center gap-1.5 rounded-full bg-white pl-2.5">
-                  <div className="size-0 border-y-[4px] border-l-[6px] border-y-transparent border-l-black" />
-                  <div className="h-1 w-7 rounded-full bg-black/70" />
-                </div>
-                <div className="h-5 w-14 rounded-full bg-white/15" />
+      {/* featured banner */}
+      <div className="relative h-48 overflow-hidden sm:h-64 md:h-72">
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={banner}
+            className="absolute inset-0"
+            style={{ background: b.bg }}
+            initial={{ opacity: 0, scale: 1.1 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.4, ease: "easeOut" }}
+          />
+        </AnimatePresence>
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0b0c0f] from-10% via-[#0b0c0f]/50 via-45% to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0b0c0f] to-transparent" />
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={banner}
+            className="absolute bottom-7 left-6 flex w-[60%] flex-col gap-2.5 sm:left-8"
+            initial={{ opacity: 0, x: -18 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 10 }}
+            transition={{ duration: 0.5 }}
+          >
+            <div className="h-1.5 w-16 rounded-full bg-[#6a93fa]" />
+            <div className="h-5 rounded bg-white sm:h-7" style={{ width: b.t }} />
+            <div className="h-2 rounded-full bg-white/40" style={{ width: b.s }} />
+            <div className="h-2 w-[22%] rounded-full bg-white/25" />
+            <div className="mt-2 flex gap-2">
+              <div className="flex h-7 items-center gap-2 rounded-full bg-white px-3.5 text-[11px] font-semibold text-black">
+                <span className="size-0 border-y-[5px] border-l-[8px] border-y-transparent border-l-black" />
+                Play
               </div>
-            </motion.div>
-          </AnimatePresence>
-          <div className="absolute right-4 bottom-4 flex gap-1.5">
-            {banners.map((_, i) => (
-              <div key={i} className="h-1 w-4 overflow-hidden rounded-full bg-white/20">
-                {i === banner && (
-                  <motion.div
-                    key={banner}
-                    className="h-full bg-white"
-                    initial={{ width: reduce ? "100%" : 0 }}
-                    animate={{ width: "100%" }}
-                    transition={{ duration: 4.2, ease: "linear" }}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Continue watching */}
-        <div className="mx-4 mt-3 mb-2 h-1.5 w-24 rounded-full bg-white/25" />
-        <div className="flex gap-2 px-4">
-          {continuing.map((c, i) => (
-            <div key={i} className="relative h-16 w-28 shrink-0 overflow-hidden rounded-md" style={{ background: c.bg }}>
-              <div className="absolute inset-x-1.5 bottom-1.5 h-[3px] rounded-full bg-white/25">
-                <div className="animate-fill h-full rounded-full bg-[#4a7cf7]" style={{ width: `${c.p}%`, animationDelay: `${0.9 + i * 0.2}s` }} />
-              </div>
+              <div className="flex h-7 items-center rounded-full bg-white/15 px-3.5 text-[11px] font-medium text-white">More info</div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
+        <div className="absolute right-6 bottom-7 flex gap-1.5">
+          {banners.map((_, i) => (
+            <div key={i} className="h-1 w-6 overflow-hidden rounded-full bg-white/20">
+              {i === banner && (
+                <motion.div
+                  key={banner}
+                  className="h-full bg-white"
+                  initial={{ width: reduce ? "100%" : 0 }}
+                  animate={{ width: "100%" }}
+                  transition={{ duration: 4.8, ease: "linear" }}
+                />
+              )}
             </div>
           ))}
         </div>
+      </div>
 
-        {/* posters, with the remote's focus ring */}
-        <div className="mx-4 mt-3.5 mb-2 h-1.5 w-20 rounded-full bg-white/25" />
-        <div className="flex gap-2 px-4 pb-5">
-          {posters.slice(0, 7).map((bg, i) => (
-            <motion.div
-              key={i}
-              className="relative h-[86px] w-[58px] shrink-0 rounded-md"
-              style={{ background: bg }}
-              animate={{ scale: focus === i ? 1.08 : 1, y: focus === i ? -3 : 0 }}
-              transition={{ type: "spring", stiffness: 300, damping: 22 }}
-            >
-              {focus === i && (
-                <motion.div
-                  layoutId="poster-focus"
-                  className="absolute -inset-[3px] rounded-[9px] ring-2 ring-white shadow-[0_8px_24px_rgba(0,0,0,.5)]"
-                  transition={{ type: "spring", stiffness: 300, damping: 28 }}
-                />
-              )}
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
+      {/* Continue watching */}
+      <p className="mx-6 mt-2 mb-2.5 text-[11px] font-semibold text-white/70 sm:mx-8">Continue watching</p>
+      <div className="flex gap-3 px-6 sm:px-8">
+        {continuing.map((c, i) => (
+          <div key={i} className="relative aspect-video w-36 shrink-0 overflow-hidden rounded-lg sm:w-44" style={{ background: c.bg }}>
+            <div className="absolute inset-x-2 bottom-2 h-[3px] rounded-full bg-white/25">
+              <div className="animate-fill h-full rounded-full bg-[#4a7cf7]" style={{ width: `${c.p}%`, animationDelay: `${0.8 + i * 0.15}s` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* posters, with the remote's focus ring */}
+      <p className="mx-6 mt-5 mb-2.5 text-[11px] font-semibold text-white/70 sm:mx-8">Recently added</p>
+      <div className="flex gap-3 px-6 pb-7 sm:px-8">
+        {Array.from({ length: 9 }, (_, i) => (
+          <motion.div
+            key={i}
+            className="relative w-[72px] shrink-0 sm:w-[92px]"
+            animate={{ scale: focus === i ? 1.08 : 1, y: focus === i ? -4 : 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 22 }}
+          >
+            <Poster i={i + 3} title={false} className="rounded-md" />
+            {focus === i && (
+              <motion.div
+                layoutId="poster-focus"
+                className="absolute -inset-[3px] rounded-[9px] shadow-[0_10px_30px_rgba(0,0,0,.6)] ring-2 ring-white"
+                transition={{ type: "spring", stiffness: 300, damping: 28 }}
+              />
+            )}
+          </motion.div>
+        ))}
+      </div>
     </div>
   )
 }

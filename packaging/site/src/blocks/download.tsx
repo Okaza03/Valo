@@ -10,7 +10,7 @@ import {
   TvIcon,
 } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useState } from "react"
+import { useSyncExternalStore, useState } from "react"
 import { CopyButton } from "@/components/copy-button"
 import { PlatformIcon } from "@/components/brand-icons"
 import { SectionHeading } from "@/components/section-heading"
@@ -65,7 +65,7 @@ function Recommended({ rel, detected, onOthers }: { rel: ReleaseInfo; detected: 
       initial={{ opacity: 0, y: 16, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.5, ease: [0.2, 0.7, 0.2, 1] }}
-      className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-primary/[0.12] via-card to-card p-6 sm:p-8"
+      className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-primary/[0.14] via-white/[0.02] to-transparent p-6 sm:p-9"
     >
       <ShineBorder shineColor={["#4a7cf7", "#a77bf6", "#6a93fa"]} borderWidth={1} duration={12} />
       <div className="pointer-events-none absolute -top-24 -right-20 size-72 rounded-full bg-primary/20 blur-3xl" />
@@ -87,7 +87,7 @@ function Recommended({ rel, detected, onOthers }: { rel: ReleaseInfo; detected: 
 
           {detected.kind === "file" && file && (
             <>
-              <h3 className="text-2xl font-semibold tracking-tight">{file.title}</h3>
+              <h3 className="font-display text-3xl sm:text-4xl">{file.title}</h3>
               <p className="mt-1 text-muted-foreground">
                 {file.detail}
                 {m && <span className="text-foreground/70"> · {m.size}</span>}
@@ -97,7 +97,7 @@ function Recommended({ rel, detected, onOthers }: { rel: ReleaseInfo; detected: 
 
           {detected.kind === "flatpak" && (
             <>
-              <h3 className="text-2xl font-semibold tracking-tight">Flatpak, in one command</h3>
+              <h3 className="font-display text-3xl sm:text-4xl">Flatpak, in one command</h3>
               <p className="mt-1 mb-4 text-muted-foreground">
                 Adds Valo's repository for your user and installs it. After that, <code className="text-foreground/80">flatpak update</code> keeps it
                 up to date.
@@ -108,7 +108,7 @@ function Recommended({ rel, detected, onOthers }: { rel: ReleaseInfo; detected: 
 
           {detected.kind === "unsupported" && (
             <>
-              <h3 className="text-2xl font-semibold tracking-tight">No {detected.label} build yet</h3>
+              <h3 className="font-display text-3xl sm:text-4xl">No {detected.label} build yet</h3>
               <p className="mt-1 text-muted-foreground">
                 Valo runs on Windows, Linux, Android TV and Android phones. Pick one below, or watch the{" "}
                 <a className="text-primary underline-offset-4 hover:underline" href={RELEASES}>
@@ -153,7 +153,7 @@ function FileRow({ rel, file, index }: { rel: ReleaseInfo; file: FileEntry; inde
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.3 }}
-      className="group relative flex items-center gap-4 overflow-hidden rounded-xl border border-border bg-background/60 p-4 transition-colors hover:border-primary/60 hover:bg-accent/40"
+      className="group relative flex items-center gap-4 overflow-hidden rounded-2xl border border-white/[0.07] bg-black/20 p-4 transition-colors hover:border-primary/60 hover:bg-accent/40"
     >
       <span className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-transparent via-primary to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
       <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:bg-primary/15 group-hover:text-primary">
@@ -180,7 +180,9 @@ function FileRow({ rel, file, index }: { rel: ReleaseInfo; file: FileEntry; inde
           {m && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <div className="text-sm text-foreground/80">{m.size}</div>
-              <div>{m.downloads.toLocaleString()} downloads</div>
+              <div>
+                {m.downloads.toLocaleString()} {m.downloads === 1 ? "download" : "downloads"}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -263,8 +265,22 @@ function AndroidSteps() {
 
 // ---- the section
 
+/** Whether the screen is md (768px) or wider: the platforms are a sidebar there, a row of tabs below. */
+const MD = "(min-width: 768px)"
+function useWide() {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(MD)
+      mq.addEventListener("change", cb)
+      return () => mq.removeEventListener("change", cb)
+    },
+    () => window.matchMedia(MD).matches,
+  )
+}
+
 export function Download({ rel }: { rel: ReleaseInfo }) {
   const detected = useDetected()
+  const wide = useWide()
   // the visitor's platform until they pick a tab
   const [chosen, setTab] = useState<PlatformId | null>(null)
   const tab: PlatformId = chosen ?? (detected?.kind === "file" ? detected.platform : detected?.kind === "flatpak" ? "linux" : "windows")
@@ -277,15 +293,16 @@ export function Download({ rel }: { rel: ReleaseInfo }) {
   const date = rel.published ? new Date(rel.published).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : null
 
   return (
-    <section id="download" className="relative border-y border-border bg-[#0d0e12] py-24 sm:py-28">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
-      <div className="mx-auto max-w-5xl px-4 sm:px-6">
-        <SectionHeading kicker="Download" title="Get Valo" className="mx-auto text-center">
-          Free for Windows, Linux, Android TV and Android phones.
+    <section id="download" className="relative overflow-hidden pt-28 pb-16 sm:pt-36 sm:pb-20">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+      <div className="pointer-events-none absolute top-40 left-1/2 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-primary/10 blur-[140px]" />
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        <SectionHeading index="02" kicker="Download" title={<>Get Valo, <em className="text-primary">free.</em></>}>
+          For Windows, Linux, Android TV and Android phones.
           {rel.version && (
             <>
               {" "}
-              This is version <span className="text-foreground">{rel.version}</span>.
+              This is version <span className="font-mono text-foreground">{rel.version}</span>.
             </>
           )}
         </SectionHeading>
@@ -295,38 +312,58 @@ export function Download({ rel }: { rel: ReleaseInfo }) {
         </BlurFade>
 
         <BlurFade inView delay={0.1}>
-          <Tabs id="all-downloads" value={tab} onValueChange={(v) => setTab(v as PlatformId)} className="mt-14 scroll-mt-24">
-            <div className="mb-6 flex flex-col items-center gap-2">
-              <h3 className="text-sm font-medium text-muted-foreground">Every download</h3>
-              <TabsList className="h-11! rounded-full bg-muted/60 p-1">
-                {platforms.map((p) => (
-                  <TabsTrigger key={p.id} value={p.id} className="relative gap-2 rounded-full px-4 data-active:bg-transparent! data-active:shadow-none!">
-                    {tab === p.id && (
-                      <motion.span
-                        layoutId="dl-tab"
-                        className="absolute inset-0 -z-0 rounded-full bg-background shadow-sm ring-1 ring-border"
-                        transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                      />
-                    )}
-                    <span className="relative z-10 flex items-center gap-2">
-                      <PlatformIcon id={p.id} className="size-4" />
-                      {p.name}
+          <Tabs
+            id="all-downloads"
+            // arrow keys follow the layout: up/down in the sidebar, left/right in the row
+            orientation={wide ? "vertical" : "horizontal"}
+            value={tab}
+            onValueChange={(v) => setTab(v as PlatformId)}
+            className="mt-6 grid scroll-mt-24 grid-cols-1 gap-6 rounded-3xl border border-white/[0.07] bg-white/[0.015] p-3 sm:p-4 md:grid-cols-[260px_minmax(0,1fr)]"
+          >
+            <TabsList className="grid! h-auto! w-full grid-cols-3 gap-1 self-start bg-transparent p-0 md:flex! md:flex-col! md:items-stretch md:justify-start!">
+              <p className="col-span-3 hidden px-4 pt-3 pb-2 font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase md:block">Every download</p>
+              {platforms.map((p) => (
+                <TabsTrigger
+                  key={p.id}
+                  value={p.id}
+                  className="relative h-auto! min-w-0 justify-center! rounded-2xl px-2 py-3 text-left data-active:bg-transparent! data-active:shadow-none! md:justify-start! md:px-4"
+                >
+                  {tab === p.id && (
+                    <motion.span
+                      layoutId="dl-tab"
+                      className="absolute inset-0 rounded-2xl bg-white/[0.06] ring-1 ring-white/10"
+                      transition={{ type: "spring", stiffness: 420, damping: 36 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex w-full items-center justify-center gap-2.5 md:justify-start md:gap-3">
+                    <span className="hidden size-9 shrink-0 place-items-center rounded-xl bg-white/[0.05] sm:grid">
+                      <PlatformIcon id={p.id} className="size-[18px]" />
                     </span>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </div>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="text-[15px] font-medium text-foreground">{p.name}</span>
+                      <span className="hidden text-xs text-muted-foreground sm:block">
+                        {p.files.length} {p.files.length === 1 ? "file" : "files"}
+                      </span>
+                    </span>
+                  </span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
 
             {platforms.map((p) => (
-              <TabsContent key={p.id} value={p.id} className="mt-0">
+              <TabsContent key={p.id} value={p.id} className="mt-0 min-w-0">
                 <motion.div
                   key={p.id}
-                  initial={{ opacity: 0, y: 8, filter: "blur(4px)" }}
-                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  initial={{ opacity: 0, x: 12, filter: "blur(4px)" }}
+                  animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
                   transition={{ duration: 0.3 }}
-                  className="flex flex-col gap-4"
+                  className="flex flex-col gap-4 p-1 sm:p-3"
                 >
-                  <p className="text-center text-sm text-muted-foreground">{p.blurb}</p>
+                  <div className="flex items-baseline justify-between gap-4">
+                    <h3 className="font-display text-3xl">{p.name}</h3>
+                    {rel.version && <span className="font-mono text-xs text-muted-foreground">v{rel.version}</span>}
+                  </div>
+                  <p className="-mt-2 text-sm text-muted-foreground">{p.blurb}</p>
                   {p.id === "linux" && <LinuxRepo />}
                   <div className="flex flex-col gap-2.5">
                     {p.files.map((f, i) => (
@@ -342,7 +379,7 @@ export function Download({ rel }: { rel: ReleaseInfo }) {
         </BlurFade>
 
         <BlurFade inView delay={0.1}>
-          <Accordion type="single" collapsible className="mt-8 rounded-xl border border-border bg-background/40 px-5">
+          <Accordion type="single" collapsible className="mt-6 rounded-2xl border border-white/[0.07] bg-white/[0.015] px-5">
             <AccordionItem value="verify" className="border-none">
               <AccordionTrigger className="hover:no-underline">
                 <span className="flex items-center gap-2">
