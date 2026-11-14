@@ -1,65 +1,84 @@
-//! The app's drawn icons (the same shapes as `ui::chrome::draw_icon`), and a spinner.
-use std::f32::consts::{FRAC_PI_2, PI, TAU};
+//! The app's icons, from Lucide (lucide.dev, ISC license: assets/lucide/LICENSE),
+//! drawn in the theme's colors, and a spinner.
+use std::f32::consts::{PI, TAU};
 
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
-use iced::widget::{canvas as canvas_widget, Canvas};
-use iced::{mouse, Color, Point, Rectangle, Renderer, Size, Theme, Vector};
+use iced::widget::svg::{self, Handle, Svg};
+use iced::widget::{canvas as canvas_widget, container, Canvas};
+use iced::{mouse, Color, Element, Point, Rectangle, Renderer, Theme, Vector};
 
 pub use crate::ui::chrome::Icon;
 
-/// An icon in a `size`-square box.
-pub fn icon<'a, M: 'a>(icon: Icon, color: Color, size: f32) -> Canvas<Drawn, M> {
-    canvas_widget(Drawn {
-        icon,
-        color,
-        hot: color,
-    })
-    .width(size)
-    .height(size)
+/// The icon's Lucide SVG, built into the app.
+fn source(icon: Icon) -> &'static [u8] {
+    match icon {
+        Icon::Refresh => include_bytes!("../../assets/lucide/refresh-cw.svg"),
+        Icon::Settings => include_bytes!("../../assets/lucide/settings.svg"),
+        Icon::Minimize => include_bytes!("../../assets/lucide/minus.svg"),
+        Icon::Maximize => include_bytes!("../../assets/lucide/square.svg"),
+        Icon::Restore => include_bytes!("../../assets/lucide/copy.svg"),
+        Icon::Close => include_bytes!("../../assets/lucide/x.svg"),
+        Icon::Bookmark => include_bytes!("../../assets/lucide/bookmark.svg"),
+        Icon::BookmarkOn => include_bytes!("../../assets/lucide/bookmark-check.svg"),
+        Icon::Play => include_bytes!("../../assets/lucide/play.svg"),
+        Icon::ChevronLeft => include_bytes!("../../assets/lucide/chevron-left.svg"),
+        Icon::ArrowRight => include_bytes!("../../assets/lucide/arrow-right.svg"),
+        Icon::Star => include_bytes!("../../assets/lucide/star.svg"),
+        Icon::Pause => include_bytes!("../../assets/lucide/pause.svg"),
+        Icon::ChevronRight => include_bytes!("../../assets/lucide/chevron-right.svg"),
+        Icon::Subtitles => include_bytes!("../../assets/lucide/captions.svg"),
+        Icon::Volume => include_bytes!("../../assets/lucide/volume-2.svg"),
+        Icon::VolumeMuted => include_bytes!("../../assets/lucide/volume-x.svg"),
+        Icon::Fullscreen => include_bytes!("../../assets/lucide/maximize.svg"),
+        Icon::FullscreenExit => include_bytes!("../../assets/lucide/minimize.svg"),
+        Icon::More => include_bytes!("../../assets/lucide/ellipsis-vertical.svg"),
+        Icon::List => include_bytes!("../../assets/lucide/list.svg"),
+        Icon::SkipBack => include_bytes!("../../assets/lucide/rotate-ccw.svg"),
+        Icon::SkipForward => include_bytes!("../../assets/lucide/rotate-cw.svg"),
+        Icon::ChevronUp => include_bytes!("../../assets/lucide/chevron-up.svg"),
+        Icon::ChevronDown => include_bytes!("../../assets/lucide/chevron-down.svg"),
+        Icon::ArrowUp => include_bytes!("../../assets/lucide/arrow-up.svg"),
+        Icon::ArrowDown => include_bytes!("../../assets/lucide/arrow-down.svg"),
+        Icon::External => include_bytes!("../../assets/lucide/external-link.svg"),
+        Icon::Home => include_bytes!("../../assets/lucide/house.svg"),
+        Icon::Film => include_bytes!("../../assets/lucide/film.svg"),
+        Icon::Tv => include_bytes!("../../assets/lucide/tv.svg"),
+        Icon::CloudDownload => include_bytes!("../../assets/lucide/cloud-download.svg"),
+    }
+}
+
+/// An icon in a `size`-square box, in `color`.
+pub fn icon<'a, M: 'a>(icon: Icon, color: Color, size: f32) -> Element<'a, M> {
+    icon_hover(icon, color, color, size)
 }
 
 /// An icon that turns `hot` while the pointer is over it.
-pub fn icon_hover<'a, M: 'a>(icon: Icon, color: Color, hot: Color, size: f32) -> Canvas<Drawn, M> {
-    canvas_widget(Drawn { icon, color, hot })
-        .width(size)
-        .height(size)
-}
-
-pub struct Drawn {
-    icon: Icon,
-    color: Color,
-    hot: Color,
-}
-
-impl<M> canvas::Program<M> for Drawn {
-    type State = ();
-
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &Renderer,
-        _: &Theme,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let c = frame.center();
-        let col = if cursor.is_over(bounds) {
-            self.hot
-        } else {
-            self.color
-        };
-        draw(&mut frame, c, self.icon, col);
-        vec![frame.into_geometry()]
-    }
+///
+/// `size` is the box it sits in; the glyph itself is drawn at most 18px
+/// (the skip circles, with the seconds inside them, 26px), centered, so the
+/// boxes callers ask for keep the icons the size they always were.
+pub fn icon_hover<'a, M: 'a>(icon: Icon, color: Color, hot: Color, size: f32) -> Element<'a, M> {
+    let max = if matches!(icon, Icon::SkipBack | Icon::SkipForward) {
+        26.0
+    } else {
+        18.0
+    };
+    let glyph = size.min(max);
+    let svg: Svg<'a> = Svg::new(Handle::from_memory(source(icon)))
+        .width(glyph)
+        .height(glyph)
+        .style(move |_, s| svg::Style {
+            color: Some(if matches!(s, svg::Status::Hovered) {
+                hot
+            } else {
+                color
+            }),
+        });
+    container(svg).center(size).into()
 }
 
 fn v(x: f32, y: f32) -> Vector {
     Vector::new(x, y)
-}
-
-fn line(f: &mut Frame, a: Point, b: Point, w: f32, col: Color) {
-    f.stroke(&Path::line(a, b), stroke(w, col));
 }
 
 fn stroke(w: f32, col: Color) -> Stroke<'static> {
@@ -74,300 +93,6 @@ fn polyline(f: &mut Frame, pts: &[Point], w: f32, col: Color) {
         }
     });
     f.stroke(&path, stroke(w, col));
-}
-
-fn polygon(pts: &[Point]) -> Path {
-    Path::new(|b| {
-        b.move_to(pts[0]);
-        for p in &pts[1..] {
-            b.line_to(*p);
-        }
-        b.close();
-    })
-}
-
-/// A rectangle outline centered on `c`.
-fn rect(f: &mut Frame, c: Point, w: f32, h: f32, r: f32, sw: f32, col: Color) {
-    let path = Path::rounded_rectangle(c + v(-w / 2.0, -h / 2.0), Size::new(w, h), r.into());
-    f.stroke(&path, stroke(sw, col));
-}
-
-pub fn draw(f: &mut Frame, c: Point, icon: Icon, col: Color) {
-    let s = 1.4;
-    match icon {
-        Icon::Minimize => line(f, c + v(-6.0, 0.0), c + v(6.0, 0.0), s, col),
-        Icon::Maximize => rect(f, c, 10.0, 10.0, 0.0, s, col),
-        Icon::Restore => {
-            rect(f, c + v(-1.5, 1.5), 8.0, 8.0, 0.0, s, col);
-            line(f, c + v(-1.5, -4.5), c + v(4.5, -4.5), s, col);
-            line(f, c + v(4.5, -4.5), c + v(4.5, 1.5), s, col);
-        }
-        Icon::Close => {
-            line(f, c + v(-6.0, -6.0), c + v(6.0, 6.0), s, col);
-            line(f, c + v(6.0, -6.0), c + v(-6.0, 6.0), s, col);
-        }
-        Icon::Refresh => {
-            let pts: Vec<Point> = (0..=24)
-                .map(|i| {
-                    let a = -0.35 * PI + i as f32 / 24.0 * 1.65 * PI;
-                    c + v(a.cos(), a.sin()) * 7.0
-                })
-                .collect();
-            let tip = pts[0];
-            polyline(f, &pts, 1.8, col);
-            f.fill(
-                &polygon(&[tip + v(-4.5, -2.0), tip + v(2.5, -3.5), tip + v(1.0, 3.5)]),
-                col,
-            );
-        }
-        Icon::Bookmark | Icon::BookmarkOn => {
-            let pts = [
-                c + v(-5.0, -7.0),
-                c + v(5.0, -7.0),
-                c + v(5.0, 7.0),
-                c + v(0.0, 3.0),
-                c + v(-5.0, 7.0),
-            ];
-            let path = polygon(&pts);
-            if matches!(icon, Icon::BookmarkOn) {
-                f.fill(&path, col);
-            }
-            f.stroke(&path, stroke(1.6, col));
-        }
-        Icon::Play => f.fill(
-            &polygon(&[c + v(-4.0, -6.0), c + v(6.0, 0.0), c + v(-4.0, 6.0)]),
-            col,
-        ),
-        Icon::Pause => {
-            for dx in [-3.5, 3.5] {
-                f.fill(
-                    &Path::rounded_rectangle(
-                        c + v(dx - 1.75, -6.5),
-                        Size::new(3.5, 13.0),
-                        1.0.into(),
-                    ),
-                    col,
-                );
-            }
-        }
-        Icon::ChevronLeft => polyline(
-            f,
-            &[c + v(2.0, -4.0), c + v(-2.0, 0.0), c + v(2.0, 4.0)],
-            s,
-            col,
-        ),
-        Icon::ChevronRight => polyline(
-            f,
-            &[c + v(-2.0, -4.0), c + v(2.0, 0.0), c + v(-2.0, 4.0)],
-            s,
-            col,
-        ),
-        Icon::ChevronUp => polyline(
-            f,
-            &[c + v(-4.0, 2.0), c + v(0.0, -2.0), c + v(4.0, 2.0)],
-            s,
-            col,
-        ),
-        Icon::ChevronDown => polyline(
-            f,
-            &[c + v(-4.0, -2.0), c + v(0.0, 2.0), c + v(4.0, -2.0)],
-            s,
-            col,
-        ),
-        Icon::ArrowRight => {
-            line(f, c + v(-5.0, 0.0), c + v(5.0, 0.0), s, col);
-            polyline(
-                f,
-                &[c + v(1.0, -4.0), c + v(5.0, 0.0), c + v(1.0, 4.0)],
-                s,
-                col,
-            );
-        }
-        Icon::ArrowUp => {
-            line(f, c + v(0.0, 5.0), c + v(0.0, -5.0), s, col);
-            polyline(
-                f,
-                &[c + v(-4.0, -1.0), c + v(0.0, -5.0), c + v(4.0, -1.0)],
-                s,
-                col,
-            );
-        }
-        Icon::ArrowDown => {
-            line(f, c + v(0.0, -5.0), c + v(0.0, 5.0), s, col);
-            polyline(
-                f,
-                &[c + v(-4.0, 1.0), c + v(0.0, 5.0), c + v(4.0, 1.0)],
-                s,
-                col,
-            );
-        }
-        Icon::Star => {
-            let pts: Vec<Point> = (0..10)
-                .map(|i| {
-                    let a = -FRAC_PI_2 + i as f32 * PI / 5.0;
-                    let r = if i % 2 == 0 { 6.0 } else { 2.6 };
-                    c + v(a.cos(), a.sin()) * r
-                })
-                .collect();
-            f.fill(&polygon(&pts), col);
-        }
-        Icon::Subtitles => {
-            rect(f, c, 16.0, 12.0, 2.0, s, col);
-            line(f, c + v(-4.5, 1.0), c + v(-1.5, 1.0), s, col);
-            line(f, c + v(0.5, 1.0), c + v(4.5, 1.0), s, col);
-            line(f, c + v(-4.5, -2.5), c + v(1.5, -2.5), s, col);
-        }
-        Icon::Volume | Icon::VolumeMuted => {
-            let body = polygon(&[
-                c + v(-7.0, -2.5),
-                c + v(-4.0, -2.5),
-                c + v(0.0, -6.5),
-                c + v(0.0, 6.5),
-                c + v(-4.0, 2.5),
-                c + v(-7.0, 2.5),
-            ]);
-            f.stroke(&body, stroke(s, col));
-            if matches!(icon, Icon::VolumeMuted) {
-                line(f, c + v(3.0, -3.0), c + v(8.0, 3.0), s, col);
-                line(f, c + v(8.0, -3.0), c + v(3.0, 3.0), s, col);
-            } else {
-                for r in [4.0f32, 7.5] {
-                    let pts: Vec<Point> = (0..=10)
-                        .map(|i| {
-                            let a = -0.9 + i as f32 / 10.0 * 1.8;
-                            c + v(a.cos(), a.sin()) * r + v(0.5, 0.0)
-                        })
-                        .collect();
-                    polyline(f, &pts, s, col);
-                }
-            }
-        }
-        Icon::Fullscreen | Icon::FullscreenExit => {
-            let out = matches!(icon, Icon::Fullscreen);
-            for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-                let corner = c + v(sx * 7.0, sy * 7.0);
-                let k = if out {
-                    corner
-                } else {
-                    c + v(sx * 3.0, sy * 3.0)
-                };
-                let (a, b) = if out {
-                    (corner - v(sx * 4.0, 0.0), corner - v(0.0, sy * 4.0))
-                } else {
-                    (k + v(sx * 4.0, 0.0), k + v(0.0, sy * 4.0))
-                };
-                polyline(f, &[a, k, b], s, col);
-            }
-        }
-        Icon::More => {
-            for dy in [-5.5, 0.0, 5.5] {
-                f.fill(&Path::circle(c + v(0.0, dy), 1.7), col);
-            }
-        }
-        Icon::External => {
-            let s = 1.2;
-            polyline(
-                f,
-                &[
-                    c + v(-1.0, -4.0),
-                    c + v(-4.0, -4.0),
-                    c + v(-4.0, 4.0),
-                    c + v(4.0, 4.0),
-                    c + v(4.0, 1.0),
-                ],
-                s,
-                col,
-            );
-            line(f, c + v(-0.5, 0.5), c + v(4.5, -4.5), s, col);
-            polyline(
-                f,
-                &[c + v(1.0, -4.5), c + v(4.5, -4.5), c + v(4.5, -1.0)],
-                s,
-                col,
-            );
-        }
-        Icon::Home => {
-            polyline(
-                f,
-                &[c + v(-8.0, -0.5), c + v(0.0, -8.0), c + v(8.0, -0.5)],
-                1.6,
-                col,
-            );
-            rect(f, c + v(0.0, 2.25), 11.0, 9.5, 1.0, 1.6, col);
-        }
-        Icon::Film => {
-            rect(f, c, 16.0, 13.0, 2.5, 1.6, col);
-            f.fill(
-                &polygon(&[c + v(-2.5, -3.5), c + v(4.0, 0.0), c + v(-2.5, 3.5)]),
-                col,
-            );
-        }
-        Icon::CloudDownload => {
-            // one continuous cloud outline (like the other outline icons), open
-            // in the middle of its base, and an arrow with a filled head (like
-            // Refresh's) dropping out of it
-            let arc = |cx: f32, cy: f32, r: f32, a0: f32, a1: f32| -> Vec<Point> {
-                (0..=12)
-                    .map(|i| {
-                        let a = (a0 + (a1 - a0) * i as f32 / 12.0).to_radians();
-                        c + v(cx + r * a.cos(), cy + r * a.sin())
-                    })
-                    .collect()
-            };
-            let mut cloud = vec![c + v(-2.0, 2.5)];
-            cloud.extend(arc(-5.0, -1.0, 3.5, 90.0, 250.0));
-            cloud.extend(arc(0.0, -3.5, 4.5, 205.0, 335.0));
-            cloud.extend(arc(5.0, -1.0, 3.5, 290.0, 450.0));
-            cloud.push(c + v(2.0, 2.5));
-            polyline(f, &cloud, s, col);
-            line(f, c + v(0.0, -1.5), c + v(0.0, 5.5), s, col);
-            f.fill(
-                &polygon(&[c + v(-3.0, 5.0), c + v(3.0, 5.0), c + v(0.0, 8.5)]),
-                col,
-            );
-        }
-        Icon::Tv => {
-            rect(f, c + v(0.0, -1.5), 17.0, 12.0, 2.0, 1.6, col);
-            line(f, c + v(-4.0, 7.5), c + v(4.0, 7.5), 1.6, col);
-        }
-        Icon::List => {
-            for dy in [-5.0, 0.0, 5.0] {
-                line(f, c + v(-7.0, dy), c + v(7.0, dy), s, col);
-            }
-        }
-        Icon::SkipBack | Icon::SkipForward => {
-            let back = matches!(icon, Icon::SkipBack);
-            // an open circle, its gap at the top, with an arrowhead on one end
-            let (a0, a1) = (-1.25f32, 4.0f32);
-            let pts: Vec<Point> = (0..=28)
-                .map(|i| {
-                    let a = a0 + i as f32 / 28.0 * (a1 - a0);
-                    let a = if back { PI - a } else { a };
-                    c + v(a.cos(), a.sin()) * 11.0
-                })
-                .collect();
-            let tip = pts[0];
-            polyline(f, &pts, 1.8, col);
-            let d = if back { -1.0 } else { 1.0 };
-            f.fill(
-                &polygon(&[
-                    tip + v(-4.0 * d, -4.0),
-                    tip + v(3.0 * d, 0.5),
-                    tip + v(-4.0 * d, 4.0),
-                ]),
-                col,
-            );
-        }
-        Icon::Settings => {
-            for i in 0..8 {
-                let a = i as f32 / 8.0 * TAU;
-                let d = v(a.cos(), a.sin());
-                line(f, c + d * 5.0, c + d * 8.5, 3.0, col);
-            }
-            // a ring: the hole shows whatever is behind
-            f.stroke(&Path::circle(c, 4.4), stroke(3.6, col));
-        }
-    }
 }
 
 /// A turning arc; `t` is seconds, so it moves as the app redraws.

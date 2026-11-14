@@ -935,7 +935,7 @@ impl Library {
         };
         if let Some(s) = item.score {
             let mut parts: Vec<Element<'a, Msg>> = vec![
-                icon::icon(Icon::Star, gold, 14.0).into(),
+                icon::icon(Icon::Star, gold, 14.0),
                 text(format!("{s:.1}")).size(15).color(style::TEXT()).into(),
             ];
             if let Some(src) = &item.score_source {
