@@ -11,15 +11,17 @@ use iced::widget::{
 use iced::{Element, Length};
 use serde_json::{json, Value};
 
-use super::super::super::details::{caps, gap, kv_rows, panel};
+use super::super::super::details::{gap, kv_rows};
 use super::super::super::profile::{field_style, Remote};
 use super::super::super::{cards, picker, spin_secs, Msg as LMsg};
+use super::super::ui;
+use super::super::ui::mono;
+use super::super::ui::{caps, panel};
 use super::super::{danger_button, fold, needs_note, Asks, Cx, Done, JobFn, Section};
 use super::{send as lsend, Msg as LibMsg, Tab};
 use crate::api::{
     encode_segment, Client, Episode, Item, Kind, Season, Subtitle, SubtitleResult, TmdbMatch,
 };
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c};
 use crate::iced_ui::widgets::{self, Kind as Btn};
 use crate::ui::browse::admin::library::extras::{
@@ -386,7 +388,7 @@ impl Extras {
                     if let Some(src) = &s.source {
                         r = r.push(mono(src, 9.5).color(style::MUTED()));
                     }
-                    r = r.push(space::horizontal()).push(widgets::button_with(
+                    r = r.push(space::horizontal()).push(ui::button_with(
                         Btn::Small,
                         "Remove",
                         None,
@@ -419,13 +421,13 @@ impl Extras {
         add = add.push(pickers).push(gap(8.0));
         let ok = !busy && !self.lang.trim().is_empty();
         let mut buttons = row![
-            widgets::button_with(
+            ui::button_with(
                 Btn::Small,
                 "Upload .srt / .vtt…",
                 None,
                 ok.then(|| send(Msg::UploadSub))
             ),
-            widgets::button_with(
+            ui::button_with(
                 Btn::Small,
                 "Search online",
                 None,
@@ -502,7 +504,7 @@ impl Extras {
                     .filter(|e| !e.is_empty())
                     .map(str::to_owned)
                     .or_else(|| r.episode.clone());
-                rw = rw.push(widgets::button_with(
+                rw = rw.push(ui::button_with(
                     Btn::Small,
                     "Download",
                     None,
@@ -531,7 +533,7 @@ impl Extras {
                 continue;
             }
             col = col
-                .push(widgets::button_with(
+                .push(ui::button_with(
                     Btn::Small,
                     "Refresh season from TMDB",
                     None,
@@ -558,8 +560,8 @@ impl Extras {
             ]
             .spacing(2)
             .width(Length::Fill),
-            widgets::button_with(Btn::Small, "Edit", None, Some(send(Msg::Edit(id.clone())))),
-            widgets::button_with(
+            ui::button_with(Btn::Small, "Edit", None, Some(send(Msg::Edit(id.clone())))),
+            ui::button_with(
                 Btn::Small,
                 "Fetch still",
                 None,
@@ -606,12 +608,7 @@ impl Extras {
                             "Save episode",
                             (!cx.busy).then(|| send(Msg::SaveEpisode))
                         ),
-                        widgets::button_with(
-                            Btn::Small,
-                            "Cancel",
-                            None,
-                            Some(send(Msg::CancelEdit))
-                        ),
+                        ui::button_with(Btn::Small, "Cancel", None, Some(send(Msg::CancelEdit))),
                     ]
                     .spacing(8),
                 ]
@@ -653,7 +650,7 @@ impl Extras {
                     .size(15)
                     .padding([8, 10])
                     .style(field_style),
-                widgets::button_with(
+                ui::button_with(
                     Btn::Small,
                     "Search",
                     None,
@@ -695,7 +692,7 @@ impl Extras {
                     row![
                         cards::art(cx.images, m.poster.as_deref(), &m.title, 34.0, 51.0, 3.0),
                         info.width(Length::Fill),
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Small,
                             "Use this",
                             None,
@@ -726,7 +723,7 @@ impl Extras {
                         &format!("Delete {}", item.title),
                         (!busy).then(|| send(Msg::Delete))
                     ),
-                    widgets::button_with(
+                    ui::button_with(
                         Btn::Small,
                         "Cancel",
                         None,

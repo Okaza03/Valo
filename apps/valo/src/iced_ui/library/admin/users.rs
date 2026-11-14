@@ -4,16 +4,19 @@ use iced::alignment::Vertical;
 use iced::widget::{checkbox, column, container, mouse_area, row, space, text, text_input, Column};
 use iced::{Element, Padding};
 
-use super::super::details::{caps, column_of, gap, panel, NARROW};
-use super::super::profile::{field_style, section_title, Remote};
+use super::super::details::{column_of, gap, NARROW};
+use super::super::profile::{field_style, Remote};
 use super::super::{avatar, spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::section_title;
+use super::ui::{caps, panel};
 use super::{
     danger_button, more_menu, not_set_up, row_frame, Cx, Done, JobFn, Msg as AMsg, Section,
 };
 use crate::api::{AdminUser, Client};
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
-use crate::iced_ui::widgets::{self, Kind as Btn};
+use crate::iced_ui::widgets::Kind as Btn;
 use crate::ui::browse::details::TEAL;
 use crate::ui::browse::people::ago;
 
@@ -282,15 +285,15 @@ impl State {
         let add = panel(column![
             caps("Add a user", c(TEAL())),
             gap(10.0),
-            widgets::label("Username", 11.0),
+            ui::label("Username", 11.0),
             space().height(8),
             field(&self.new_name, false, Msg::NewName, false),
             gap(4.0),
-            widgets::label("Display name (optional)", 11.0),
+            ui::label("Display name (optional)", 11.0),
             space().height(8),
             field(&self.new_display, false, Msg::NewDisplay, false),
             gap(4.0),
-            widgets::label("Password", 11.0),
+            ui::label("Password", 11.0),
             space().height(8),
             field(&self.new_pass, true, Msg::NewPass, true),
             gap(4.0),
@@ -300,7 +303,7 @@ impl State {
                 .size(16)
                 .text_size(14.5),
             gap(10.0),
-            widgets::button_wide(Btn::Primary, "Add user", 38.0, ok.then(|| send(Msg::Add))),
+            ui::button_wide(Btn::Primary, "Add user", 38.0, ok.then(|| send(Msg::Add))),
         ]);
         let side = container(add).width(rw);
         let body: Element<'a, LMsg> = if narrow {
@@ -387,7 +390,7 @@ impl State {
             } else {
                 "Make admin"
             };
-            actions = actions.push(widgets::button_with(
+            actions = actions.push(ui::button_with(
                 Btn::Small,
                 label,
                 None,
@@ -418,7 +421,7 @@ impl State {
                 .push(
                     row![
                         danger_button("Delete", (!busy).then(|| send(Msg::Delete(u.name.clone())))),
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Small,
                             "Cancel",
                             None,
@@ -432,7 +435,7 @@ impl State {
             let ok = !busy && !display.trim().is_empty();
             body = body
                 .push(gap(10.0))
-                .push(widgets::label("Display name", 11.0))
+                .push(ui::label("Display name", 11.0))
                 .push(space().height(8))
                 .push(
                     text_input("", display)
@@ -445,27 +448,20 @@ impl State {
                 .push(gap(6.0))
                 .push(
                     row![
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Primary,
                             "Save name",
                             None,
                             ok.then(|| send(Msg::SaveName))
                         ),
-                        widgets::button_with(
-                            Btn::Small,
-                            "Cancel",
-                            None,
-                            Some(send(Msg::Rename(None)))
-                        ),
+                        ui::button_with(Btn::Small, "Cancel", None, Some(send(Msg::Rename(None)))),
                     ]
                     .spacing(10),
                 );
         }
         if let Some((_, pass)) = self.reset.as_ref().filter(|(n, _)| *n == u.name) {
             let ok = !busy && !pass.is_empty();
-            body = body
-                .push(gap(10.0))
-                .push(widgets::label("New password", 11.0));
+            body = body.push(gap(10.0)).push(ui::label("New password", 11.0));
             if you {
                 body = body.push(
                     text("You'll be signed out everywhere, this device included.")
@@ -487,18 +483,13 @@ impl State {
                 .push(gap(6.0))
                 .push(
                     row![
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Primary,
                             "Save password",
                             None,
                             ok.then(|| send(Msg::SavePassword))
                         ),
-                        widgets::button_with(
-                            Btn::Small,
-                            "Cancel",
-                            None,
-                            Some(send(Msg::Reset(None)))
-                        ),
+                        ui::button_with(Btn::Small, "Cancel", None, Some(send(Msg::Reset(None)))),
                     ]
                     .spacing(10),
                 );

@@ -5,17 +5,19 @@ use iced::alignment::Vertical;
 use iced::widget::{column, container, row, space, text, text_input, Column};
 use iced::{Element, Padding};
 
-use super::super::details::{caps, column_of, gap, link, panel, NARROW};
+use super::super::details::{column_of, gap, link, NARROW};
 use super::super::profile::Remote;
 use super::super::{cards, spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::{caps, panel};
 use super::{
     danger_button, more_menu, not_set_up, row_frame, Cx, Done, JobFn, Msg as AMsg, Section,
 };
 use crate::api::{Client, Library, MediaRequest};
 use crate::iced_ui::icon::Icon;
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
-use crate::iced_ui::widgets::{self, Kind as Btn};
+use crate::iced_ui::widgets::Kind as Btn;
 use crate::ui::browse::details::TEAL;
 use crate::ui::browse::people::ago;
 use crate::ui::theme::{ERROR, OK, WARN};
@@ -157,7 +159,7 @@ impl State {
         let all = self.list.data.clone().unwrap_or_default();
         let count = |f: Filter| Some(all.iter().filter(|r| f.matches(&r.status)).count());
         let msg = |f: Filter| LMsg::Admin(AMsg::Requests(Msg::Filter(f)));
-        let mut head: Column<'a, LMsg> = column![widgets::segmented(
+        let mut head: Column<'a, LMsg> = column![ui::segmented(
             [
                 (Filter::Pending, "Pending"),
                 (Filter::Approved, "Approved"),
@@ -283,7 +285,7 @@ impl State {
         let id = r.id.clone();
         let ok = |m: Msg| (!busy).then(|| send(m));
         if Filter::Pending.matches(&r.status) {
-            answers = answers.push(widgets::button_with(
+            answers = answers.push(ui::button_with(
                 Btn::Small,
                 "Approve",
                 None,
@@ -291,7 +293,7 @@ impl State {
             ));
         }
         if r.status != "available" && (have || r.status == "approved") {
-            answers = answers.push(widgets::button_with(
+            answers = answers.push(ui::button_with(
                 Btn::Small,
                 "Mark available",
                 None,
@@ -299,7 +301,7 @@ impl State {
             ));
         }
         if r.status != "denied" && r.status != "available" {
-            answers = answers.push(widgets::button_with(
+            answers = answers.push(ui::button_with(
                 Btn::Small,
                 "Deny…",
                 None,
@@ -335,10 +337,7 @@ impl State {
         if let Some((_, reason)) = self.deny.as_ref().filter(|(d, _)| *d == r.id) {
             body = body
                 .push(gap(10.0))
-                .push(crate::iced_ui::widgets::label(
-                    "Reason (sent to the requester)",
-                    11.0,
-                ))
+                .push(ui::label("Reason (sent to the requester)", 11.0))
                 .push(space().height(8))
                 .push(
                     text_input("e.g. not available in good quality yet", reason)
@@ -358,12 +357,7 @@ impl State {
                                 Some(reason.clone())
                             ))),
                         ),
-                        widgets::button_with(
-                            Btn::Small,
-                            "Cancel",
-                            None,
-                            Some(send(Msg::Deny(None)))
-                        ),
+                        ui::button_with(Btn::Small, "Cancel", None, Some(send(Msg::Deny(None)))),
                     ]
                     .spacing(10),
                 );
@@ -382,7 +376,7 @@ impl State {
                 .push(
                     row![
                         danger_button("Remove", (!busy).then(|| send(Msg::Delete(id.clone())))),
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Small,
                             "Cancel",
                             None,

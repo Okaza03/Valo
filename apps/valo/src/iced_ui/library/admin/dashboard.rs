@@ -8,16 +8,19 @@ use iced::alignment::Vertical;
 use iced::widget::{button, column, container, row, scrollable, space, text, Column};
 use iced::{Background, Border, Color, Element, Length, Padding};
 
-use super::super::details::{caps, column_of, gap, panel, NARROW};
-use super::super::profile::{stats, Remote};
+use super::super::details::{column_of, gap, NARROW};
+use super::super::profile::Remote;
 use super::super::{spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::stats;
+use super::ui::{caps, panel};
 use super::{
     danger_button, fold, needs_note, status_dot, Asks, Cx, Done, JobFn, Msg as AMsg, Section,
 };
 use crate::api::{AdminStatus, Client, Item, Kind, LogLine, SyncReport};
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD, MONO};
-use crate::iced_ui::widgets::{self, Kind as Btn};
+use crate::iced_ui::widgets::Kind as Btn;
 use crate::iced_ui::Job;
 use crate::ui::browse::details::{bytes, TEAL};
 use crate::ui::theme::{ERROR, FIELD, LINE, OK, WARN};
@@ -319,10 +322,10 @@ impl State {
         let tiles = stats(tiles, inner);
 
         let narrow = inner < NARROW;
-        let g = 48.0;
-        let lw = if narrow { inner } else { inner * 0.66 };
+        let g = 20.0;
+        let lw = if narrow { inner } else { inner * 0.64 };
         let rw = if narrow { inner } else { inner - lw - g };
-        let main = column![self.health(cx), gap(20.0), self.log()].width(lw);
+        let main = column![panel(self.health(cx)), gap(12.0), panel(self.log())].width(lw);
         let side = column![self.api_status(), gap(20.0), self.syncs(cx)].width(rw);
         let body: Element<'a, LMsg> = if narrow {
             column![main, gap(24.0), side].into()
@@ -341,7 +344,7 @@ impl State {
                     status_dot(c(if ok { OK() } else { ERROR() })),
                     text(name.to_owned()).size(14.5),
                     space::horizontal(),
-                    mono(detail, 10.5).color(style::MUTED()),
+                    text(detail.to_owned()).size(12.5).color(style::MUTED()),
                 ]
                 .spacing(10)
                 .align_y(Vertical::Center),
@@ -536,9 +539,10 @@ impl State {
                 12.0,
             ));
         }
-        head = head
-            .push(space::horizontal())
-            .push(mono(&n.to_string(), 11.0).color(if n == 0 { style::MUTED() } else { warn }));
+        head = head.push(space::horizontal()).push(super::ui::badge(
+            &n.to_string(),
+            if n == 0 { style::MUTED() } else { warn },
+        ));
         let head: Element<'a, LMsg> = if n > 0 {
             button(head)
                 .padding(0)
@@ -583,7 +587,7 @@ impl State {
                     (_, Some((_, s))) => (s, NOTHING_NEW),
                 };
                 let free = running.is_none() && !self.sync_missing;
-                let b = widgets::button_with(
+                let b = ui::button_with(
                     Btn::Small,
                     label,
                     None,
@@ -614,7 +618,7 @@ impl State {
                 row![
                     text("Rescan library").font(BOLD).size(15),
                     space::horizontal(),
-                    widgets::button_with(
+                    ui::button_with(
                         Btn::Small,
                         "Run",
                         None,
@@ -748,7 +752,7 @@ impl State {
                                     "Apply changes",
                                     self.syncing.is_none().then(|| send(Msg::Apply))
                                 ),
-                                widgets::button_with(
+                                ui::button_with(
                                     Btn::Small,
                                     "Cancel",
                                     None,
@@ -758,7 +762,7 @@ impl State {
                             .spacing(10),
                         );
                 } else {
-                    col = col.push(widgets::button_with(
+                    col = col.push(ui::button_with(
                         Btn::Small,
                         "Apply these changes…",
                         None,
@@ -834,7 +838,7 @@ impl State {
             };
             head = head
                 .push(crate::iced_ui::chrome::tip_below(
-                    widgets::button_with(
+                    ui::button_with(
                         Btn::Small,
                         "Clear",
                         None,
@@ -842,7 +846,7 @@ impl State {
                     ),
                     tip,
                 ))
-                .push(widgets::button_with(
+                .push(ui::button_with(
                     Btn::Small,
                     if self.paused { "Resume" } else { "Pause" },
                     None,
