@@ -88,6 +88,7 @@ Same as a movie, minus `stream`, `subtitles`, `director`, `budget`, `revenue` an
 | `subtitles` | [Subtitle](#subtitle)[] |         | The player's subtitle menu  |
 | `unavailable` | bool             |              | Being moved; its series' flag counts too |
 | `added`    | int                |              | Unix time it was added. The newest (Featurettes not counted) puts its series in _Recently added_ |
+| `markers`  | object             |              | `{"recap": [0, 45], "intro": [45, 130], "credits": [1300, 1380]}`: seconds, any left out. Skip Intro / Skip Recap / Next Episode ([Skip markers](admin-skip-markers.md)) |
 
 ### Cast member
 

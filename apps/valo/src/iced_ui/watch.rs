@@ -634,7 +634,8 @@ impl Watch {
                     }
                     self.items[i].start = 0.0;
                     if self.items[i].episode {
-                        self.markers = skip::from_chapters(&p.meta.specs.chapters, p.meta.duration);
+                        let chapters = skip::from_chapters(&p.meta.specs.chapters, p.meta.duration);
+                        self.markers = skip::merge(self.items[i].markers.clone(), chapters);
                     }
                     self.player = Some(p);
                 }

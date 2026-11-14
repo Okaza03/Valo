@@ -10,6 +10,7 @@ mod layout;
 mod library;
 mod moving;
 mod requests;
+mod skip;
 mod users;
 
 use anyhow::Result;
@@ -41,19 +42,21 @@ pub enum Section {
     Library,
     Collections,
     Moving,
+    SkipMarkers,
     Addons,
     Layout,
     Users,
 }
 
 impl Section {
-    const ALL: [Section; 9] = [
+    const ALL: [Section; 10] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
         Section::Collections,
         Section::Moving,
+        Section::SkipMarkers,
         Section::Addons,
         Section::Layout,
         Section::Users,
@@ -67,6 +70,7 @@ impl Section {
             Section::Library => "Library",
             Section::Collections => "Collections",
             Section::Moving => "Moving",
+            Section::SkipMarkers => "Skip markers",
             Section::Addons => "Addons",
             Section::Layout => "Layout",
             Section::Users => "Users",
@@ -92,6 +96,10 @@ impl Section {
                 "Mark titles whose files you're moving between disks. Nobody can play them \
                  until you untick them, and their posters say MOVING."
             }
+            Section::SkipMarkers => {
+                "Where episodes' recap, intro and credits are, for Skip Intro, Skip Recap and \
+                 Next Episode in the player."
+            }
             Section::Addons => {
                 "Turn Stremio addons on for everyone: catalogs on the home page, missing \
                  details filled in, and subtitles in the player."
@@ -112,6 +120,7 @@ impl Section {
             Section::Library => api::ADMIN_DOCS_LIBRARY,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
             Section::Moving => api::ADMIN_DOCS_MOVING,
+            Section::SkipMarkers => api::ADMIN_DOCS_SKIP,
             Section::Addons => api::ADMIN_DOCS_ADDONS,
             Section::Layout => api::ADMIN_DOCS_LAYOUT,
             Section::Users => api::ADMIN_API_DOCS,
@@ -135,6 +144,7 @@ impl Section {
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
             Section::Moving => "the moving endpoints (GET and PUT /api/admin/moving)",
+            Section::SkipMarkers => "the skip marker endpoints (/api/admin/skip-markers)",
             Section::Addons => "the addon endpoints (/api/addons, /api/admin/addons)",
             Section::Layout => "the layout endpoints (/api/layout, /api/admin/layout)",
             Section::Users => "Valo's admin API (/api/admin/users)",
@@ -175,6 +185,7 @@ pub enum Msg {
     Dash(dashboard::Msg),
     Requests(requests::Msg),
     Moving(moving::Msg),
+    Skip(skip::Msg),
     Users(users::Msg),
     Library(library::Msg),
     Analytics(analytics::Msg),
@@ -209,6 +220,7 @@ pub struct State {
     dashboard: dashboard::State,
     requests: requests::State,
     moving: moving::State,
+    skip: skip::State,
     users: users::State,
     library: library::State,
     analytics: analytics::State,
@@ -265,6 +277,7 @@ impl State {
             Section::Dashboard => self.dashboard.refresh(),
             Section::Requests => self.requests.refresh(),
             Section::Moving => self.moving.refresh(),
+            Section::SkipMarkers => self.skip.refresh(),
             Section::Library => self.library.refresh(),
             Section::Analytics => self.analytics.refresh(),
             Section::Collections => self.collections.refresh(),
@@ -283,6 +296,7 @@ impl State {
             Section::Dashboard => self.dashboard.missing(),
             Section::Requests => self.requests.missing(),
             Section::Moving => self.moving.missing(),
+            Section::SkipMarkers => self.skip.missing(),
             Section::Users => self.users.missing(),
             Section::Library => self.library.missing(),
             Section::Analytics => self.analytics.missing(),
@@ -299,6 +313,7 @@ impl State {
             || self.users.busy()
             || self.requests.busy()
             || self.moving.busy()
+            || self.skip.busy()
             || self.library.busy()
             || self.analytics.busy()
             || self.collections.busy()
@@ -374,6 +389,7 @@ impl State {
         match self.section {
             Section::Dashboard => self.dashboard.work(client, &mut asks),
             Section::Moving => self.moving.work(client, &mut asks.login),
+            Section::SkipMarkers => self.skip.work(client, &mut asks.login),
             Section::Library => self.library.work(client, &mut asks),
             Section::Analytics => self.analytics.work(client, &mut asks),
             Section::Collections => self.collections.work(client, &mut asks),
@@ -406,6 +422,7 @@ impl State {
                 Section::Dashboard => self.dashboard.refresh(),
                 Section::Requests => self.requests.refresh(),
                 Section::Moving => self.moving.refresh(),
+                Section::SkipMarkers => self.skip.refresh(),
                 Section::Users => self.users.refresh(),
                 Section::Library => self.library.refresh(),
                 Section::Analytics => self.analytics.refresh(),
@@ -435,6 +452,12 @@ impl State {
             Msg::Moving(m) => {
                 let items = self.all_items(lib);
                 if let Some(job) = self.moving.update(m, &items) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Skip(m) => {
+                let rows = self.skip.rows();
+                if let Some(job) = self.skip.update(m, &rows) {
                     self.run(client, job);
                 }
             }
@@ -623,6 +646,7 @@ impl State {
             Section::Dashboard => self.dashboard.view(&cx, w),
             Section::Requests => self.requests.view(&cx, w),
             Section::Moving => self.moving.view(&cx),
+            Section::SkipMarkers => self.skip.view(&cx),
             Section::Users => self.users.view(&cx, w),
             Section::Library => self.library.view(&cx, w),
             Section::Analytics => self.analytics.view(&cx, w),
