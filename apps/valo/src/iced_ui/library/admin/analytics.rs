@@ -7,18 +7,20 @@ use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{column, container, mouse_area, row, space, stack, text, Column};
 use iced::{Element, Length, Padding, Point, Rectangle, Renderer, Size, Theme};
 
-use super::super::details::{caps, column_of, gap, kv_rows, link, panel};
-use super::super::profile::{bar, columns, section_title, stats, Remote};
-use super::super::{avatar, cards, fill_gradient, spin_secs, Msg as LMsg, View};
+use super::super::details::{column_of, gap, kv_rows, link};
+use super::super::profile::{columns, Remote};
+use super::super::{avatar, cards, spin_secs, Msg as LMsg, View};
+use super::ui;
+use super::ui::mono;
+use super::ui::{bar, caps, panel};
+use super::ui::{section_title, stats};
 use super::{needs_note, not_set_up, Asks, Cx, Msg as AMsg, Section};
 use crate::api::{Analytics, Client, DayStat, RecentPlay, UserAnalytics, UserStat};
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
-use crate::iced_ui::widgets;
 use crate::ui::browse::details::{GOLD, TEAL};
 use crate::ui::browse::people::ago;
-use crate::ui::theme::{BG, LINE};
-use crate::util::{color_for, fmt_runtime};
+use crate::ui::theme::LINE;
+use crate::util::fmt_runtime;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -83,6 +85,17 @@ impl State {
     }
 
     /// Open a user's page, from section `from`.
+    /// The user whose page is open.
+    pub fn user(&self) -> Option<String> {
+        self.user.clone()
+    }
+
+    /// Open this user's page, or the overview (back and forward buttons).
+    pub fn set_user(&mut self, user: Option<String>) {
+        self.user = user;
+        self.from = None;
+    }
+
     pub fn open(&mut self, name: String, from: Section) {
         self.user = Some(name);
         self.from = (from != Section::Analytics).then_some(from);
@@ -193,7 +206,7 @@ impl State {
                     row![
                         text("Top titles").font(BOLD).size(22),
                         space::horizontal(),
-                        widgets::segmented(
+                        ui::segmented(
                             [
                                 (None, "Both"),
                                 (Some("movie"), "Movies"),
@@ -310,22 +323,14 @@ impl State {
             container(e).padding(Padding::default().left(m)).into()
         };
         let back_to = if self.from == Some(Section::Users) {
-            "‹  Users"
+            "Users"
         } else {
-            "‹  All users"
+            "All users"
         };
         let a = self.person.data.as_ref();
         let mut out: Column<'a, LMsg> = column![
-            pad(link(
-                back_to,
-                14.0,
-                style::MUTED(),
-                None,
-                LMsg::Admin(AMsg::Analytics(Msg::Back))
-            )),
-            gap(8.0),
-            hero(name, a, w),
-            gap(20.0),
+            pad(container(hero(name, a, back_to)).width(inner).into()),
+            gap(16.0),
         ];
         let mut top: Column<'a, LMsg> =
             column![range(self.days, self.person.loading()), gap(18.0)].width(inner);
@@ -391,6 +396,7 @@ impl State {
             |lw| {
                 let mut col: Column<'a, LMsg> =
                     column![section_title("History", "Recently watched", a.recent.len())];
+                let lw = lw - 44.0; // inside the card
                 if a.recent.is_empty() {
                     col = col.push(
                         text("Nothing watched in this range.")
@@ -427,7 +433,7 @@ impl State {
                         col = col.push(gap(4.0));
                     }
                 }
-                col.into()
+                panel(col)
             },
             |rw| {
                 let mut col: Column<'a, LMsg> = column![];
@@ -516,7 +522,7 @@ impl State {
                     link(
                         "Manage in Users",
                         13.0,
-                        c(GOLD()),
+                        super::ui::accent(),
                         None,
                         LMsg::Admin(AMsg::Section(Section::Users))
                     ),
@@ -586,7 +592,7 @@ fn with_accounts(
 /// The 7 days … Year picker, with a spinner while loading.
 fn range<'a>(days: u32, loading: bool) -> Element<'a, LMsg> {
     let send = |d| LMsg::Admin(AMsg::Analytics(Msg::Days(d)));
-    let mut r = row![widgets::segmented(
+    let mut r = row![ui::segmented(
         [
             (7, "7 days"),
             (30, "30 days"),
@@ -610,60 +616,67 @@ fn range<'a>(days: u32, loading: bool) -> Element<'a, LMsg> {
 }
 
 /// The user's header, like their own profile page.
-fn hero<'a>(name: &str, a: Option<&UserAnalytics>, w: f32) -> Element<'a, LMsg> {
-    let (m, _) = column_of(w);
-    let col = c(color_for(name));
+fn hero<'a>(name: &str, a: Option<&UserAnalytics>, back: &str) -> Element<'a, LMsg> {
     let shown = a
         .and_then(|a| a.display_name.as_deref())
         .filter(|d| !d.trim().is_empty())
         .unwrap_or(name);
-    let mut line = vec![name.to_owned()];
+    // a profile card, as in shadcn's account blocks: avatar, name, badges
+    let mut badges = row![ui::badge(&format!("@{name}"), style::MUTED())].spacing(6);
     if a.is_some_and(|a| a.admin) {
-        line.push("Admin".into());
+        badges = badges.push(ui::badge("Admin", c(TEAL())));
     }
     if let Some(t) = a.and_then(|a| a.last_active) {
-        line.push(format!("last watched {}", ago(t)));
+        badges = badges.push(ui::badge(
+            &format!("Last watched {}", ago(t)),
+            style::MUTED(),
+        ));
     }
-    let content = row![
-        avatar(name, 50.0),
-        column![
-            caps("User analytics", c(TEAL())),
-            gap(4.0),
-            text(shown.to_owned())
-                .font(style::BLACK)
-                .size(40)
-                .color(style::TEXT()),
-            gap(6.0),
-            mono(&line.join("   ·   "), 11.5).color(style::MUTED()),
-        ],
-    ]
-    .spacing(28)
-    .align_y(Vertical::Center);
-    stack![
-        container(space())
-            .width(Length::Fill)
-            .height(200)
-            .style(move |_| fill_gradient(0.0, col.scale_alpha(0.35), c(BG()))),
-        container(content)
-            .height(200)
-            .center_y(200)
-            .padding(Padding::default().left(m)),
-    ]
-    .into()
+    panel(
+        row![
+            avatar(name, 28.0),
+            column![
+                text(shown.to_owned()).font(BOLD).size(24),
+                space().height(6),
+                badges,
+            ],
+            space::horizontal(),
+            ui::button_with(
+                crate::iced_ui::widgets::Kind::Small,
+                back,
+                Some(crate::iced_ui::icon::Icon::ChevronLeft),
+                Some(LMsg::Admin(AMsg::Analytics(Msg::Back))),
+            ),
+        ]
+        .spacing(18)
+        .align_y(Vertical::Center),
+    )
 }
 
 /// One play in the history list; opens the title when clicked.
 fn recent_row<'a>(cx: &Cx<'a>, e: &RecentPlay, w: f32) -> Element<'a, LMsg> {
-    let owner = if e.series_id.is_empty() {
-        &e.id
-    } else {
-        &e.series_id
-    };
-    let item = cx.find(owner);
-    let still = cx
+    // the server tags its ids ("e:812", "m:12", "s:<series name>"); the
+    // library tags its own ("episode:812", "movie:12")
+    let bare = e.id.split_once(':').map_or(e.id.as_str(), |(_, id)| id);
+    let episode = cx
         .lib
-        .find_episode(&e.id)
-        .and_then(|(s, si, ei)| s.seasons[si].episodes[ei].still.as_deref());
+        .find_episode(&format!("episode:{bare}"))
+        .or_else(|| cx.lib.find_episode(&e.id));
+    let item = episode.map(|(s, _, _)| s).or_else(|| {
+        let owner = if e.series_id.is_empty() {
+            &e.id
+        } else {
+            &e.series_id
+        };
+        cx.find(owner)
+            .or_else(|| cx.find(&format!("movie:{bare}")))
+            // "s:Smallville": the series by its title
+            .or_else(|| {
+                let name = e.series_id.split_once(':').map(|(_, n)| n)?;
+                cx.series.iter().find(|i| i.title == name)
+            })
+    });
+    let still = episode.and_then(|(s, si, ei)| s.seasons[si].episodes[ei].still.as_deref());
     let art = still
         .or(item.and_then(|i| i.backdrop.as_deref()))
         .or(item.and_then(|i| i.poster.as_deref()));
@@ -726,9 +739,9 @@ fn recent_row<'a>(cx: &Cx<'a>, e: &RecentPlay, w: f32) -> Element<'a, LMsg> {
         .into()
 }
 
-/// A thin gold progress line over a white track.
+/// A thin progress line in the accent color over a white track.
 fn progress<'a>(f: f32, w: f32) -> Element<'a, LMsg> {
-    let gold = c(GOLD());
+    let gold = super::ui::accent();
     container(
         container(space())
             .width(w * f)
@@ -768,6 +781,7 @@ fn day_chart<'a>(days: &[DayStat]) -> Element<'a, LMsg> {
         max_bar: 24.0,
         grid: true,
         empty: "No plays yet",
+        area: true,
     };
     canvas::Canvas::new(chart)
         .width(Length::Fill)
@@ -799,6 +813,7 @@ fn hour_chart<'a>(hours: &[u32]) -> Element<'a, LMsg> {
         max_bar: 14.0,
         grid: false,
         empty: "",
+        area: false,
     };
     canvas::Canvas::new(chart)
         .width(Length::Fill)
@@ -818,6 +833,8 @@ struct Bars {
     /// Lines at half and full height.
     grid: bool,
     empty: &'static str,
+    /// A line with a soft fill under it (shadcn's area chart) in place of bars.
+    area: bool,
 }
 
 impl<M> canvas::Program<M> for Bars {
@@ -841,8 +858,7 @@ impl<M> canvas::Program<M> for Bars {
             content: s.to_owned(),
             position: at,
             color: muted,
-            size: 9.5.into(),
-            font: iced::Font::MONOSPACE,
+            size: 11.0.into(),
             align_x: ax.into(),
             align_y: ay,
             ..Text::default()
@@ -876,7 +892,56 @@ impl<M> canvas::Program<M> for Bars {
         let bw = (slot * 0.7).clamp(1.0, self.max_bar);
         let hover = cursor.position_in(bounds);
         let mut tip = None;
-        for (i, v) in self.values.iter().enumerate() {
+        let accent = super::ui::accent();
+        if self.area {
+            // the line through each day's value, and a fill fading down to the axis
+            let pts: Vec<Point> = self
+                .values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| Point::new(slot * (i as f32 + 0.5), h - (h - 8.0) * v / max))
+                .collect();
+            // a smooth curve: each step a bezier with its handles halfway across
+            let curve = |b: &mut canvas::path::Builder| {
+                for w2 in pts.windows(2) {
+                    let (p, q) = (w2[0], w2[1]);
+                    let mx = (p.x + q.x) / 2.0;
+                    b.bezier_curve_to(Point::new(mx, p.y), Point::new(mx, q.y), q);
+                }
+            };
+            let line_path = Path::new(|b| {
+                b.move_to(pts[0]);
+                curve(b);
+            });
+            let area_path = Path::new(|b| {
+                b.move_to(Point::new(pts[0].x, h));
+                b.line_to(pts[0]);
+                curve(b);
+                b.line_to(Point::new(pts[pts.len() - 1].x, h));
+                b.close();
+            });
+            let fade = canvas::gradient::Linear::new(Point::new(0.0, 0.0), Point::new(0.0, h))
+                .add_stop(0.0, accent.scale_alpha(0.45))
+                .add_stop(1.0, accent.scale_alpha(0.02));
+            f.fill(&area_path, canvas::Fill::from(fade));
+            f.stroke(
+                &line_path,
+                Stroke::default().with_width(2.0).with_color(accent),
+            );
+            for (i, p) in pts.iter().enumerate() {
+                let hot = hover.is_some_and(|q| (q.x - p.x).abs() <= slot / 2.0 && q.y <= h);
+                if hot {
+                    f.stroke(
+                        &Path::line(Point::new(p.x, 0.0), Point::new(p.x, h)),
+                        Stroke::default().with_width(1.0).with_color(c(LINE())),
+                    );
+                    f.fill(&Path::circle(*p, 4.0), accent);
+                    f.fill(&Path::circle(*p, 2.0), style::TEXT());
+                    tip = self.tips.get(i).map(|t| (p.x, t));
+                }
+            }
+        }
+        for (i, v) in self.values.iter().enumerate().filter(|_| !self.area) {
             let cx = slot * (i as f32 + 0.5);
             let hot = hover.is_some_and(|p| (p.x - cx).abs() <= slot / 2.0 && p.y <= h);
             if hot {
@@ -895,7 +960,7 @@ impl<M> canvas::Program<M> for Bars {
                         Size::new(bw, bh),
                         2.0.into(),
                     ),
-                    if hot { style::TEXT() } else { c(GOLD()) },
+                    if hot { style::TEXT() } else { accent },
                 );
             }
         }

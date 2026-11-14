@@ -6,13 +6,16 @@ use iced::alignment::Vertical;
 use iced::widget::{checkbox, column, container, row, space, text, Column};
 use iced::{Element, Length, Padding};
 
-use super::super::details::{caps, column_of, gap, panel, NARROW};
-use super::super::profile::{section_title, Remote};
+use super::super::details::{column_of, gap, NARROW};
+use super::super::profile::Remote;
 use super::super::{spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::section_title;
+use super::ui::{caps, panel};
 use super::{danger_button, not_set_up, row_frame, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::addons::Listed;
 use crate::api::{Addon, Client, ADDON_REQUEST_URL};
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
 use crate::iced_ui::widgets::{self, Kind as Btn};
 use crate::ui::browse::details::TEAL;
@@ -264,7 +267,7 @@ impl State {
                             "Turn off",
                             (!busy).then(|| send(Msg::Off(a.id.clone(), r.name.to_owned())))
                         ),
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Small,
                             "Cancel",
                             None,

@@ -13,6 +13,7 @@ mod integrate;
 mod net;
 mod player;
 mod presence;
+mod skip;
 mod specs;
 mod subs;
 mod sync;
