@@ -7,12 +7,13 @@ use iced::alignment::Vertical;
 use iced::widget::{checkbox, column, container, row, text, text_input, Column};
 use iced::{Background, Border, Element};
 
-use super::super::details::{caps, gap, panel};
+use super::super::details::gap;
 use super::super::profile::Remote;
 use super::super::{spin_secs, Msg as LMsg};
+use super::ui::mono;
+use super::ui::{caps, panel};
 use super::{fold, not_set_up, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::api::{Client, Item, Kind};
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c};
 use crate::ui::browse::details::TEAL;
 use crate::ui::theme::{LINE, LINE_HI, SURFACE, SURFACE_HI};

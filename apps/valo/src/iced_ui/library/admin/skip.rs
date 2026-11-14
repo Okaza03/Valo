@@ -11,15 +11,17 @@ use iced::{Background, Border, Element, Length, Padding};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::super::details::{caps, gap, panel};
+use super::super::details::gap;
 use super::super::profile::Remote;
 use super::super::{spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::{caps, panel};
 use super::{danger_button, not_set_up, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::api::{Client, Item, Kind};
 use crate::iced_ui::icon;
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
-use crate::iced_ui::widgets::{self, Kind as Btn};
+use crate::iced_ui::widgets::Kind as Btn;
 use crate::ui::browse::details::TEAL;
 use crate::ui::theme::{LINE, LINE_HI, OK, SURFACE, SURFACE_HI, WARN};
 use crate::util::fmt_time;
@@ -381,7 +383,7 @@ impl State {
         };
         let found = list.series.iter().filter(|r| r.any > 0).count();
         col = col
-            .push(widgets::segmented(vec![
+            .push(ui::segmented(vec![
                 (
                     "Not detected".into(),
                     Some(list.series.len() - found),
@@ -431,13 +433,13 @@ impl State {
                 .color(style::MUTED()),
                 gap(12.0),
                 row![
-                    widgets::button_with(
+                    ui::button_with(
                         Btn::Primary,
                         &label,
                         None,
                         (n > 0 && !cx.busy).then(|| send(Msg::Detect))
                     ),
-                    widgets::button_with(
+                    ui::button_with(
                         Btn::Small,
                         if all_on { "Untick all" } else { "Tick all shown" },
                         None,
@@ -558,7 +560,7 @@ impl State {
                     &format!("Clear {}", r.title),
                     (!busy).then(|| send(Msg::Clear(id.clone())))
                 ),
-                widgets::button_with(
+                ui::button_with(
                     Btn::Small,
                     "Cancel",
                     None,
@@ -572,14 +574,14 @@ impl State {
         };
         let col: Column<'a, LMsg> = column![
             row![
-                widgets::button_with(
+                ui::button_with(
                     Btn::Small,
                     "Find missing times",
                     None,
                     (!busy && (r.intro < r.episodes || r.credits < r.episodes))
                         .then(|| send(Msg::Again(id.clone(), false)))
                 ),
-                widgets::button_with(
+                ui::button_with(
                     Btn::Small,
                     "Find all again",
                     None,
@@ -658,13 +660,13 @@ impl State {
                 );
             }
             r = r
-                .push(widgets::button_with(
+                .push(ui::button_with(
                     Btn::Small,
                     "Save",
                     None,
                     (!busy).then(|| send(Msg::Save)),
                 ))
-                .push(widgets::button_with(
+                .push(ui::button_with(
                     Btn::Small,
                     "Cancel",
                     None,
@@ -692,7 +694,7 @@ impl State {
             container(mono(&source_label(e.source.as_deref()), 10.0).color(style::MUTED()))
                 .width(140),
         );
-        r = r.push(widgets::button_with(
+        r = r.push(ui::button_with(
             Btn::Small,
             "Edit",
             None,

@@ -440,6 +440,10 @@ impl Library {
 
     /// The mouse's forward button: the page last left with Back.
     pub fn forward(&mut self) -> Out {
+        // inside the admin page, its own sections first
+        if self.view == View::Admin && self.admin.forward() {
+            return Out::Top(PAGE);
+        }
         let Some(v) = self.ahead.pop() else {
             return Out::None;
         };
@@ -464,6 +468,10 @@ impl Library {
     pub fn key_back(&mut self) -> Out {
         if !self.search.is_empty() {
             self.search.clear();
+            return Out::Top(PAGE);
+        }
+        // inside the admin page, its own sections first, then out of it
+        if self.view == View::Admin && self.admin.back() {
             return Out::Top(PAGE);
         }
         self.back()

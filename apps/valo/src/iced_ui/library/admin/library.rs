@@ -12,13 +12,15 @@ use iced::widget::{
 use iced::{Background, Border, ContentFit, Element, Length, Padding};
 use serde_json::Value;
 
-use super::super::details::{caps, column_of, gap, panel};
+use super::super::details::{column_of, gap};
 use super::super::profile::{field_style, Remote};
 use super::super::{cards, scroll_style, spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::{caps, panel};
 use super::{needs_note, not_set_up, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::api::{Client, Item, Kind, NoAdminApi, Unauthorized};
 use crate::iced_ui::images::Variant;
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
 use crate::iced_ui::widgets::{self, Kind as Btn};
 use crate::iced_ui::Job;
@@ -353,7 +355,7 @@ impl State {
     /// The title list.
     fn list<'a>(&'a self, cx: &Cx<'a>) -> Element<'a, LMsg> {
         let mut col: Column<'a, LMsg> = column![
-            widgets::segmented(vec![
+            ui::segmented(vec![
                 (
                     "Movies".to_owned(),
                     Some(cx.movies.len()),
@@ -426,7 +428,7 @@ impl State {
                             .padding([6, 8])
                             .width(56)
                             .style(field_style),
-                        widgets::button_with(
+                        ui::button_with(
                             Btn::Small,
                             &format!("Download subtitles for these {}", shown.len()),
                             None,
@@ -557,7 +559,7 @@ impl State {
             tabs.push((Tab::Episodes, "Episodes"));
         }
         col = col
-            .push(widgets::segmented(
+            .push(ui::segmented(
                 tabs.into_iter()
                     .map(|(t, l)| (l.to_owned(), None, self.tab == t, send(Msg::Tab(t))))
                     .collect(),
@@ -588,7 +590,7 @@ impl State {
         .spacing(10)
         .align_y(Vertical::Center);
         if dirty {
-            actions = actions.push(widgets::button_with(
+            actions = actions.push(ui::button_with(
                 Btn::Small,
                 "Undo changes",
                 None,
@@ -680,7 +682,7 @@ impl State {
             caps("Artwork", c(TEAL())),
             gap(4.0),
             crate::iced_ui::chrome::tip_below(
-                widgets::button_with(
+                ui::button_with(
                     Btn::Small,
                     "Refetch missing images",
                     None,
@@ -731,7 +733,7 @@ impl State {
             } else {
                 (160.0, 90.0)
             };
-            let mut buttons = row![widgets::button_with(
+            let mut buttons = row![ui::button_with(
                 Btn::Small,
                 "Upload…",
                 None,
@@ -739,7 +741,7 @@ impl State {
             )]
             .spacing(8);
             if !url.trim().is_empty() {
-                buttons = buttons.push(widgets::button_with(
+                buttons = buttons.push(ui::button_with(
                     Btn::Small,
                     "Remove",
                     None,
