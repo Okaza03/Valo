@@ -83,13 +83,16 @@ IsRuntime=false
 $GPGKEY_LINE
 EOF
 
-# The website: packaging/site, with this release's version and links filled in
+# The website: packaging/site's build (npm run build there), with this
+# release's version and links filled in
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 VERSION=$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)
 TAG=${VALO_TAG:-v$VERSION}
 RELEASES=https://github.com/Okaza03/Valo/releases
-cp -a "$ROOT/packaging/site/." "$SITE/"
+WEB=${VALO_SITE_DIR:-$ROOT/packaging/site/dist}
+[ -f "$WEB/index.html" ] || { echo "No website in $WEB: run npm ci && npm run build in packaging/site"; exit 1; }
+cp -a "$WEB/." "$SITE/"
 sed -i \
     -e "s|@BASE@|$BASE|g" \
     -e "s|@DL@|$RELEASES/download/$TAG|g" \

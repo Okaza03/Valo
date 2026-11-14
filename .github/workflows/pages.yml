@@ -1,0 +1,118 @@
+# Deploys the website alone, without a release: on a push to main that
+# changes packaging/site, or by hand (gh workflow run pages.yml).
+#
+# GitHub Pages also serves the Flatpak repository, and a deploy replaces the
+# whole site. So this rebuilds that repository from the latest release's
+# .flatpak bundle (the same commit, signed with the same key) and publishes it
+# next to the new website: `flatpak install`/`flatpak update` keep working and
+# see no new version. The download links point at the latest release.
+name: pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - packaging/site/**
+      - packaging/flatpak/publish-repo.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # the website, and the latest release's tag and Flatpak bundle
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packaging/site/package-lock.json
+
+      - name: Build the website
+        working-directory: packaging/site
+        run: npm ci && npm run build
+
+      # the bundle arrives a few minutes after the rest of a release; until
+      # then this fails rather than publish a site without the repository
+      - name: Latest release's Flatpak bundle
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir bundle --pattern "valo-$TAG-x86_64.flatpak" \
+            || { echo "::error::$TAG has no Flatpak bundle yet; run this again once the release is done"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pages-input
+          path: |
+            packaging/site/dist
+            bundle
+          retention-days: 1
+
+  # the Flatpak repository again, plus the website: what Pages serves
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: pages-input
+          path: input
+
+      # the same key as the release, so the summary and commit signatures
+      # match what users' remotes already trust (see packaging/flatpak/README.md)
+      - name: Import the repository's signing key
+        id: gpg
+        env:
+          KEY: ${{ secrets.FLATPAK_GPG_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "Set the FLATPAK_GPG_KEY secret: see packaging/flatpak/README.md"; exit 1; }
+          printf '%s\n' "$KEY" | gpg --batch --import
+          echo "id=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')" >> "$GITHUB_OUTPUT"
+
+      - name: Repository from the bundle
+        run: |
+          ostree init --mode=archive-z2 --repo=repo
+          flatpak build-import-bundle --gpg-sign="${{ steps.gpg.outputs.id }}" repo input/bundle/*.flatpak
+
+      - name: Repository and website
+        env:
+          VALO_TAG: ${{ needs.prepare.outputs.tag }}
+          VALO_SITE_DIR: input/packaging/site/dist
+        run: |
+          # publish-repo.sh also writes a bundle; the release already has one
+          packaging/flatpak/publish-repo.sh repo site "$RUNNER_TEMP/unused.flatpak" "${{ steps.gpg.outputs.id }}"
+          test -f site/valo.flatpakref && test -f site/repo/summary && test -f site/index.html
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    # shared with release.yml's pages job
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5
