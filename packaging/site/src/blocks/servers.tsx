@@ -14,15 +14,16 @@ const routes = [
 
 export function Servers() {
   return (
-    <section id="servers" className="py-24 sm:py-28">
+    <section id="servers" className="relative py-24 sm:py-28">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <SectionHeading kicker="Servers" title="Bring your own server">
+        <SectionHeading index="03" kicker="Servers" title={<>Bring <em className="text-primary">your own</em> server.</>}>
           Valo plays from a computer on your network that keeps your movies and shows. There are three ways to set one up.
         </SectionHeading>
 
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_1fr]">
           <BlurFade inView className="lg:row-span-2">
-            <Card className="h-full">
+            <Card className="h-full rounded-3xl border-white/[0.07] bg-white/[0.02] ring-0">
               <CardHeader>
                 <div className="mb-2 grid size-10 place-items-center rounded-lg bg-primary/10 text-primary">
                   <ServerIcon className="size-5" />
@@ -34,7 +35,7 @@ export function Servers() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Terminal className="max-w-none border-border bg-black/40">
+                <Terminal className="max-w-none overflow-x-auto rounded-2xl border-white/10 bg-black/50">
                   <TypingAnimation>$ python3 valo_server.py ~/Videos --add-user me</TypingAnimation>
                   <AnimatedSpan className="text-muted-foreground">Password for me:</AnimatedSpan>
                   <AnimatedSpan className="text-muted-foreground">Again:</AnimatedSpan>
@@ -47,7 +48,7 @@ export function Servers() {
           </BlurFade>
 
           <BlurFade inView delay={0.08}>
-            <Card className="h-full">
+            <Card className="h-full rounded-3xl border-white/[0.07] bg-white/[0.02] ring-0">
               <CardHeader>
                 <div className="mb-2 grid size-10 place-items-center rounded-lg bg-primary/10 text-primary">
                   <PlugIcon className="size-5" />
@@ -71,7 +72,7 @@ export function Servers() {
           </BlurFade>
 
           <BlurFade inView delay={0.16}>
-            <Card className="h-full">
+            <Card className="h-full rounded-3xl border-white/[0.07] bg-white/[0.02] ring-0">
               <CardHeader>
                 <div className="mb-2 grid size-10 place-items-center rounded-lg bg-primary/10 text-primary">
                   <FolderTreeIcon className="size-5" />

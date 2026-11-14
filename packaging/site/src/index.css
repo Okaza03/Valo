@@ -2,11 +2,16 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@fontsource/instrument-serif/latin-400.css";
+@import "@fontsource/instrument-serif/latin-400-italic.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
+    --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
     --font-sans: 'Geist Variable', sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -130,22 +135,22 @@
 
 .dark {
     /* Valo's own colors: #121317 background, #4a7cf7 accent */
-    --background: oklch(0.185 0.008 275);
+    --background: oklch(0.13 0.006 275);
     --foreground: oklch(0.94 0.003 275);
-    --card: oklch(0.215 0.009 275);
+    --card: oklch(0.17 0.008 275);
     --card-foreground: oklch(0.94 0.003 275);
-    --popover: oklch(0.215 0.009 275);
+    --popover: oklch(0.19 0.008 275);
     --popover-foreground: oklch(0.94 0.003 275);
     --primary: oklch(0.62 0.18 265);
     --primary-foreground: oklch(0.99 0 0);
-    --secondary: oklch(0.26 0.01 275);
+    --secondary: oklch(0.22 0.01 275);
     --secondary-foreground: oklch(0.94 0.003 275);
-    --muted: oklch(0.26 0.01 275);
+    --muted: oklch(0.22 0.01 275);
     --muted-foreground: oklch(0.68 0.01 275);
     --accent: oklch(0.27 0.02 270);
     --accent-foreground: oklch(0.94 0.003 275);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 9%);
+    --border: oklch(1 0 0 / 8%);
     --input: oklch(1 0 0 / 14%);
     --ring: oklch(0.62 0.18 265);
     --chart-1: oklch(0.62 0.18 265);
@@ -179,24 +184,31 @@
 }
 @layer base {
   html { scroll-behavior: smooth; scroll-padding-top: 5rem; }
-  code, pre, kbd { font-family: ui-monospace, "Noto Sans Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+  code, pre, kbd { font-family: var(--font-mono); }
+  ::selection { background: oklch(0.62 0.18 265 / 40%); }
 }
 
-/* the hero's slow-moving glow */
-@keyframes aurora {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  33% { transform: translate3d(6%, -4%, 0) scale(1.08); }
-  66% { transform: translate3d(-5%, 5%, 0) scale(0.96); }
-}
-.animate-aurora { animation: aurora 18s ease-in-out infinite; }
+/* the poster wall behind the hero: columns drifting up and down */
+@keyframes drift-up { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+@keyframes drift-down { from { transform: translateY(-50%); } to { transform: translateY(0); } }
+.animate-drift-up { animation: drift-up var(--drift, 60s) linear infinite; }
+.animate-drift-down { animation: drift-down var(--drift, 60s) linear infinite; }
 
-/* progress bars on the illustrated Continue watching row */
+@keyframes drift-left { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* progress bars filling in */
 @keyframes fill { from { width: 0; } }
 .animate-fill { animation: fill 1.6s cubic-bezier(.2,.7,.2,1) both; }
 
 /* the logo's ring in the closing section */
 @keyframes spin-slow { to { transform: rotate(360deg); } }
 .animate-spin-slow { animation: spin-slow 14s linear infinite; }
+
+/* film grain over the hero */
+.grain::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .06; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
