@@ -6,15 +6,17 @@ use iced::mouse::Interaction;
 use iced::widget::{checkbox, column, container, mouse_area, row, space, text, Column};
 use iced::{Background, Element, Length, Padding};
 
-use super::super::details::{caps, column_of, gap, panel, NARROW};
+use super::super::details::{column_of, gap, NARROW};
 use super::super::profile::Remote;
 use super::super::{spin_secs, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::{caps, panel};
 use super::{not_set_up, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::addons::catalog_key;
 use crate::api::{Addon, Client, ServerLayout};
 use crate::iced_ui::chrome::tip_below;
 use crate::iced_ui::icon::Icon;
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
 use crate::iced_ui::widgets::{self, Kind as Btn};
 use crate::ui::browse::details::TEAL;
@@ -383,7 +385,7 @@ impl State {
         };
         let mut buttons = row![].spacing(8);
         if changed {
-            buttons = buttons.push(widgets::button_with(
+            buttons = buttons.push(ui::button_with(
                 Btn::Small,
                 "Undo changes",
                 None,
@@ -391,7 +393,7 @@ impl State {
             ));
         }
         if hidden > 0 {
-            buttons = buttons.push(widgets::button_with(
+            buttons = buttons.push(ui::button_with(
                 Btn::Small,
                 "Show everything",
                 None,
@@ -399,7 +401,7 @@ impl State {
             ));
         }
         if moved {
-            buttons = buttons.push(widgets::button_with(
+            buttons = buttons.push(ui::button_with(
                 Btn::Small,
                 "Usual order",
                 None,

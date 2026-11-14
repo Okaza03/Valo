@@ -197,6 +197,8 @@ pub enum Msg {
     Admin(admin::Msg),
     /// Open or close the profile menu.
     Menu(bool),
+    /// The pointer moved near the open profile menu: it stays open.
+    MenuStay,
     SignOut,
     Quit,
     CopyNote,
@@ -440,6 +442,10 @@ impl Library {
 
     /// The mouse's forward button: the page last left with Back.
     pub fn forward(&mut self) -> Out {
+        // inside the admin page, its own sections first
+        if self.view == View::Admin && self.admin.forward() {
+            return Out::Top(PAGE);
+        }
         let Some(v) = self.ahead.pop() else {
             return Out::None;
         };
@@ -464,6 +470,10 @@ impl Library {
     pub fn key_back(&mut self) -> Out {
         if !self.search.is_empty() {
             self.search.clear();
+            return Out::Top(PAGE);
+        }
+        // inside the admin page, its own sections first, then out of it
+        if self.view == View::Admin && self.admin.back() {
             return Out::Top(PAGE);
         }
         self.back()
@@ -717,6 +727,7 @@ impl Library {
             Msg::Retry => self.reload(),
             Msg::ChangeServer => return Out::Act(Action::ChangeServer),
             Msg::Menu(open) => self.menu = open,
+            Msg::MenuStay => {}
             Msg::SignOut => {
                 self.menu = false;
                 return Out::Act(Action::SignOut(self.client.clone()));
@@ -888,6 +899,9 @@ impl Library {
             items = items.push(widgets::menu_item("Sign out", Msg::SignOut));
         }
         items = items.push(widgets::menu_item("Quit", Msg::Quit));
+        // how tall the menu is: the name, the items (32 each) and the lines
+        let rows = 2 + usize::from(self.client.admin) + usize::from(self.client.token.is_some());
+        let menu_h = 12.0 + 44.0 + 2.0 * 9.0 + rows as f32 * 34.0;
         let panel = container(items).padding(6).style(|_| {
             let p = theme::pal();
             container::Style {
@@ -907,10 +921,28 @@ impl Library {
             }
         });
         let right = (self.profile_offset() - 262.0).max(0.0);
+        let top = crate::iced_ui::chrome::BAR_H + 2.0;
+        // a click outside closes it, and so does moving the pointer away: more
+        // than SLACK past the menu (or its button above it), so a twitch doesn't
+        const SLACK: f32 = 24.0;
+        let away = responsive(move |size| {
+            let (x1, x0) = (size.width - right, size.width - right - 262.0);
+            iced::widget::mouse_area(space().width(Length::Fill).height(Length::Fill))
+                .on_press(Msg::Menu(false))
+                .on_move(move |p| {
+                    let near =
+                        p.x >= x0 - SLACK && p.x <= x1 + SLACK && p.y <= top + menu_h + SLACK;
+                    if near {
+                        Msg::MenuStay
+                    } else {
+                        Msg::Menu(false)
+                    }
+                })
+                .into()
+        });
         Some(
             stack![
-                iced::widget::mouse_area(space().width(Length::Fill).height(Length::Fill))
-                    .on_press(Msg::Menu(false)),
+                away,
                 container(panel)
                     .width(Length::Fill)
                     .align_x(Horizontal::Right)

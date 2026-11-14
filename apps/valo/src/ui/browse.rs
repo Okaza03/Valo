@@ -246,6 +246,7 @@ pub(crate) fn play_items(
                 key: Some(key),
                 subtitles: item.subtitles.clone(),
                 addons: Some(Lookup::movie(client, item)),
+                markers: Vec::new(),
             }])
         }
         Kind::Series => {
@@ -281,6 +282,11 @@ pub(crate) fn play_items(
                         key: Some(key),
                         subtitles: e.subtitles.clone(),
                         addons: Some(Lookup::episode(client, item, season.number, e.number)),
+                        markers: e
+                            .markers
+                            .as_ref()
+                            .map(crate::skip::from_server)
+                            .unwrap_or_default(),
                     });
                 }
             }

@@ -13,13 +13,15 @@ use iced::widget::{
 use iced::{Background, Border, Element, Length, Padding};
 use serde_json::json;
 
-use super::super::details::{caps, column_of, gap, panel};
+use super::super::details::{column_of, gap};
 use super::super::profile::{field_style, Remote};
 use super::super::{cards, picker, scroll_style, Msg as LMsg};
+use super::ui;
+use super::ui::mono;
+use super::ui::{caps, panel};
 use super::{danger_button, not_set_up, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
 use crate::api::{join, Client, Collection, CollectionItem, Item, Kind};
 use crate::iced_ui::icon::Icon;
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
 use crate::iced_ui::widgets::{self, Kind as Btn};
 use crate::ui::browse::details::TEAL;
@@ -436,8 +438,7 @@ impl State {
         if let Some(e) = &self.list.error {
             col = col.push(text(e.clone()).size(14.5).color(style::ERROR()));
         }
-        let small =
-            |t: &str, msg: Option<Msg>| widgets::button_with(Btn::Small, t, None, msg.map(send));
+        let small = |t: &str, msg: Option<Msg>| ui::button_with(Btn::Small, t, None, msg.map(send));
         col = col.push(
             row![
                 small("New collection", Some(Msg::Open(None))),
@@ -539,7 +540,7 @@ impl State {
         let is_new = id.is_empty();
         let busy = cx.busy;
         let dirty = self.dirty();
-        let small = |t: &str, msg: Msg| widgets::button_with(Btn::Small, t, None, Some(send(msg)));
+        let small = |t: &str, msg: Msg| ui::button_with(Btn::Small, t, None, Some(send(msg)));
 
         let mut col: Column<'a, LMsg> = column![
             caps(
@@ -676,7 +677,7 @@ impl State {
             .iter()
             .filter(|id| loose.iter().any(|i| i.id == **id))
             .collect();
-        let small = |t: &str, msg: Msg| widgets::button_with(Btn::Small, t, None, Some(send(msg)));
+        let small = |t: &str, msg: Msg| ui::button_with(Btn::Small, t, None, Some(send(msg)));
 
         let mut col: Column<'a, LMsg> = column![
             caps("Movies without a collection", c(TEAL())),

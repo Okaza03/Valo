@@ -999,6 +999,7 @@ impl App {
         let content: Element<Message> = match &self.watch {
             Some(w) => w
                 .view(watch::View {
+                    autoplay: self.cfg.autoplay_next,
                     volume: self.cfg.volume,
                     muted: self.muted,
                     skip: f64::from(self.cfg.skip_seconds.max(1)),

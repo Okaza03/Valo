@@ -21,6 +21,8 @@ pub struct PlayItem {
     pub subtitles: Vec<SubtitleTrack>,
     /// Ask the admin's subtitle addons for more; None once they've answered.
     pub addons: Option<Lookup>,
+    /// The server's recap, intro and credits times (an episode's chapters fill in the rest).
+    pub markers: Vec<crate::skip::Marker>,
 }
 
 impl PlayItem {
@@ -36,6 +38,7 @@ impl PlayItem {
             start: 0.0,
             subtitles: Vec::new(),
             addons: None,
+            markers: Vec::new(),
         }
     }
 }

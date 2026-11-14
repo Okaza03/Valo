@@ -10,6 +10,8 @@ mod layout;
 mod library;
 mod moving;
 mod requests;
+mod skip;
+mod ui;
 mod users;
 
 use anyhow::Result;
@@ -17,17 +19,17 @@ use iced::alignment::Vertical;
 use iced::widget::{button, column, container, row, space, text, Column};
 use iced::{Background, Border, Color, Element, Length, Padding};
 
-use super::details::{caps, column_of, gap, link, panel};
+use super::details::{column_of, gap, link};
 use super::profile::Remote;
 use super::{spin_secs, Library as Lib, Msg as LMsg};
 use crate::api::{self, AdminUser, Client, Item, Kind, Library};
 use crate::iced_ui::icon::{self, Icon};
-use crate::iced_ui::spaced::mono;
 use crate::iced_ui::style::{self, c, BOLD};
 use crate::iced_ui::widgets::{self, Kind as Btn};
 use crate::iced_ui::Job;
 use crate::ui::browse::details::TEAL;
 use crate::ui::theme::{ERROR, INK, LINE, OK, PRIMARY, SURFACE, SURFACE_HI, WARN};
+use ui::{caps, panel};
 
 /// A change for the server, run off the UI thread.
 pub type JobFn = Box<dyn FnOnce(&Client) -> Result<Done> + Send>;
@@ -41,23 +43,41 @@ pub enum Section {
     Library,
     Collections,
     Moving,
+    SkipMarkers,
     Addons,
     Layout,
     Users,
 }
 
 impl Section {
-    const ALL: [Section; 9] = [
+    const ALL: [Section; 10] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
         Section::Collections,
         Section::Moving,
+        Section::SkipMarkers,
         Section::Addons,
         Section::Layout,
         Section::Users,
     ];
+
+    /// The section's icon in the sidebar.
+    fn icon(self) -> Icon {
+        match self {
+            Section::Dashboard => Icon::Home,
+            Section::Analytics => Icon::Star,
+            Section::Requests => Icon::Bookmark,
+            Section::Library => Icon::Film,
+            Section::Collections => Icon::List,
+            Section::Moving => Icon::ArrowRight,
+            Section::SkipMarkers => Icon::SkipForward,
+            Section::Addons => Icon::More,
+            Section::Layout => Icon::Tv,
+            Section::Users => Icon::Settings,
+        }
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -67,6 +87,7 @@ impl Section {
             Section::Library => "Library",
             Section::Collections => "Collections",
             Section::Moving => "Moving",
+            Section::SkipMarkers => "Skip markers",
             Section::Addons => "Addons",
             Section::Layout => "Layout",
             Section::Users => "Users",
@@ -92,6 +113,10 @@ impl Section {
                 "Mark titles whose files you're moving between disks. Nobody can play them \
                  until you untick them, and their posters say MOVING."
             }
+            Section::SkipMarkers => {
+                "Where episodes' recap, intro and credits are, for Skip Intro, Skip Recap and \
+                 Next Episode in the player."
+            }
             Section::Addons => {
                 "Turn Stremio addons on for everyone: catalogs on the home page, missing \
                  details filled in, and subtitles in the player."
@@ -112,6 +137,7 @@ impl Section {
             Section::Library => api::ADMIN_DOCS_LIBRARY,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
             Section::Moving => api::ADMIN_DOCS_MOVING,
+            Section::SkipMarkers => api::ADMIN_DOCS_SKIP,
             Section::Addons => api::ADMIN_DOCS_ADDONS,
             Section::Layout => api::ADMIN_DOCS_LAYOUT,
             Section::Users => api::ADMIN_API_DOCS,
@@ -135,11 +161,20 @@ impl Section {
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
             Section::Moving => "the moving endpoints (GET and PUT /api/admin/moving)",
+            Section::SkipMarkers => "the skip marker endpoints (/api/admin/skip-markers)",
             Section::Addons => "the addon endpoints (/api/addons, /api/admin/addons)",
             Section::Layout => "the layout endpoints (/api/layout, /api/admin/layout)",
             Section::Users => "Valo's admin API (/api/admin/users)",
         }
     }
+}
+
+/// Where the admin page is, for the mouse's back and forward buttons: a
+/// section, and in Analytics the user whose page is open.
+#[derive(Clone, PartialEq, Debug)]
+struct Place {
+    section: Section,
+    user: Option<String>,
 }
 
 /// A finished change.
@@ -175,6 +210,7 @@ pub enum Msg {
     Dash(dashboard::Msg),
     Requests(requests::Msg),
     Moving(moving::Msg),
+    Skip(skip::Msg),
     Users(users::Msg),
     Library(library::Msg),
     Analytics(analytics::Msg),
@@ -209,6 +245,7 @@ pub struct State {
     dashboard: dashboard::State,
     requests: requests::State,
     moving: moving::State,
+    skip: skip::State,
     users: users::State,
     library: library::State,
     analytics: analytics::State,
@@ -217,6 +254,9 @@ pub struct State {
     addons: addons::State,
     /// The server's own title lists (`GET /api/admin/movies`, `/series`).
     catalog: [Remote<Vec<Item>>; 2],
+    /// Places left with Back, and the ones Back came from (for Forward).
+    back: Vec<Place>,
+    ahead: Vec<Place>,
 }
 
 /// What a section's view gets to work with.
@@ -265,6 +305,7 @@ impl State {
             Section::Dashboard => self.dashboard.refresh(),
             Section::Requests => self.requests.refresh(),
             Section::Moving => self.moving.refresh(),
+            Section::SkipMarkers => self.skip.refresh(),
             Section::Library => self.library.refresh(),
             Section::Analytics => self.analytics.refresh(),
             Section::Collections => self.collections.refresh(),
@@ -283,6 +324,7 @@ impl State {
             Section::Dashboard => self.dashboard.missing(),
             Section::Requests => self.requests.missing(),
             Section::Moving => self.moving.missing(),
+            Section::SkipMarkers => self.skip.missing(),
             Section::Users => self.users.missing(),
             Section::Library => self.library.missing(),
             Section::Analytics => self.analytics.missing(),
@@ -299,6 +341,7 @@ impl State {
             || self.users.busy()
             || self.requests.busy()
             || self.moving.busy()
+            || self.skip.busy()
             || self.library.busy()
             || self.analytics.busy()
             || self.collections.busy()
@@ -334,6 +377,9 @@ impl State {
         // the request queue is counted in the sidebar, so it's kept fresh
         self.requests.background(client, &mut asks.login);
         if !open {
+            // a new visit starts a new history
+            self.back.clear();
+            self.ahead.clear();
             return asks;
         }
         if self.web.is_none() && self.web_check.is_none() {
@@ -374,6 +420,7 @@ impl State {
         match self.section {
             Section::Dashboard => self.dashboard.work(client, &mut asks),
             Section::Moving => self.moving.work(client, &mut asks.login),
+            Section::SkipMarkers => self.skip.work(client, &mut asks),
             Section::Library => self.library.work(client, &mut asks),
             Section::Analytics => self.analytics.work(client, &mut asks),
             Section::Collections => self.collections.work(client, &mut asks),
@@ -384,7 +431,62 @@ impl State {
         asks
     }
 
+    fn place(&self) -> Place {
+        Place {
+            section: self.section,
+            user: (self.section == Section::Analytics)
+                .then(|| self.analytics.user())
+                .flatten(),
+        }
+    }
+
+    fn go(&mut self, p: Place) {
+        self.section = p.section;
+        if p.section == Section::Analytics {
+            self.analytics.set_user(p.user);
+        }
+        self.notice = None;
+        self.notice_docs = false;
+        self.menu = None;
+    }
+
+    /// The mouse's back button: the admin place before this one; false when
+    /// there's none, so the library goes back instead.
+    pub fn back(&mut self) -> bool {
+        let Some(p) = self.back.pop() else {
+            return false;
+        };
+        self.ahead.push(self.place());
+        self.go(p);
+        true
+    }
+
+    /// The mouse's forward button: the place last left with Back.
+    pub fn forward(&mut self) -> bool {
+        let Some(p) = self.ahead.pop() else {
+            return false;
+        };
+        self.back.push(self.place());
+        self.go(p);
+        true
+    }
+
     pub fn update(&mut self, msg: Msg, client: &Client, lib: Option<&Library>) -> Asks {
+        let before = self.place();
+        let asks = self.update_inner(msg, client, lib);
+        self.remember(before);
+        asks
+    }
+
+    /// Somewhere else than `before` now: Back returns there.
+    fn remember(&mut self, before: Place) {
+        if self.place() != before {
+            self.back.push(before);
+            self.ahead.clear();
+        }
+    }
+
+    fn update_inner(&mut self, msg: Msg, client: &Client, lib: Option<&Library>) -> Asks {
         let mut asks = Asks::default();
         match msg {
             Msg::Section(s) => {
@@ -406,6 +508,7 @@ impl State {
                 Section::Dashboard => self.dashboard.refresh(),
                 Section::Requests => self.requests.refresh(),
                 Section::Moving => self.moving.refresh(),
+                Section::SkipMarkers => self.skip.refresh(),
                 Section::Users => self.users.refresh(),
                 Section::Library => self.library.refresh(),
                 Section::Analytics => self.analytics.refresh(),
@@ -435,6 +538,12 @@ impl State {
             Msg::Moving(m) => {
                 let items = self.all_items(lib);
                 if let Some(job) = self.moving.update(m, &items) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Skip(m) => {
+                let rows = self.skip.rows();
+                if let Some(job) = self.skip.update(m, &rows) {
                     self.run(client, job);
                 }
             }
@@ -489,53 +598,70 @@ impl State {
     /// The sections, on the left.
     pub fn sidebar<'a>(&self, server: &str, base: &str) -> Element<'a, LMsg> {
         let pending = self.pending();
+        // the server, like shadcn's team switcher: a lettered square and its name
+        let letter = server
+            .chars()
+            .next()
+            .unwrap_or('V')
+            .to_uppercase()
+            .to_string();
+        let head = row![
+            container(text(letter).font(BOLD).size(14).color(c(INK())))
+                .center(30)
+                .style(|_| container::Style {
+                    background: Some(Background::Color(c(PRIMARY()))),
+                    border: iced::border::rounded(8),
+                    ..container::Style::default()
+                }),
+            column![
+                text(server.to_owned())
+                    .font(BOLD)
+                    .size(14)
+                    .wrapping(text::Wrapping::None),
+                text("Admin").size(12).color(style::MUTED()),
+            ],
+        ]
+        .spacing(10)
+        .align_y(Vertical::Center);
         let mut col: Column<'a, LMsg> = column![
-            caps("Admin", c(TEAL())),
-            space().height(12),
-            text(server.to_owned())
-                .font(BOLD)
-                .size(16)
-                .wrapping(text::Wrapping::None),
-            space().height(26),
-        ];
+            container(head).padding([0, 6]),
+            space().height(22),
+            container(text("Manage").size(12).color(style::MUTED())).padding([0, 10]),
+            space().height(6),
+        ]
+        .spacing(2);
         for s in Section::ALL {
             let badge = match s {
                 Section::Requests if pending > 0 => Some(pending.to_string()),
                 _ if self.missing(s) => Some("not set up".into()),
                 _ => None,
             };
-            col = col
-                .push(nav_item(
-                    s.label(),
-                    badge,
-                    self.section == s,
-                    LMsg::Admin(Msg::Section(s)),
-                ))
-                .push(space().height(10));
+            col = col.push(nav_item(
+                s.icon(),
+                s.label(),
+                badge,
+                self.section == s,
+                LMsg::Admin(Msg::Section(s)),
+            ));
         }
-        col = col.push(space().height(18));
+        col = col
+            .push(space().height(18))
+            .push(container(text("Help").size(12).color(style::MUTED())).padding([0, 10]))
+            .push(space().height(6));
         if self.web == Some(true) {
-            col = col
-                .push(link(
-                    "Open web admin",
-                    14.5,
-                    style::TEXT(),
-                    Some((Icon::External, true)),
-                    LMsg::OpenUrl(format!("{base}/admin")),
-                ))
-                .push(space().height(8));
+            col = col.push(nav_link(
+                "Open web admin",
+                LMsg::OpenUrl(format!("{base}/admin")),
+            ));
         }
-        col = col.push(link(
+        col = col.push(nav_link(
             "Setup guides",
-            14.5,
-            style::TEXT(),
-            Some((Icon::External, true)),
             LMsg::OpenUrl(api::API_DOCS.to_owned()),
         ));
         container(col)
-            .width(220)
+            .width(232)
             .height(Length::Fill)
-            .padding([24, 14])
+            .padding([20, 12])
             .clip(true)
             .style(|_| container::Style {
                 background: Some(Background::Color(c(SURFACE()))),
@@ -564,7 +690,7 @@ impl State {
         let section = self.section;
         let busy = self.op.is_some();
         let mut title = row![
-            text(section.label()).font(BOLD).size(34),
+            text(section.label()).font(BOLD).size(28),
             space::horizontal()
         ]
         .spacing(10)
@@ -576,19 +702,30 @@ impl State {
                 16.0,
             ));
         }
-        title = title.push(widgets::button_with(
+        title = title.push(ui::button_with(
             Btn::Small,
             "Refresh",
-            None,
+            Some(Icon::Refresh),
             (!busy).then_some(LMsg::Admin(Msg::Refresh)),
         ));
+        // a breadcrumb over the title, as in shadcn's dashboard
+        let crumbs = row![
+            text(client.info.name.clone())
+                .size(13)
+                .color(style::MUTED()),
+            text("/").size(13).color(style::MUTED()),
+            text("Admin").size(13).color(style::MUTED()),
+            text("/").size(13).color(style::MUTED()),
+            text(section.label()).size(13),
+        ]
+        .spacing(8);
         let mut head: Column<'a, LMsg> = column![
-            caps(&format!("Admin   ·   {}", client.info.name), c(TEAL())),
-            gap(4.0),
+            crumbs,
+            gap(6.0),
             title,
-            gap(4.0),
-            text(section.about()).size(14.5).color(style::MUTED()),
-            gap(14.0),
+            space().height(2),
+            ui::description(section.about()),
+            gap(16.0),
         ]
         .width(inner);
         if let Some(n) = notice(&self.notice) {
@@ -623,6 +760,7 @@ impl State {
             Section::Dashboard => self.dashboard.view(&cx, w),
             Section::Requests => self.requests.view(&cx, w),
             Section::Moving => self.moving.view(&cx),
+            Section::SkipMarkers => self.skip.view(&cx),
             Section::Users => self.users.view(&cx, w),
             Section::Library => self.library.view(&cx, w),
             Section::Analytics => self.analytics.view(&cx, w),
@@ -631,9 +769,13 @@ impl State {
             Section::Addons => self.addons.view(&cx, w),
         };
         let body: Element<'a, LMsg> = match section {
-            // the dashboard and users lay out their own columns
+            // these lay out their own columns (and margin): wrapping them
+            // again put a second margin on the left
             Section::Dashboard
+            | Section::Analytics
             | Section::Requests
+            | Section::Library
+            | Section::Collections
             | Section::Users
             | Section::Layout
             | Section::Addons => body,
@@ -668,13 +810,13 @@ pub fn not_set_up<'a>(s: Section, server: &str) -> Element<'a, LMsg> {
         .color(style::MUTED()),
         gap(12.0),
         row![
-            widgets::button_with(
+            ui::button_with(
                 Btn::Small,
                 "Setup guide",
                 Some(Icon::External),
                 Some(LMsg::OpenUrl(s.docs().to_owned()))
             ),
-            widgets::button_with(
+            ui::button_with(
                 Btn::Small,
                 "Check again",
                 None,
@@ -719,43 +861,39 @@ pub fn status_dot<'a>(col: Color) -> Element<'a, LMsg> {
 fn notice<'a>(n: &Option<(String, bool)>) -> Option<Element<'a, LMsg>> {
     let (msg, ok) = n.as_ref()?;
     let col = c(if *ok { OK() } else { ERROR() });
-    Some(text(msg.clone()).size(14.5).color(col).into())
-}
-
-/// A red-outlined button for what can't be undone.
-pub fn danger_button<'a>(t: &str, msg: Option<LMsg>) -> Element<'a, LMsg> {
-    let err = c(ERROR());
-    button(container(mono(t, 11.5).color(err)).center_y(30))
-        .height(30)
-        .padding([0, 12])
-        .style(move |_, s| button::Style {
-            background: matches!(s, button::Status::Hovered)
-                .then(|| Background::Color(err.scale_alpha(0.12))),
-            border: Border {
-                color: err.scale_alpha(0.6),
-                width: 1.0,
-                radius: 2.0.into(),
-            },
-            ..button::Style::default()
-        })
-        .on_press_maybe(msg)
-        .into()
-}
-
-/// A bordered row (users, requests).
-pub fn row_frame<'a>(content: impl Into<Element<'a, LMsg>>) -> Element<'a, LMsg> {
-    container(content)
+    // an alert: a tinted, bordered strip with a dot
+    Some(
+        container(
+            row![
+                status_dot(col),
+                text(msg.clone()).size(14).color(style::TEXT())
+            ]
+            .spacing(10)
+            .align_y(Vertical::Center),
+        )
         .width(Length::Fill)
-        .padding([12, 14])
-        .style(|_| container::Style {
+        .padding([10, 14])
+        .style(move |_| container::Style {
+            background: Some(Background::Color(col.scale_alpha(0.08))),
             border: Border {
-                color: c(LINE()),
+                color: col.scale_alpha(0.4),
                 width: 1.0,
                 radius: 8.0.into(),
             },
             ..container::Style::default()
         })
-        .into()
+        .into(),
+    )
+}
+
+/// A red-outlined button for what can't be undone.
+pub fn danger_button<'a>(t: &str, msg: Option<LMsg>) -> Element<'a, LMsg> {
+    ui::danger(t, msg)
+}
+
+/// A bordered row (users, requests).
+pub fn row_frame<'a>(content: impl Into<Element<'a, LMsg>>) -> Element<'a, LMsg> {
+    ui::row_frame(content)
 }
 
 /// The "⋮" button and, when open, its menu under it.
@@ -788,44 +926,70 @@ pub fn more_menu<'a>(
 
 /// A sidebar row, filled when it's the open section.
 fn nav_item<'a>(
+    ic: Icon,
     label: &str,
     badge: Option<String>,
     selected: bool,
     msg: LMsg,
 ) -> Element<'a, LMsg> {
-    let mut r = row![mono(label, 12.0)].align_y(Vertical::Center);
+    let fg = if selected {
+        style::TEXT()
+    } else {
+        style::MUTED()
+    };
+    let mut r = row![
+        icon::icon(ic, fg, 16.0),
+        text(label.to_owned()).size(14).color(fg)
+    ]
+    .spacing(10)
+    .align_y(Vertical::Center);
     if let Some(b) = badge {
         let warn = b == "not set up" || b == "later";
-        let col = if selected {
-            Color::from_rgb8(90, 90, 90)
-        } else if warn {
-            style::MUTED()
-        } else {
-            c(TEAL())
-        };
-        r = r.push(space::horizontal()).push(mono(&b, 10.0).color(col));
+        r = r
+            .push(space::horizontal())
+            .push(ui::badge(&b, if warn { style::MUTED() } else { c(TEAL()) }));
     }
-    button(container(r).center_y(36))
+    button(container(r).center_y(34))
         .width(Length::Fill)
-        .height(36)
-        .padding([0, 12])
+        .height(34)
+        .padding([0, 10])
         .style(move |_, s| {
             let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
             button::Style {
-                background: if selected {
-                    Some(Background::Color(c(PRIMARY())))
-                } else if hot {
-                    Some(Background::Color(c(SURFACE_HI())))
-                } else {
-                    None
-                },
-                text_color: if selected { c(INK()) } else { style::TEXT() },
-                border: iced::border::rounded(4),
+                background: (selected || hot).then(|| Background::Color(c(SURFACE_HI()))),
+                text_color: style::TEXT(),
+                border: iced::border::rounded(8),
                 ..button::Style::default()
             }
         })
         .on_press(msg)
         .into()
+}
+
+/// A link in the sidebar's Help group, opening in the browser.
+fn nav_link<'a>(label: &str, msg: LMsg) -> Element<'a, LMsg> {
+    button(
+        container(
+            row![
+                text(label.to_owned()).size(14).color(style::MUTED()),
+                space::horizontal(),
+                icon::icon(Icon::External, style::MUTED(), 14.0),
+            ]
+            .align_y(Vertical::Center),
+        )
+        .center_y(32),
+    )
+    .width(Length::Fill)
+    .height(32)
+    .padding([0, 10])
+    .style(|_, s| button::Style {
+        background: matches!(s, button::Status::Hovered | button::Status::Pressed)
+            .then(|| Background::Color(c(SURFACE_HI()))),
+        border: iced::border::rounded(8),
+        ..button::Style::default()
+    })
+    .on_press(msg)
+    .into()
 }
 
 /// A collapsible list's heading: "Movies · 120", with a chevron.
@@ -859,5 +1023,49 @@ impl Lib {
     /// Whether the open page is Admin.
     pub(super) fn admin_open(&self) -> bool {
         self.view == super::View::Admin && self.search.trim().is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_buttons_walk_the_admin_sections() {
+        let mut st = State::default();
+        for s in [Section::Users, Section::Analytics] {
+            let before = st.place();
+            st.section = s;
+            st.remember(before);
+        }
+        // a user's page in Analytics is a place of its own
+        let before = st.place();
+        st.analytics.set_user(Some("ann".into()));
+        st.remember(before);
+
+        assert!(st.back());
+        assert_eq!(
+            st.place(),
+            Place {
+                section: Section::Analytics,
+                user: None
+            }
+        );
+        assert!(st.back());
+        assert_eq!(st.section, Section::Users);
+        assert!(st.back());
+        assert_eq!(st.section, Section::Dashboard);
+        assert!(!st.back(), "out of the admin page next");
+        assert!(st.forward());
+        assert!(st.forward());
+        assert!(st.forward());
+        assert_eq!(
+            st.place(),
+            Place {
+                section: Section::Analytics,
+                user: Some("ann".into())
+            }
+        );
+        assert!(!st.forward());
     }
 }
