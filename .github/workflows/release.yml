@@ -307,3 +307,22 @@ jobs:
           files: |
             valo-*.flatpak
             SHA256SUMS-flatpak.txt
+
+  # Everything is out: the release branch (release-X.Y.Z) has done its job.
+  # It goes only after a full release, so a failed one can be fixed and run again.
+  delete-branch:
+    needs: flatpak-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete the release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="release-${GITHUB_REF_NAME#v}"
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" --silent 2>/dev/null; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
+            echo "Deleted $BRANCH"
+          else
+            echo "$BRANCH is already gone"
+          fi
