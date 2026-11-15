@@ -83,13 +83,26 @@ impl Req {
         Ok(Done::msg(match self {
             Req::Add(name, pass, admin, display, must_change) => {
                 c.admin_add_user(&name, &pass, admin, Some(&display))?;
-                // the server creates users without the flag; set it after
-                if must_change {
-                    c.admin_require_password_change(&name, true)?;
-                    format!("Added {name}. They'll be asked for a new password when they sign in.")
-                } else {
-                    format!("Added {name}.")
+                if !must_change {
+                    return Ok(Done::msg(format!("Added {name}.")));
                 }
+                // the server creates users without the flag; set it after. The
+                // account exists either way, so a failure here mustn't read as
+                // "not added" (adding again would say the name is taken).
+                return Ok(match c.admin_require_password_change(&name, true) {
+                    Ok(()) => Done::msg(format!(
+                        "Added {name}. They'll be asked for a new password when they sign in."
+                    )),
+                    // signed out meanwhile: sign in again, as for any change
+                    Err(e) if e.is::<crate::api::Unauthorized>() => return Err(e),
+                    Err(e) => Done {
+                        partial: true,
+                        ..Done::msg(format!(
+                            "Added {name}, but couldn't ask them for a new password ({e:#}). \
+                             Try again from ⋮ › Require a new password on their row."
+                        ))
+                    },
+                });
             }
             Req::Rename(name, display) => {
                 let body = serde_json::json!({ "display_name": display.trim() });

@@ -188,6 +188,8 @@ pub struct Done {
     pub layout: bool,
     /// Images that changed on the server: download them again.
     pub forget: Vec<String>,
+    /// Only part of it worked: `msg` says what's left, shown in red.
+    pub partial: bool,
 }
 
 impl Done {
@@ -395,7 +397,7 @@ impl State {
             match r {
                 Ok(done) => {
                     self.notice_docs = false;
-                    self.notice = Some((done.msg, true));
+                    self.notice = Some((done.msg, !done.partial));
                     self.refresh();
                     asks.reload_library |= done.library;
                     asks.reload_layout |= done.layout;
@@ -921,7 +923,12 @@ pub fn more_menu<'a>(
         iced::widget::float(crate::iced_ui::loose::loose(
             container(panel).padding(Padding::default().top(34.0)),
         ))
-        .translate(|_, _| iced::Vector::new(-190.0, 0.0)),
+        // under the button; over it when the bottom of the view would cut it
+        // off (`bounds` starts at the button and holds the 34px gap)
+        .translate(|bounds, viewport| {
+            let up = bounds.y + bounds.height > viewport.y + viewport.height;
+            iced::Vector::new(-190.0, if up { -(bounds.height + 4.0) } else { 0.0 })
+        }),
     ]
     .into()
 }

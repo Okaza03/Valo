@@ -503,6 +503,7 @@ impl App {
                 _ => Task::none(),
             },
             Message::Key(key, mods) => {
+                let dialog = self.modal().is_some();
                 if self.watch.is_some() {
                     self.update_watch(watch::Msg::Key(key, mods))
                 } else if mods.command() && matches!(key.as_ref(), Key::Character("o" | "O")) {
@@ -513,7 +514,12 @@ impl App {
                             operation::focus(library::SEARCH)
                         }
                         // the next text field (the previous with Shift), as
-                        // in a browser form
+                        // in a browser form. Focus can't be kept inside a
+                        // dialog, so with one open Tab does nothing rather
+                        // than reach the fields behind it.
+                        Key::Named(Named::Tab) if dialog || l.popup_close().is_some() => {
+                            Task::none()
+                        }
                         Key::Named(Named::Tab) if mods.shift() => operation::focus_previous(),
                         Key::Named(Named::Tab) => operation::focus_next(),
                         Key::Named(Named::Backspace) => {
