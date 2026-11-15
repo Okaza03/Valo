@@ -924,10 +924,18 @@ pub fn more_menu<'a>(
             container(panel).padding(Padding::default().top(34.0)),
         ))
         // under the button; over it when the bottom of the view would cut it
-        // off (`bounds` starts at the button and holds the 34px gap)
+        // off (`bounds` starts at the button and holds the 34px gap). Going
+        // up never takes the panel's top above the view: in a short view it
+        // then covers the button rather than losing its first items.
         .translate(|bounds, viewport| {
             let up = bounds.y + bounds.height > viewport.y + viewport.height;
-            iced::Vector::new(-190.0, if up { -(bounds.height + 4.0) } else { 0.0 })
+            let dy = if up {
+                let top = viewport.y - (bounds.y + 34.0);
+                (-(bounds.height + 4.0)).max(top)
+            } else {
+                0.0
+            };
+            iced::Vector::new(-190.0, dy)
         }),
     ]
     .into()
