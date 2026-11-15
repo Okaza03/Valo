@@ -318,11 +318,15 @@ jobs:
       - name: Delete the release branch
         env:
           GH_TOKEN: ${{ github.token }}
+        # only "no such branch" counts as done: any other failure fails the job
         run: |
           BRANCH="release-${GITHUB_REF_NAME#v}"
-          if gh api "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" --silent 2>/dev/null; then
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
-            echo "Deleted $BRANCH"
-          else
-            echo "$BRANCH is already gone"
-          fi
+          CODE=$(curl -sS -o response.json -w '%{http_code}' -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH")
+          case "$CODE" in
+            204) echo "Deleted $BRANCH" ;;
+            404|422) echo "$BRANCH is already gone" ;;
+            *) echo "Couldn't delete $BRANCH (HTTP $CODE):"; cat response.json; exit 1 ;;
+          esac
