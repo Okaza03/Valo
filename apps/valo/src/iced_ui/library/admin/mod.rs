@@ -188,6 +188,8 @@ pub struct Done {
     pub layout: bool,
     /// Images that changed on the server: download them again.
     pub forget: Vec<String>,
+    /// Only part of it worked: `msg` says what's left, shown in red.
+    pub partial: bool,
 }
 
 impl Done {
@@ -395,7 +397,7 @@ impl State {
             match r {
                 Ok(done) => {
                     self.notice_docs = false;
-                    self.notice = Some((done.msg, true));
+                    self.notice = Some((done.msg, !done.partial));
                     self.refresh();
                     asks.reload_library |= done.library;
                     asks.reload_layout |= done.layout;
@@ -918,8 +920,23 @@ pub fn more_menu<'a>(
     let panel = container(menu).padding(6).style(super::popup_style);
     iced::widget::stack![
         b,
-        iced::widget::float(container(panel).padding(Padding::default().top(34.0)))
-            .translate(|_, _| iced::Vector::new(-190.0, 0.0)),
+        iced::widget::float(crate::iced_ui::loose::loose(
+            container(panel).padding(Padding::default().top(34.0)),
+        ))
+        // under the button; over it when the bottom of the view would cut it
+        // off (`bounds` starts at the button and holds the 34px gap). Going
+        // up never takes the panel's top above the view: in a short view it
+        // then covers the button rather than losing its first items.
+        .translate(|bounds, viewport| {
+            let up = bounds.y + bounds.height > viewport.y + viewport.height;
+            let dy = if up {
+                let top = viewport.y - (bounds.y + 34.0);
+                (-(bounds.height + 4.0)).max(top)
+            } else {
+                0.0
+            };
+            iced::Vector::new(-190.0, dy)
+        }),
     ]
     .into()
 }
