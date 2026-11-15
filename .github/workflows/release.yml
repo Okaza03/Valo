@@ -325,8 +325,13 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH")
+          # GitHub answers a missing branch with 422 "Reference does not exist";
+          # any other 422 (a protected branch, say) is a real failure
+          MSG=$(jq -r '.message // empty' response.json 2>/dev/null || true)
           case "$CODE" in
             204) echo "Deleted $BRANCH" ;;
-            404|422) echo "$BRANCH is already gone" ;;
+            404) echo "$BRANCH is already gone" ;;
+            422) [ "$MSG" = "Reference does not exist" ] && echo "$BRANCH is already gone" \
+                   || { echo "Couldn't delete $BRANCH (HTTP 422):"; cat response.json; exit 1; } ;;
             *) echo "Couldn't delete $BRANCH (HTTP $CODE):"; cat response.json; exit 1 ;;
           esac
