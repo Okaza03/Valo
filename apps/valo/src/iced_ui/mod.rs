@@ -13,6 +13,7 @@ mod icon;
 mod images;
 mod library;
 mod login;
+mod loose;
 mod seekbar;
 mod setup;
 mod spaced;
@@ -511,6 +512,10 @@ impl App {
                         Key::Character("f" | "F") if mods.command() => {
                             operation::focus(library::SEARCH)
                         }
+                        // the next text field (the previous with Shift), as
+                        // in a browser form
+                        Key::Named(Named::Tab) if mods.shift() => operation::focus_previous(),
+                        Key::Named(Named::Tab) => operation::focus_next(),
                         Key::Named(Named::Backspace) => {
                             let out = l.key_back();
                             self.out(out)

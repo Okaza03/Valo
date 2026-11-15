@@ -918,8 +918,10 @@ pub fn more_menu<'a>(
     let panel = container(menu).padding(6).style(super::popup_style);
     iced::widget::stack![
         b,
-        iced::widget::float(container(panel).padding(Padding::default().top(34.0)))
-            .translate(|_, _| iced::Vector::new(-190.0, 0.0)),
+        iced::widget::float(crate::iced_ui::loose::loose(
+            container(panel).padding(Padding::default().top(34.0)),
+        ))
+        .translate(|_, _| iced::Vector::new(-190.0, 0.0)),
     ]
     .into()
 }

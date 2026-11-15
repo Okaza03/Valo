@@ -34,6 +34,7 @@ pub enum Msg {
     NewDisplay(String),
     NewPass(String),
     NewAdmin(bool),
+    NewMustChange(bool),
     Add,
     SaveName,
     SavePassword,
@@ -61,11 +62,14 @@ pub struct State {
     new_display: String,
     new_pass: String,
     new_admin: bool,
+    /// Ask them for a new password when they first sign in.
+    new_must_change: bool,
 }
 
 /// A change to a user, run in the background.
 enum Req {
-    Add(String, String, bool, String),
+    /// Name, password, admin, display name, must change password.
+    Add(String, String, bool, String, bool),
     Rename(String, String),
     SetAdmin(String, bool),
     Password(String, String),
@@ -77,9 +81,15 @@ enum Req {
 impl Req {
     fn run(self, c: &Client) -> Result<Done> {
         Ok(Done::msg(match self {
-            Req::Add(name, pass, admin, display) => {
+            Req::Add(name, pass, admin, display, must_change) => {
                 c.admin_add_user(&name, &pass, admin, Some(&display))?;
-                format!("Added {name}.")
+                // the server creates users without the flag; set it after
+                if must_change {
+                    c.admin_require_password_change(&name, true)?;
+                    format!("Added {name}. They'll be asked for a new password when they sign in.")
+                } else {
+                    format!("Added {name}.")
+                }
             }
             Req::Rename(name, display) => {
                 let body = serde_json::json!({ "display_name": display.trim() });
@@ -193,6 +203,7 @@ impl State {
             Msg::NewDisplay(s) => self.new_display = s,
             Msg::NewPass(s) => self.new_pass = s,
             Msg::NewAdmin(v) => self.new_admin = v,
+            Msg::NewMustChange(v) => self.new_must_change = v,
             Msg::Add => {
                 if self.new_name.trim().is_empty() || self.new_pass.is_empty() {
                     return Out::None;
@@ -202,9 +213,11 @@ impl State {
                     std::mem::take(&mut self.new_pass),
                     self.new_admin,
                     std::mem::take(&mut self.new_display),
+                    self.new_must_change,
                 );
                 self.new_name.clear();
                 self.new_admin = false;
+                self.new_must_change = false;
                 return run(r);
             }
             Msg::SaveName => {
@@ -300,6 +313,12 @@ impl State {
             checkbox(self.new_admin)
                 .label("Admin (can manage the server)")
                 .on_toggle(|v| LMsg::Admin(AMsg::Users(Msg::NewAdmin(v))))
+                .size(16)
+                .text_size(14.5),
+            gap(4.0),
+            checkbox(self.new_must_change)
+                .label("Require to change password on next login")
+                .on_toggle(|v| LMsg::Admin(AMsg::Users(Msg::NewMustChange(v))))
                 .size(16)
                 .text_size(14.5),
             gap(10.0),
