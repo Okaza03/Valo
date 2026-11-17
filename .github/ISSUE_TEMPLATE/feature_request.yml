@@ -27,6 +27,7 @@ body:
       options:
         - Desktop app
         - Android TV app
+        - Android phone app
         - Bundled server
         - Server API
         - Installing and updates
