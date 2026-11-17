@@ -48,6 +48,7 @@ body:
         - Windows installer
         - Windows zip
         - Android TV APK
+        - Android phone or tablet APK
         - Built from source
     validations:
       required: true
@@ -56,7 +57,7 @@ body:
     id: os
     attributes:
       label: Operating system
-      placeholder: Fedora 42 (Wayland), Windows 11 ARM64, Chromecast with Google TV...
+      placeholder: Fedora 42 (Wayland), Windows 11 ARM64, Android 15 on a Pixel 8, Chromecast with Google TV...
     validations:
       required: true
 
