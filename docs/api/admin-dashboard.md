@@ -106,7 +106,7 @@ _Sync movies_ and _Sync series_ start disabled (_Run Sync folders first_). After
 - **Sync movies:** new or removed movie files, or movies with missing images.
 - **Sync series:** new or removed episode files, or series or episodes with missing images.
 
-The app tells a movie file from an episode by its folder (`movies`, `films`, `series`, `tv`, `shows` anywhere in the path) or an `S01E02` in the name; a file it can't place turns on both. To be exact, send `added_movies`, `added_series`, `removed_movies` and `removed_series` instead of `added` and `removed`. A scan answered with `"running": true` turns on both. Running a sync turns its button off again until the next scan.
+The app tells a movie file from an episode by its folder (`movies`, `films`, `series`, `tv`, `shows` anywhere in the path) or an `S01E02` in the name; a file it can't place turns on both. To be exact, send `added_movies`, `added_series`, `removed_movies` and `removed_series` instead of `added` and `removed`. Each of these lists can hold strings or objects named by `title`, `name` or `id` (`{"id": 3, "title": "Se7en"}`). A scan answered with `"running": true` turns on both. Running a sync turns its button off again until the next scan.
 
 ### Applying the folder sync
 
