@@ -42,6 +42,9 @@ pub struct Card {
     pub art: Option<String>,
     /// 16:9 artwork, for the styles with landscape cards.
     pub wide_art: Option<String>,
+    /// The title's logo, shown over the artwork in the styles that do
+    /// (`continue_logo`).
+    pub logo: Option<String>,
     /// "Movie · 2014 · 1h 26m", for the styles that show it on the card.
     pub meta: Option<String>,
     pub progress: Option<f32>,
@@ -335,6 +338,25 @@ pub fn card_at<'a>(
             );
         }
         _ => {}
+    }
+    // the title's logo over the bottom left, until hovered (the hover's
+    // buttons go there)
+    let logo = c
+        .logo
+        .as_deref()
+        .filter(|_| spec.continue_logo && !hovered)
+        .and_then(|u| images.get(u, Variant::Full));
+    if let Some((handle, (iw, ih))) = logo {
+        let (iw, ih) = (iw as f32, ih as f32);
+        let s = (w * 0.5 / iw).min(h * 0.3 / ih);
+        layers.push(shade(w, h, 0.55, 0.7, radius));
+        layers.push(
+            container(image(handle).width(iw * s).height(ih * s))
+                .height(h)
+                .padding(Padding::default().left(12.0).bottom(10.0 + lift))
+                .align_y(Vertical::Bottom)
+                .into(),
+        );
     }
     if let Some(f) = c.progress {
         layers.push(if words == TileText::Rich {

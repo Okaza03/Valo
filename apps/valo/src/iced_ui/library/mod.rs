@@ -32,9 +32,7 @@ use super::{Job, Out};
 use crate::api::{self, Client, Item, Kind, Me, Missing, Mode, ServerLayout, Unauthorized};
 use crate::config::{Config, Entry, Hidden, Progress, Watchlist};
 use crate::sync::ListSync;
-use crate::ui::browse::{
-    featured, maker, makers, meta_line, next_up, play_items, play_label, shorten, shuffled, sort_by,
-};
+use crate::ui::browse::{featured, maker, makers, next_up, play_items, shorten, shuffled, sort_by};
 use crate::ui::theme;
 use crate::ui::Action;
 use crate::util::{fmt_runtime, Waker};
@@ -1151,8 +1149,7 @@ impl Library {
             let at = (i, feat.len());
             page = page.push(match lay.hero {
                 theme::Hero::FullBleed => self.hero_full(feat[i], at, env, w),
-                theme::Hero::Carousel => self.hero_carousel(&feat, i, env, w),
-                _ => self.hero(feat[i], at, env, w),
+                _ => self.hero_carousel(&feat, i, env, w),
             });
         }
         if lay.genre_tiles && self.layout.shows("genre_tiles") {
@@ -1283,197 +1280,6 @@ impl Library {
         )
     }
 
-    /// The featured banner: artwork
-    /// on the right fading into the page, the title, what it is and the
-    /// buttons on the left, dots for each featured title, and arrows while
-    /// the pointer is over it. A click anywhere else opens the title.
-    fn hero<'a>(
-        &'a self,
-        item: &'a Item,
-        at: (usize, usize),
-        env: Env<'a>,
-        w: f32,
-    ) -> Element<'a, Msg> {
-        let h = (w * 0.40).clamp(300.0, 560.0);
-        let art_x = w * 0.25;
-        let art_w = w - art_x;
-        let bg = style::BG();
-        let clear = Color { a: 0.0, ..bg };
-        let url = item.backdrop.as_deref().or(item.poster.as_deref());
-        let loaded = url
-            .and_then(|u| env.images.get(u, crate::iced_ui::images::Variant::Full))
-            .is_some();
-        let mut layers: Vec<Element<'a, Msg>> = Vec::new();
-        if loaded {
-            layers.push(
-                container(space())
-                    .width(w)
-                    .height(h)
-                    .style(|_| container::Style {
-                        background: Some(Background::Color(Color::BLACK)),
-                        ..container::Style::default()
-                    })
-                    .into(),
-            );
-            layers.push(
-                row![
-                    container(space())
-                        .width(art_x + 1.0)
-                        .height(h)
-                        .style(move |_| {
-                            container::Style {
-                                background: Some(Background::Color(bg)),
-                                ..container::Style::default()
-                            }
-                        }),
-                    stack![
-                        cards::art(env.images, url, &item.title, art_w - 1.0, h, 0.0),
-                        container(space())
-                            .width((art_w - 1.0) * 0.45)
-                            .height(h)
-                            .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, bg, clear)),
-                    ],
-                ]
-                .into(),
-            );
-        } else {
-            // no artwork: the title's color, fading into the page both sides
-            let col = c(crate::util::color_for(&item.title));
-            let half = Color { a: 0.5, ..col };
-            layers.push(
-                row![
-                    container(space())
-                        .width(w / 2.0)
-                        .height(h)
-                        .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, bg, half)),
-                    container(space())
-                        .width(w / 2.0)
-                        .height(h)
-                        .style(move |_| fill_gradient(std::f32::consts::FRAC_PI_2, col, bg)),
-                ]
-                .into(),
-            );
-        }
-        // the bottom fades into the page
-        layers.push(
-            container(
-                container(space())
-                    .width(w)
-                    .height(h * 0.35)
-                    .style(move |_| fill_gradient(std::f32::consts::PI, clear, bg)),
-            )
-            .height(h)
-            .align_y(Vertical::Bottom)
-            .into(),
-        );
-
-        let (label, restart) = play_label(item, env.progress, &|i| self.key(i));
-        let mut buttons = row![widgets::button_with(
-            widgets::Kind::Primary,
-            &label,
-            Some(Icon::Play),
-            (!item.unavailable).then(|| Msg::Play(item.id.clone(), None, false)),
-        )]
-        .spacing(8);
-        if restart {
-            buttons = buttons.push(widgets::button_with(
-                widgets::Kind::Secondary,
-                "Start over",
-                None,
-                Some(Msg::Play(item.id.clone(), None, true)),
-            ));
-        }
-        buttons = buttons.push(widgets::button_with(
-            widgets::Kind::Secondary,
-            "More info",
-            None,
-            Some(Msg::Open(item.id.clone())),
-        ));
-        let text_w = (w * 0.45).clamp(320.0, 640.0).min(w - 2.0 * SIDE);
-        let kind = if item.kind == Kind::Movie {
-            "Featured movie"
-        } else {
-            "Featured series"
-        };
-        let mut words = column![
-            mono(kind, 11.0).color(c(theme::pal().accent)),
-            text(item.title.clone()).font(BOLD).size(40),
-            space().height(2),
-            mono(&meta_line(item), 11.5).color(style::MUTED()),
-        ]
-        .spacing(3)
-        .width(text_w);
-        if !item.overview.is_empty() {
-            words = words
-                .push(
-                    text(shorten(&item.overview, 260))
-                        .size(15)
-                        .color(style::TEXT()),
-                )
-                .push(space().height(4));
-        }
-        words = words.push(space().height(8)).push(buttons);
-        layers.push(
-            container(words)
-                .height(h)
-                .padding(Padding::default().left(SIDE).bottom(32.0))
-                .align_y(Vertical::Bottom)
-                .into(),
-        );
-        let over = self.row_over.as_deref() == Some("hero");
-        if at.1 > 1 {
-            let mut dots = row![].align_y(Vertical::Center);
-            for i in 0..at.1 {
-                let on = i == at.0;
-                dots = dots.push(
-                    container(
-                        container(space())
-                            .width(if on { 14 } else { 6 })
-                            .height(3)
-                            .style(move |_| container::Style {
-                                background: Some(Background::Color(if on {
-                                    style::TEXT()
-                                } else {
-                                    c(theme::MUTED().gamma_multiply(0.6))
-                                })),
-                                ..container::Style::default()
-                            }),
-                    )
-                    .center_x(16),
-                );
-            }
-            layers.push(
-                container(dots)
-                    .width(w)
-                    .height(h)
-                    .padding(Padding::default().right(SIDE + 8.0).bottom(20.5))
-                    .align_x(Horizontal::Right)
-                    .align_y(Vertical::Bottom)
-                    .into(),
-            );
-            if over {
-                layers.push(
-                    container(row![
-                        hero_arrow("‹", Msg::Hero(-1)),
-                        space::horizontal(),
-                        hero_arrow("›", Msg::Hero(1)),
-                    ])
-                    .width(w)
-                    .height(h)
-                    .padding([0, 2])
-                    .align_y(Vertical::Center)
-                    .into(),
-                );
-            }
-        }
-        iced::widget::mouse_area(stack(layers).width(w).height(h))
-            .on_press(Msg::Open(item.id.clone()))
-            .on_enter(Msg::RowOver(Some("hero".to_owned())))
-            .on_exit(Msg::RowOver(None))
-            .interaction(iced::mouse::Interaction::Pointer)
-            .into()
-    }
-
     fn continue_cards(&self, lib: &api::Library, progress: &Progress) -> Vec<Card> {
         let prefix = self.prefix();
         let mut seen_series = Vec::new();
@@ -1491,6 +1297,7 @@ impl Library {
                         sub: Some(format!("{} left", fmt_runtime(e.dur - e.pos))),
                         art: m.thumb.clone().or(m.backdrop.clone()).or(m.poster.clone()),
                         wide_art: None,
+                        logo: m.logo.clone(),
                         meta: Some(crate::ui::browse::short_meta(m)),
                         progress: Some(e.fraction()),
                         watched: false,
@@ -1525,6 +1332,7 @@ impl Library {
                             .or(s.backdrop.clone())
                             .or(s.poster.clone()),
                         wide_art: None,
+                        logo: s.logo.clone(),
                         meta: Some(format!("{} · {code}", s.title)),
                         progress: Some(n.resume.map_or(0.0, Entry::fraction)),
                         watched: false,
@@ -1551,6 +1359,7 @@ impl Library {
                 sub: i.year.map(|y| y.to_string()),
                 art: i.poster.clone(),
                 wide_art: i.thumb.clone().or(i.backdrop.clone()),
+                logo: None,
                 meta: Some(crate::ui::browse::short_meta(i)),
                 progress: (i.kind == Kind::Movie)
                     .then(|| {
@@ -1776,29 +1585,6 @@ impl Library {
         }
         page.push(self.search_beyond(lib, env, w, none_here)).into()
     }
-}
-
-/// The banner's arrow: a dark box with a chevron, brighter on hover.
-fn hero_arrow<'a>(glyph: &str, msg: Msg) -> Element<'a, Msg> {
-    button(
-        container(text(glyph.to_owned()).size(30))
-            .center_x(32)
-            .center_y(64),
-    )
-    .width(32)
-    .height(64)
-    .padding(0)
-    .style(|_, s| {
-        let hot = matches!(s, button::Status::Hovered | button::Status::Pressed);
-        button::Style {
-            background: Some(Background::Color(black(if hot { 160 } else { 80 }))),
-            text_color: Color::WHITE.scale_alpha(if hot { 1.0 } else { 0.7 }),
-            border: iced::border::rounded(2),
-            ..button::Style::default()
-        }
-    })
-    .on_press(msg)
-    .into()
 }
 
 /// How long the app has run, for spinners.

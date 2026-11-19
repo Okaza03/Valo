@@ -685,10 +685,6 @@ fn draw_layout(f: &mut Frame, skin: Skin, pal: &Palette, size: Size) {
     let banner_h = 22.0;
     let width = right - left;
     match lay.hero {
-        Hero::Banner => {
-            rect(f, left + width / 2.0, top, width / 2.0, banner_h, 2.0, art);
-            rect(f, left + 2.0, top + 12.0, 26.0, 4.0, 1.0, pal.text);
-        }
         Hero::FullBleed => {
             rect(f, left, top, width, banner_h, 1.0, art);
             rect(f, left + 3.0, top + 12.0, 26.0, 4.0, 1.0, pal.text);
