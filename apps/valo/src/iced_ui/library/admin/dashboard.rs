@@ -32,7 +32,7 @@ const LOG_KEEP: usize = 500;
 /// The log's scrollable, kept at the bottom.
 const LOG: &str = "admin-log";
 
-const SYNCS: [(&str, &str, &str); 3] = [
+const SYNCS: [(&str, &str, &str); 4] = [
     (
         "folders",
         "Sync folders",
@@ -43,13 +43,20 @@ const SYNCS: [(&str, &str, &str); 3] = [
         "movies",
         "Sync movies",
         "Adds new movie files to the database, removes movies whose files are gone, and \
-         fetches details for the new ones.",
+         fetches details and images for the new ones.",
     ),
     (
         "series",
         "Sync series",
         "Adds new shows, seasons and episodes, removes the ones whose files are gone, and \
-         fetches details for the new ones.",
+         fetches details and images for the new ones.",
+    ),
+    (
+        "images",
+        "Upgrade images",
+        "Checks every movie's and series' poster, backdrop, thumbnail and logo against \
+         TMDB and replaces the ones a larger version exists for (4K when there is one). \
+         Images you set by hand are kept. Can take a while; follow the live log.",
     ),
 ];
 
@@ -186,6 +193,13 @@ impl State {
                     self.report = Some((what, rep));
                 }
                 Err(e) if e.is::<crate::api::Unauthorized>() => asks.login = true,
+                // a newer button than the others: its absence says nothing about them
+                Err(e) if e.is::<crate::api::NoAdminApi>() && what == "images" => {
+                    self.sync_error = Some(
+                        "This server can't upgrade images yet (POST /api/admin/sync/images)."
+                            .into(),
+                    );
+                }
                 Err(e) if e.is::<crate::api::NoAdminApi>() => self.sync_missing = true,
                 Err(e) => self.sync_error = Some(format!("{e:#}")),
             }
@@ -581,7 +595,7 @@ impl State {
                 let label = if what == "folders" { "Compare" } else { "Run" };
                 // movies and series only after a scan that found them work
                 let (ready, why) = match (what, self.work) {
-                    ("folders", _) => (true, ""),
+                    ("folders" | "images", _) => (true, ""),
                     (_, None) => (false, "Run Sync folders first"),
                     ("movies", Some((m, _))) => (m, NOTHING_NEW),
                     (_, Some((_, s))) => (s, NOTHING_NEW),

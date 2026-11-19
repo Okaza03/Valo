@@ -820,6 +820,37 @@ pub struct HealthCheck {
     pub titles: Vec<CollectionItem>,
 }
 
+/// One TMDB image an admin can pick for a title's poster, backdrop,
+/// thumbnail or logo (`GET /api/admin/<kind>/<id>/images?type=…`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct TmdbImage {
+    /// The full-size file, which the server downloads when it's picked.
+    pub url: String,
+    /// A small copy for the picker.
+    pub preview: String,
+    pub width: u32,
+    pub height: u32,
+    /// "4K", "1440p", "1080p", "720p" or "SD", by the long edge.
+    pub tier: String,
+    /// The text on it ("en"); `None` for no text.
+    pub language: Option<String>,
+    pub votes: f64,
+    /// The one a sync would take.
+    pub best: bool,
+}
+
+impl TmdbImage {
+    /// "3840 × 2160 · no text"
+    pub fn caption(&self) -> String {
+        let lang = match self.language.as_deref() {
+            None | Some("") | Some("xx") => "no text".to_owned(),
+            Some(l) => l.to_uppercase(),
+        };
+        format!("{} × {} · {lang}", self.width, self.height)
+    }
+}
+
 /// What a sync found (`POST /api/admin/sync/<what>`).
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
@@ -2359,6 +2390,12 @@ impl Client {
         Ok(it)
     }
 
+    /// Every TMDB image for one of the item's artwork slots ("poster",
+    /// "backdrop", "thumb", "logo"), largest first.
+    pub fn admin_images(&self, item: &Item, which: &str) -> Result<Vec<TmdbImage>> {
+        self.admin_json(&format!("{}/images?type={which}", Self::item_path(item)))
+    }
+
     /// Change an item's details. `fields` uses the library's names;
     /// `null` clears one.
     pub fn admin_update_item(&self, item: &Item, fields: &Value) -> Result<()> {
@@ -3056,6 +3093,19 @@ mod tests {
         .unwrap();
         lib.finish("http://h");
         assert_eq!(lib.series[0].added, Some(500));
+    }
+
+    #[test]
+    fn tmdb_images() {
+        let l: Vec<TmdbImage> = serde_json::from_str(
+            r#"[{"url":"https://image.tmdb.org/t/p/original/a.jpg","preview":"p","width":3840,"height":2160,
+                 "tier":"4K","language":null,"votes":5.4,"best":true},
+                {"url":"u","width":1000,"height":1500,"tier":"SD","language":"en","extra":1}]"#,
+        )
+        .unwrap();
+        assert_eq!(l[0].caption(), "3840 × 2160 · no text");
+        assert!(l[0].best && !l[1].best);
+        assert_eq!(l[1].caption(), "1000 × 1500 · EN");
     }
 
     #[test]

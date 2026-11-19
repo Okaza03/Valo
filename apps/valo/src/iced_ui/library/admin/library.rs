@@ -19,7 +19,7 @@ use super::ui;
 use super::ui::mono;
 use super::ui::{caps, panel};
 use super::{needs_note, not_set_up, Asks, Cx, Done, JobFn, Msg as AMsg, Section};
-use crate::api::{Client, Item, Kind, NoAdminApi, Unauthorized};
+use crate::api::{Client, Item, Kind, NoAdminApi, TmdbImage, Unauthorized};
 use crate::iced_ui::images::Variant;
 use crate::iced_ui::style::{self, c, BOLD};
 use crate::iced_ui::widgets::{self, Kind as Btn};
@@ -78,6 +78,14 @@ pub enum Msg {
     Refetch,
     /// Upload a file as this artwork ("poster", …).
     Upload(&'static str),
+    /// Open the TMDB image picker for this artwork; `None` closes it.
+    Browse(Option<&'static str>),
+    /// Show only this resolution ("4K", …); `None`: all.
+    BrowseTier(Option<&'static str>),
+    /// Mark one of the picker's images (its place in the list).
+    Choose(usize),
+    /// Download the marked image and use it.
+    UseChosen,
     X(extras::Msg),
 }
 
@@ -110,7 +118,22 @@ pub struct State {
     fetch_missing: bool,
     /// A form error ("Year must be a number").
     error: Option<String>,
+    /// The TMDB image picker, when it's open.
+    picker: Option<Picker>,
 }
+
+/// Every TMDB image for one artwork slot, to pick one by resolution.
+struct Picker {
+    which: &'static str,
+    tier: Option<&'static str>,
+    loading: Option<Job<Result<Vec<TmdbImage>>>>,
+    images: Vec<TmdbImage>,
+    error: Option<String>,
+    chosen: Option<usize>,
+}
+
+/// The picker's resolution filters, largest first.
+const TIERS: [&str; 5] = ["4K", "1440p", "1080p", "720p", "SD"];
 
 fn send(m: Msg) -> LMsg {
     LMsg::Admin(AMsg::Library(m))
@@ -156,6 +179,7 @@ impl State {
         self.search.clear();
         self.detail = Remote::default(); // load the server's full record
         self.extras.reset();
+        self.picker = None;
         if i.kind == Kind::Movie && self.tab == Tab::Episodes {
             self.tab = Tab::Details;
         }
@@ -177,6 +201,32 @@ impl State {
                 Err(e) if e.is::<Unauthorized>() => asks.login = true,
                 Err(e) if e.is::<NoAdminApi>() => self.fetch_missing = true,
                 Err(e) => self.fetch_note = Some((format!("{e:#}"), false)),
+            }
+        }
+        if let Some(p) = self.picker.as_mut() {
+            if let Some(r) = p.loading.as_mut().and_then(Job::poll) {
+                p.loading = None;
+                match r {
+                    Ok(list) if list.is_empty() => {
+                        p.error = Some("TMDB has no images for this.".into());
+                    }
+                    Ok(list) => {
+                        // start on the largest resolution there is
+                        p.tier = list
+                            .first()
+                            .and_then(|i| TIERS.into_iter().find(|t| *t == i.tier));
+                        p.chosen = list.iter().position(|i| i.best);
+                        p.images = list;
+                    }
+                    Err(e) if e.is::<Unauthorized>() => asks.login = true,
+                    Err(e) if e.is::<NoAdminApi>() => {
+                        p.error = Some(
+                            "This server can't list TMDB images (GET …/images), or has no TMDB key."
+                                .into(),
+                        );
+                    }
+                    Err(e) => p.error = Some(format!("{e:#}")),
+                }
             }
         }
         // the server's full record; without the endpoint, the list's copy will do
@@ -313,6 +363,56 @@ impl State {
                     c.admin_upload_art(&item, which, &data, mime)?;
                     Ok(Done {
                         msg: format!("Uploaded a new {which} for {}.", item.title),
+                        library: true,
+                        forget: old,
+                        ..Default::default()
+                    })
+                }));
+            }
+            Msg::Browse(None) => self.picker = None,
+            Msg::Browse(Some(which)) => {
+                let item = self.current()?;
+                let c = client.clone();
+                self.picker = Some(Picker {
+                    which,
+                    tier: None,
+                    loading: Some(Job::spawn(move || c.admin_images(&item, which))),
+                    images: Vec::new(),
+                    error: None,
+                    chosen: None,
+                });
+            }
+            Msg::BrowseTier(t) => {
+                if let Some(p) = self.picker.as_mut() {
+                    p.tier = t;
+                    // keep the marked image only if it's still shown, else the first one
+                    let shown = |i: usize| t.is_none_or(|t| p.images[i].tier == t);
+                    if !p.chosen.is_some_and(shown) {
+                        p.chosen = (0..p.images.len()).find(|&i| shown(i));
+                    }
+                }
+            }
+            Msg::Choose(i) => {
+                if let Some(p) = self.picker.as_mut() {
+                    p.chosen = Some(i);
+                }
+            }
+            Msg::UseChosen => {
+                let item = self.current()?;
+                let p = self.picker.take()?;
+                let img = p.images.get(p.chosen?)?.clone();
+                let which = p.which;
+                let old = artwork(&item);
+                return Some(Box::new(move |c: &Client| {
+                    let mut fields = serde_json::Map::new();
+                    fields.insert(which.to_owned(), Value::String(img.url.clone()));
+                    c.admin_update_item(&item, &Value::Object(fields))?;
+                    let name = if which == "thumb" { "thumbnail" } else { which };
+                    Ok(Done {
+                        msg: format!(
+                            "Downloaded a {} × {} {name} for {}.",
+                            img.width, img.height, item.title
+                        ),
                         library: true,
                         forget: old,
                         ..Default::default()
@@ -733,12 +833,21 @@ impl State {
             } else {
                 (160.0, 90.0)
             };
-            let mut buttons = row![ui::button_with(
-                Btn::Small,
-                "Upload…",
-                None,
-                (!busy).then(|| send(Msg::Upload(which)))
-            )]
+            let open = self.picker.as_ref().is_some_and(|p| p.which == which);
+            let mut buttons = row![
+                ui::button_with(
+                    Btn::Small,
+                    "Choose from TMDB…",
+                    None,
+                    (!busy && !open).then(|| send(Msg::Browse(Some(which))))
+                ),
+                ui::button_with(
+                    Btn::Small,
+                    "Upload…",
+                    None,
+                    (!busy).then(|| send(Msg::Upload(which)))
+                ),
+            ]
             .spacing(8);
             if !url.trim().is_empty() {
                 buttons = buttons.push(ui::button_with(
@@ -768,6 +877,9 @@ impl State {
                         .width(w - 36.0),
                 )
                 .push(gap(14.0));
+            if let Some(p) = self.picker.as_ref().filter(|_| open) {
+                col = col.push(picker_view(cx, p, busy, w - 36.0)).push(gap(18.0));
+            }
         }
         panel(col)
     }
@@ -923,6 +1035,138 @@ fn art_preview<'a>(cx: &Cx<'a>, url: &str, size: (f32, f32), logo: bool) -> Elem
                 color: c(LINE()),
                 width: 1.0,
                 radius: 4.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// The TMDB image picker under an artwork slot: resolution filters, the
+/// images as tiles (the marked one outlined, the sync's own pick labelled),
+/// and Use / Cancel.
+fn picker_view<'a>(cx: &Cx<'a>, p: &'a Picker, busy: bool, w: f32) -> Element<'a, LMsg> {
+    let mut col: Column<'a, LMsg> = column![].spacing(10);
+    if p.loading.is_some() {
+        return row![
+            crate::iced_ui::icon::spinner(spin_secs(), style::MUTED(), 14.0),
+            text("Asking TMDB for images…")
+                .size(13)
+                .color(style::MUTED()),
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .into();
+    }
+    if let Some(e) = &p.error {
+        return column![
+            text(e.clone()).size(13).color(c(ERROR())),
+            ui::button_with(Btn::Small, "Close", None, Some(send(Msg::Browse(None)))),
+        ]
+        .spacing(8)
+        .into();
+    }
+    // filters: All, then each resolution TMDB has
+    let count = |t: &str| p.images.iter().filter(|i| i.tier == t).count();
+    let mut tabs = vec![(
+        "All".to_owned(),
+        Some(p.images.len()),
+        p.tier.is_none(),
+        send(Msg::BrowseTier(None)),
+    )];
+    for t in TIERS {
+        let n = count(t);
+        if n > 0 {
+            tabs.push((
+                t.to_owned(),
+                Some(n),
+                p.tier == Some(t),
+                send(Msg::BrowseTier(Some(t))),
+            ));
+        }
+    }
+    col = col.push(widgets::segmented(tabs));
+
+    let (tw, th) = match p.which {
+        "poster" => (120.0, 180.0),
+        "logo" => (220.0, 90.0),
+        _ => (220.0, 124.0),
+    };
+    let gap_x = 12.0;
+    let per_row = (((w + gap_x) / (tw + gap_x)).floor() as usize).max(1);
+    let shown: Vec<(usize, &TmdbImage)> = p
+        .images
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| p.tier.is_none_or(|t| i.tier == t))
+        .collect();
+    let mut grid: Column<'a, LMsg> = column![].spacing(12);
+    for chunk in shown.chunks(per_row) {
+        let mut r = row![].spacing(gap_x);
+        for &(idx, img) in chunk {
+            let on = p.chosen == Some(idx);
+            let mut label = row![text(img.tier.clone()).font(BOLD).size(11.5)].spacing(6);
+            if img.best {
+                label = label.push(text("Best").size(11.5).color(c(OK())));
+            }
+            let tile = column![
+                art_preview(cx, &img.preview, (tw, th), p.which == "logo"),
+                label,
+                text(img.caption()).size(11.5).color(style::MUTED()),
+            ]
+            .spacing(3)
+            .width(tw);
+            r = r.push(
+                button(tile)
+                    .padding(4)
+                    .style(move |_, s| button::Style {
+                        background: (on || matches!(s, button::Status::Hovered))
+                            .then(|| Background::Color(c(SURFACE_HI()))),
+                        border: Border {
+                            color: if on {
+                                c(crate::ui::theme::ACCENT())
+                            } else {
+                                iced::Color::TRANSPARENT
+                            },
+                            width: 2.0,
+                            radius: 6.0.into(),
+                        },
+                        text_color: style::TEXT(),
+                        ..button::Style::default()
+                    })
+                    .on_press(send(Msg::Choose(idx))),
+            );
+        }
+        grid = grid.push(r);
+    }
+    col = col.push(grid);
+    let chosen = p.chosen.and_then(|i| p.images.get(i));
+    col = col.push(
+        row![
+            widgets::button_with(
+                Btn::Primary,
+                "Use this image",
+                None,
+                (chosen.is_some() && !busy).then(|| send(Msg::UseChosen)),
+            ),
+            ui::button_with(Btn::Small, "Cancel", None, Some(send(Msg::Browse(None)))),
+            text(chosen.map_or("Pick an image".to_owned(), |i| format!(
+                "The server downloads the full {} file and keeps it through syncs.",
+                i.tier
+            )))
+            .size(12)
+            .color(style::MUTED()),
+        ]
+        .spacing(10)
+        .align_y(Vertical::Center),
+    );
+    container(col)
+        .padding(14)
+        .width(w)
+        .style(|_| container::Style {
+            border: Border {
+                color: c(LINE()),
+                width: 1.0,
+                radius: 6.0.into(),
             },
             ..container::Style::default()
         })
