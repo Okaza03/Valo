@@ -14,7 +14,7 @@ use super::Message;
 pub const BAR_H: f32 = 46.0;
 
 /// Top bar: word mark, a divider, `left` (tabs), `right` (search and
-/// buttons), and the window buttons.
+/// buttons), and the window buttons, with no dividers on the right.
 pub fn title_bar<'a>(
     name: &str,
     maximized: bool,
@@ -29,7 +29,6 @@ pub fn title_bar<'a>(
         left,
         space::horizontal(),
         right,
-        vsep(),
         window_buttons(maximized),
     ]
     .align_y(Vertical::Center)
@@ -49,7 +48,7 @@ pub fn title_bar<'a>(
 }
 
 /// A full-height vertical divider.
-pub fn vsep<'a>() -> Element<'a, Message> {
+fn vsep<'a>() -> Element<'a, Message> {
     if crate::ui::theme::skin() != crate::ui::theme::Skin::Valo {
         return space().width(1).into(); // the streaming styles don't rule off their top bar
     }

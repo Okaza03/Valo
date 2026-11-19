@@ -240,7 +240,7 @@ impl Library {
         }
     }
 
-    /// Prime Video and Disney+: a rounded banner with the ones before and
+    /// Valo, Prime Video and Disney+: a rounded banner with the ones before and
     /// after peeking in at the sides.
     pub(super) fn hero_carousel<'a>(
         &'a self,
@@ -311,7 +311,7 @@ impl Library {
         words = words
             .push(space().height(6))
             .push(text(meta_line(item)).size(14).color(white(200)));
-        if skin == Skin::Prime {
+        if matches!(skin, Skin::Valo | Skin::Prime) {
             let (label, _) = play_label(item, env.progress, &|i| self.key(i));
             words = words.push(space().height(14)).push(widgets::button_with(
                 widgets::Kind::Primary,

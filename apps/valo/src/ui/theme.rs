@@ -161,11 +161,10 @@ pub enum TitleAt {
 /// The home page's big banner.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Hero {
-    /// Artwork on the right, text on the left (Valo).
-    Banner,
     /// Artwork across the whole width, text over its bottom left.
     FullBleed,
-    /// A rounded banner with the next ones peeking in at the sides.
+    /// A rounded banner with the next ones peeking in at the sides
+    /// (Valo, Prime Video, Disney+).
     Carousel,
     /// No banner (YouTube).
     None,
@@ -261,6 +260,8 @@ pub struct Spec {
     pub logo_accent: bool,
     pub logo_lower: bool,
     pub logo_badge: bool,
+    /// Continue watching cards show the title's logo over their artwork.
+    pub continue_logo: bool,
     /// Hovered cards: outline width and how far they grow.
     pub hover_outline: f32,
     pub hover_grow: f32,
@@ -349,7 +350,7 @@ const NETFLIX_RED: Color32 = rgb(229, 9, 20);
 const VALO: Spec = Spec {
     name: "Valo",
     layout: Layout {
-        hero: Hero::Banner,
+        hero: Hero::Carousel,
         tiles: Tiles::Poster,
         text: TileText::Below,
         nav: Nav::Top,
@@ -368,6 +369,7 @@ const VALO: Spec = Spec {
     logo_accent: false,
     logo_lower: false,
     logo_badge: false,
+    continue_logo: true,
     hover_outline: 2.0,
     hover_grow: 4.0,
     row_title: 13.0,
@@ -405,6 +407,7 @@ const NETFLIX: Spec = Spec {
     logo_accent: true,
     logo_lower: false,
     logo_badge: false,
+    continue_logo: false,
     hover_outline: 0.0,
     hover_grow: 10.0,
     row_title: 20.0,
@@ -444,6 +447,7 @@ const PRIME: Spec = Spec {
     logo_accent: false,
     logo_lower: true,
     logo_badge: false,
+    continue_logo: false,
     hover_outline: 0.0,
     hover_grow: 8.0,
     row_title: 19.0,
@@ -481,6 +485,7 @@ const DISNEY: Spec = Spec {
     logo_accent: false,
     logo_lower: false,
     logo_badge: false,
+    continue_logo: false,
     hover_outline: 3.0,
     hover_grow: 6.0,
     row_title: 19.0,
@@ -518,6 +523,7 @@ const HBO: Spec = Spec {
     logo_accent: false,
     logo_lower: false,
     logo_badge: false,
+    continue_logo: false,
     hover_outline: 2.0,
     hover_grow: 4.0,
     row_title: 19.0,
@@ -557,6 +563,7 @@ const YOUTUBE: Spec = Spec {
     logo_accent: false,
     logo_lower: false,
     logo_badge: true,
+    continue_logo: false,
     hover_outline: 0.0,
     hover_grow: 0.0,
     row_title: 20.0,
@@ -594,6 +601,7 @@ const APPLE: Spec = Spec {
     logo_accent: false,
     logo_lower: true,
     logo_badge: false,
+    continue_logo: false,
     hover_outline: 0.0,
     hover_grow: 8.0,
     row_title: 20.0,

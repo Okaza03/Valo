@@ -1089,9 +1089,7 @@ impl App {
                     space().width(10),
                     l.search_field().map(Message::Library),
                     space().width(10),
-                    chrome::vsep(),
                     settings,
-                    chrome::vsep(),
                     l.profile_button().map(Message::Library),
                 ]
                 .align_y(iced::alignment::Vertical::Center)
