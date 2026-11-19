@@ -16,6 +16,7 @@ The Admin page's _Library_ section lets an admin fix a title by hand (title, yea
 | `POST /api/admin/<kind>/<id>/fetch`           | `{"title", "year", "imdb_id"}` | details found, library-shaped; **nothing is saved**        |
 | `PUT /api/admin/<kind>/<id>/art/<which>`      | the image file                | `200`. `<which>` is `poster`, `backdrop`, `thumb` or `logo`          |
 | `POST /api/admin/<kind>/<id>/art/refetch`     |                               | download only the missing images: `{"downloaded": 2, "kept": 2}` |
+| `GET /api/admin/<kind>/<id>/images?type=<which>` |                            | every TMDB image for that slot, largest first ([picking one](#get-apiadminkindidimagestypewhich)) |
 | `GET /api/admin/<kind>/<id>/tmdb-search?q=…`  |                               | `[{"tmdb_id", "title", "year", "poster", "overview"}]`     |
 | `PUT /api/admin/<kind>/<id>/tmdb`             | `{"tmdb_id": 1197306, "refetch": true}` | `200`: match the title to that TMDB entry and refresh its details |
 | `DELETE /api/admin/<kind>/<id>`               |                               | `200`: remove the title from the library                    |
@@ -122,7 +123,7 @@ IMDb itself has no public API. Ways to get its data:
 | Tab       | Needs                                                                                      |
 | --------- | ------------------------------------------------------------------------------------------ |
 | Details   | `PATCH`, `fetch`; under the fields, the TMDB match (`tmdb-search`, `PUT …/tmdb`) and _Delete title_ (`DELETE`) |
-| Images    | `PATCH` (addresses, `null` removes), `PUT …/art/<which>`, `POST …/art/refetch`             |
+| Images    | `PATCH` (addresses, `null` removes), `PUT …/art/<which>`, `POST …/art/refetch`, `GET …/images` |
 | Files     | `file` (and `seasons`) in `GET /api/admin/<kind>/<id>`                                     |
 | Subtitles | the `…/subtitles` endpoints                                                                |
 | Episodes  | series only: `seasons` in the record, `PATCH /api/admin/episodes/<id>`, the season refresh and still fetch |
@@ -134,6 +135,35 @@ Episode `<id>`s are the ids `/api/library` gives episodes. Any of these the serv
 The _Upload…_ buttons. The body is the image file, with `Content-Type: image/jpeg`, `image/png` or `image/webp`, up to about 25 MB. Replace the old image (and any other format of it, so a stale `poster.jpg` doesn't win over the new `poster.png`). A logo should be a PNG with a transparent background.
 
 Afterwards the app reloads the library and downloads the image again, even if its URL didn't change.
+
+## `GET /api/admin/<kind>/<id>/images?type=<which>`
+
+The _Choose from TMDB…_ buttons. `<which>` is `poster`, `backdrop`, `thumb` or `logo`. Answer with every image TMDB has for that slot, largest first:
+
+```json
+[
+  {
+    "url": "https://image.tmdb.org/t/p/original/xyz.jpg",
+    "preview": "https://image.tmdb.org/t/p/w300/xyz.jpg",
+    "width": 3840,
+    "height": 2160,
+    "tier": "4K",
+    "language": null,
+    "votes": 5.4,
+    "best": true
+  }
+]
+```
+
+| Field      |                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| `url`      | the full-size file (TMDB's `original`). The app saves the pick with `PATCH` (`{"backdrop": url}`), which downloads it and keeps it through syncs |
+| `preview`  | a small copy for the picker                                                                       |
+| `tier`     | by the long edge: `4K` (3840 px or more), `1440p` (2560), `1080p` (1920), `720p` (1280), else `SD`. The app's filters |
+| `language` | the text on the image (`"en"`), `null` for none                                                   |
+| `best`     | the one your syncs would take                                                                     |
+
+`422` with a message when the title has no TMDB match; `501` without a TMDB key (the picker then says the server can't list images).
 
 ## Reference server
 

@@ -48,13 +48,14 @@ Every field is optional; `{}` is a valid answer. Good services to report: the da
 
 ## `POST /api/admin/sync/<what>`
 
-The three sync buttons. `<what>` is one of:
+The sync buttons. `<what>` is one of:
 
 | `<what>`  | Button       | What the server does                                                                                           |
 | --------- | ------------ | -------------------------------------------------------------------------------------------------------------- |
 | `folders` | Sync folders | Scans the media directories on every disk and compares them against the database. Lists new and removed files and missing images; **writes nothing** |
 | `movies`  | Sync movies  | Adds new movie files to the database, removes movies whose files are gone, fetches details for the new ones    |
 | `series`  | Sync series  | The same for series: new shows, seasons and episodes in, missing ones out, details for the new ones            |
+| `images`  | Upgrade images | Checks every title's poster, backdrop, thumbnail and logo against TMDB and replaces the ones a larger version exists for (images an admin set by hand are kept). Runs in the background (`202`, `"running": true`); always available, it doesn't wait for a scan. A server without it answers `404`, and only this button says so |
 
 Answer:
 
