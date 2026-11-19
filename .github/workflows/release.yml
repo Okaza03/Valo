@@ -41,6 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Gradle's downloads cached between runs (written by main's CI, read
+      # everywhere else), so a run rarely needs Maven Central, which now and
+      # then answers "not found" to GitHub's runners for files it has
+      - uses: gradle/actions/setup-gradle@v6
+
       # the runner image has the Android SDK and JDK 17
       - name: APK
         env:
