@@ -44,6 +44,7 @@ pub enum Msg {
     Resume(bool),
     Autoplay(bool),
     Fullscreen(bool),
+    HardwareDecoding(bool),
     Discord(bool),
     Skip(Choice<u32>),
     RefreshEvery(Choice<u32>),
@@ -102,6 +103,7 @@ pub fn apply(cfg: &mut Config, msg: &Msg) -> bool {
         Msg::Resume(v) => cfg.resume = v,
         Msg::Autoplay(v) => cfg.autoplay_next = v,
         Msg::Fullscreen(v) => cfg.fullscreen_on_play = v,
+        Msg::HardwareDecoding(v) => cfg.hardware_decoding = v,
         Msg::Discord(v) => cfg.discord_presence = v,
         Msg::Skip(Choice(v, _)) => cfg.skip_seconds = v,
         Msg::RefreshEvery(Choice(v, _)) => cfg.refresh_minutes = v,
@@ -416,6 +418,15 @@ pub fn settings<'a>(cfg: &Config, conn: Option<&Conn>, system_light: bool) -> El
             "Start videos in fullscreen",
             Msg::Fullscreen,
         ))
+        .push(check(
+            cfg.hardware_decoding,
+            "Use hardware video decoding",
+            Msg::HardwareDecoding,
+        ))
+        .push(note(
+            "Decodes on the graphics card, which takes less CPU and power. Turn it off if videos show glitches. Applies from the next video.",
+        ))
+        .push(space().height(8))
         .push(check(
             cfg.discord_presence,
             "Show what I'm watching on Discord",

@@ -366,7 +366,8 @@ impl Watch {
             self.addon_subs = Some((i, Job::spawn(move || addons::subtitles(&l))));
         }
         let (src, shared) = (item.source.clone(), env.audio.shared.clone());
-        self.opening = Some((i, Job::spawn(move || Player::open(&src, shared))));
+        let hw = env.cfg.hardware_decoding;
+        self.opening = Some((i, Job::spawn(move || Player::open(&src, shared, hw))));
     }
 
     fn toggle_play(&mut self) {
@@ -1584,9 +1585,14 @@ impl Watch {
                         } else {
                             format!("{} · {}", it.title, it.subtitle)
                         };
-                        p.meta
-                            .specs
-                            .sections(p.clock(), it.file_name.as_deref(), &title)
+                        let mut s =
+                            p.meta
+                                .specs
+                                .sections(p.clock(), it.file_name.as_deref(), &title);
+                        if let Some((_, video)) = s.iter_mut().find(|(n, _)| *n == "VIDEO") {
+                            video.push(("Decoding", p.decoding()));
+                        }
+                        s
                     }
                     _ => Vec::new(),
                 };

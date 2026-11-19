@@ -95,6 +95,13 @@ jobs:
           curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
+      # FFmpeg's Vulkan decoding (src/hwdec.rs) needs Vulkan headers 1.4.317+,
+      # newer than Ubuntu's; the compiler finds them through CPATH
+      - name: Vulkan headers
+        run: |
+          git clone --depth 1 --branch v1.4.368 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+          echo "CPATH=$RUNNER_TEMP/vulkan-headers/include" >> "$GITHUB_ENV"
+
       - name: Static dav1d (so no libdav1d.so is needed at runtime)
         run: |
           git clone --depth 1 --branch 1.5.4 https://code.videolan.org/videolan/dav1d.git

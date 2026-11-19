@@ -23,6 +23,14 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [target.'cfg(not(windows))'.dependencies]
 ffmpeg-next = { version = "9.0", features = ["build", "build-lib-dav1d"] }
 
+# Hardware decoding (src/hwdec.rs). Linux uses Vulkan Video, which FFmpeg
+# dlopens (libvulkan.so.1), so the binary gains no new library dependency;
+# building needs the Vulkan headers 1.4.317 or newer. macOS uses VideoToolbox.
+[target.'cfg(target_os = "linux")'.dependencies]
+ffmpeg-sys-next = { version = "9.0", default-features = false, features = ["build-vulkan"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+ffmpeg-sys-next = { version = "9.0", default-features = false, features = ["build-videotoolbox"] }
+
 # keeps the screen awake during playback (org.freedesktop.ScreenSaver);
 # macOS uses IOKit instead (src/inhibit.rs)
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
