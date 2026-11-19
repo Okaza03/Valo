@@ -39,6 +39,8 @@ pub enum Icon {
     Film,
     /// Sidebar: a screen on a stand.
     Tv,
+    /// Sidebar: a picture (Admin › Images).
+    Image,
     /// A cloud with an arrow down (check for updates).
     CloudDownload,
 }

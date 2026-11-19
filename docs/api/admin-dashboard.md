@@ -42,6 +42,7 @@ How the server and what it depends on are doing. The app asks every 30 seconds w
 | `uptime`   | int      | Seconds since it started                                                            |
 | `library`  | object   | Your own numbers: `movies`, `series`, `episodes`, `size` (bytes), `users`. Each one is optional. **Any other number** in it becomes one more tile, labelled from its key: `"mp4": 271` shows as _MP4_, `"series_complete": 17` as _Series complete_ |
 | `services` | array    | Anything it depends on: `name`, `ok` (green or red dot), optional `detail`         |
+| `image_upgrades` | object | Upgrade images: the run going on now (`running: true`, `total`, `checked`, counts so far) or the last run's totals (`upgraded`, `added`, `kept`, `failed`, `finished_at`). Shown as an _Images upgraded_ tile and under the button; see [Images](admin-images.md) |
 | `health`   | array    | Your library checks, in place of the app's: `label`, `count`, and what to list when the row is opened: `titles` (`{type, id, title, year}`, clickable: they open in the Library editor) and/or `items` (plain text, such as file paths). Send up to about 100 |
 
 Every field is optional; `{}` is a valid answer. Good services to report: the database, the metadata source behind [Library editing](admin-library.md), the [Discord bot](admin-requests.md) (when it last called), free disk space, a transcoder.

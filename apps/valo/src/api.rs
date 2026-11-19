@@ -780,6 +780,116 @@ pub struct AdminStatus {
     pub health: Vec<HealthCheck>,
     /// The server's own numbers; they win over counting the library.
     pub library: Option<LibraryStats>,
+    /// Upgrade images: the run going on now, or the last one's totals.
+    pub image_upgrades: Option<UpgradeRun>,
+}
+
+/// One run of Upgrade images (`GET /api/admin/images`, and its totals in
+/// `/api/admin/status`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UpgradeRun {
+    pub running: bool,
+    /// ISO 8601.
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    /// Titles to check, and checked so far.
+    pub total: u64,
+    pub checked: u64,
+    /// Images replaced with a larger one, missing ones downloaded, ones
+    /// already the largest, and ones that couldn't be done.
+    pub upgraded: u64,
+    pub added: u64,
+    pub kept: u64,
+    pub failed: u64,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub changes: Vec<ImageChange>,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub failures: Vec<ImageFailure>,
+}
+
+impl UpgradeRun {
+    /// When it finished (else started), as Unix time.
+    pub fn when(&self) -> Option<i64> {
+        iso_unix(self.finished_at.as_deref().or(self.started_at.as_deref())?)
+    }
+
+    /// How long it took, in seconds.
+    pub fn took(&self) -> Option<i64> {
+        Some(iso_unix(self.finished_at.as_deref()?)? - iso_unix(self.started_at.as_deref()?)?)
+    }
+}
+
+/// An image Upgrade images replaced or added.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ImageChange {
+    pub title: String,
+    /// "movie" or "series".
+    pub kind: String,
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
+    /// "poster", "backdrop", "thumb" or "logo".
+    pub slot: String,
+    /// The old image's size; `None`: there was none.
+    pub from: Option<[u32; 2]>,
+    pub to: [u32; 2],
+    pub tier: String,
+}
+
+/// An image Upgrade images couldn't do, and why.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ImageFailure {
+    pub title: String,
+    pub kind: String,
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
+    pub slot: String,
+    pub reason: String,
+}
+
+/// The Admin page's Images section (`GET /api/admin/images`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ImagesReport {
+    pub running: bool,
+    pub current: Option<UpgradeRun>,
+    pub last: Option<UpgradeRun>,
+    /// Earlier runs' totals, newest first.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub runs: Vec<UpgradeRun>,
+    /// Per slot: how many images are "4K", "1440p", "1080p", "720p", "SD",
+    /// "missing", and "locked" (set by hand).
+    pub library: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>,
+    /// The server has a TMDB key.
+    pub tmdb: bool,
+}
+
+/// "2026-11-19T19:46:28+00:00" (or …Z, or without an offset, read as UTC)
+/// as Unix time.
+pub fn iso_unix(s: &str) -> Option<i64> {
+    let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, sec) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    // days since 1970-01-01 (Howard Hinnant's days_from_civil)
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * (mo + if mo > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    // the offset after the seconds (and any fraction)
+    let rest = s[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let off = match rest.as_bytes().first() {
+        Some(b'+' | b'-') => {
+            let sign = if rest.starts_with('-') { -1 } else { 1 };
+            let oh: i64 = rest.get(1..3)?.parse().ok()?;
+            let om: i64 = rest.get(4..6).and_then(|m| m.parse().ok()).unwrap_or(0);
+            sign * (oh * 3600 + om * 60)
+        }
+        _ => 0,
+    };
+    Some(days * 86_400 + h * 3600 + mi * 60 + sec - off)
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -1619,6 +1729,8 @@ pub const ADMIN_DOCS_REQUESTS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-requests.md";
 pub const ADMIN_DOCS_LIBRARY: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-library.md";
+pub const ADMIN_DOCS_IMAGES: &str =
+    "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-images.md";
 pub const ADMIN_DOCS_COLLECTIONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-collections.md";
 pub const ADMIN_DOCS_ADDONS: &str =
@@ -2390,6 +2502,12 @@ impl Client {
         Ok(it)
     }
 
+    /// What Upgrade images is doing or did, and the library's images by
+    /// resolution. `fresh`: count the images again, not from the server's cache.
+    pub fn admin_images_report(&self, fresh: bool) -> Result<ImagesReport> {
+        self.admin_json(if fresh { "images?fresh=1" } else { "images" })
+    }
+
     /// Every TMDB image for one of the item's artwork slots ("poster",
     /// "backdrop", "thumb", "logo"), largest first.
     pub fn admin_images(&self, item: &Item, which: &str) -> Result<Vec<TmdbImage>> {
@@ -3093,6 +3211,34 @@ mod tests {
         .unwrap();
         lib.finish("http://h");
         assert_eq!(lib.series[0].added, Some(500));
+    }
+
+    #[test]
+    fn upgrade_reports() {
+        assert_eq!(iso_unix("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_unix("2026-11-19T19:46:28+00:00"), Some(1_795_117_588));
+        assert_eq!(iso_unix("2026-11-19T21:46:28+02:00"), Some(1_795_117_588));
+        assert_eq!(iso_unix("2026-11-19T19:46:28.123456Z"), Some(1_795_117_588));
+        assert_eq!(iso_unix("2024-02-29T00:00:00"), Some(1_709_164_800));
+        assert_eq!(iso_unix("soon"), None);
+        let r: ImagesReport = serde_json::from_str(
+            r#"{"running":false,"current":null,"runs":[{"upgraded":3}],"tmdb":true,
+                "last":{"started_at":"2026-11-19T19:00:00+00:00","finished_at":"2026-11-19T19:02:05+00:00",
+                  "total":2,"checked":2,"upgraded":1,"added":1,"kept":5,"failed":1,
+                  "changes":[{"title":"Heat","kind":"movie","id":7,"slot":"poster","from":[500,750],"to":[2000,3000],"tier":"1440p"},
+                             {"title":"Heat","kind":"movie","id":7,"slot":"backdrop","from":null,"to":[3840,2160],"tier":"4K"}],
+                  "failures":[{"title":"Dark","kind":"series","id":3,"slot":"logo","reason":"couldn't download it"}]},
+                "library":{"poster":{"4K":0,"1440p":1,"missing":2,"locked":1}}}"#,
+        )
+        .unwrap();
+        let last = r.last.unwrap();
+        assert_eq!(last.took(), Some(125));
+        assert_eq!(last.changes[0].id, "7");
+        assert_eq!(last.changes[0].from, Some([500, 750]));
+        assert_eq!(last.changes[1].from, None);
+        assert_eq!(last.failures[0].reason, "couldn't download it");
+        assert_eq!(r.library["poster"]["missing"], 2);
+        assert_eq!(r.runs[0].upgraded, 3);
     }
 
     #[test]
