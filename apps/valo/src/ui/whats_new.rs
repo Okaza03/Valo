@@ -171,6 +171,15 @@ const NOTES: &[(&str, &[Note])] = &[
                    Playback.",
         }],
     ),
+    (
+        "0.11.1",
+        &[Note {
+            title: "A new look for Home",
+            text: "In the Valo style, the featured banner now shows the titles before and \
+                   after it at the sides, and Continue watching shows each title's logo on \
+                   its picture.",
+        }],
+    ),
 ];
 
 /// The notes for versions after `seen`, up to `current`, newest first.

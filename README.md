@@ -54,7 +54,7 @@ Windows builds are made with `cargo xtask dist [arch]` (zip) and `cargo xtask in
 ## Releasing
 
 1. Run `npx @changesets/cli version`: it turns the PRs' changesets (`.changeset/`) into the next version in `package.json` and a `CHANGELOG.md` entry. Bump `version` in `Cargo.toml` to the same version.
-2. Rewrite `notes.md` for the new version, from that `CHANGELOG.md` entry. Its first line must name it (`# Valo vX.Y.Z`). It becomes the release description.
+2. Rewrite `notes.md` for the new version, from that `CHANGELOG.md` entry. Its first line must name it (`# Valo vX.Y.Z`). It becomes the release description, with the version's changesets from `CHANGELOG.md` added under _Changesets_, before _Downloads_.
 3. Add `<release version="X.Y.Z" …/>` to `packaging/flatpak/io.github.okaza03.Valo.metainfo.xml`.
 4. Open a pull request with these changes from a branch named `release-X.Y.Z`. Merging it tags the merge as `vX.Y.Z` and starts the release (`.github/workflows/tag-release.yml`). The branch name has to match the version in `Cargo.toml`.
 
