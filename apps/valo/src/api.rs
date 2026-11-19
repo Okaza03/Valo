@@ -854,9 +854,14 @@ pub struct SyncReport {
     /// Entries no sync has fetched details for yet (`unedited`).
     #[serde(skip)]
     pub unedited_list: Vec<String>,
-    /// Changes per kind (movies, series) when the server lists them apart.
+    /// Changes per kind (movies, series) when the server lists them apart,
+    /// counted before `added` and `removed` drop repeated names.
     #[serde(skip)]
     split: Option<(usize, usize)>,
+    /// The names those per-kind lists held: the rest of `added` and
+    /// `removed` is placed by its path.
+    #[serde(skip)]
+    sorted: HashSet<String>,
 
     // Other shapes servers answer with, folded into the above by `tidy`.
     #[serde(deserialize_with = "names")]
@@ -886,6 +891,16 @@ impl SyncReport {
         if movies + series > 0 {
             self.split = Some((movies, series));
         }
+        self.sorted = [
+            &self.added_movies,
+            &self.added_series,
+            &self.removed_movies,
+            &self.removed_series,
+        ]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
         // servers that send both shapes list each file twice: once is enough
         let fold = |all: &mut Vec<String>, more: Vec<String>| {
             for f in more {
@@ -921,14 +936,14 @@ impl SyncReport {
         if self.running || images {
             return true;
         }
-        if let Some((movies, series)) = self.split {
-            if self.added.len() + self.removed.len() == movies + series {
-                return if kind == Kind::Movie { movies } else { series } > 0;
-            }
+        let (movies, series) = self.split.unwrap_or_default();
+        if if kind == Kind::Movie { movies } else { series } > 0 {
+            return true;
         }
         self.added
             .iter()
             .chain(&self.removed)
+            .filter(|p| !self.sorted.contains(*p))
             .any(|p| path_kind(p).is_none_or(|k| k == kind))
     }
 }
@@ -3074,6 +3089,35 @@ mod tests {
         .unwrap();
         let r = r.tidy(false);
         assert!(r.has_work(Kind::Movie) && !r.has_work(Kind::Series));
+
+        // two series folders with the same name (on two disks) show once,
+        // but they're still only series
+        let r: SyncReport =
+            serde_json::from_str(r#"{"added":["Dark"],"added_series":["Dark","Dark"]}"#).unwrap();
+        let r = r.tidy(false);
+        assert_eq!(r.added, ["Dark"]);
+        assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
+
+        // a movie and a series with the same name: both
+        let r: SyncReport = serde_json::from_str(
+            r#"{"removed_movies":[{"id":3,"title":"Dark"}],"removed_series":[{"id":9,"name":"Dark"}]}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert!(r.has_work(Kind::Movie) && r.has_work(Kind::Series));
+
+        // per-kind lists plus a file only in `added`: placed by its path
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":["Arcane","/d/The Office/The.Office.s02e10.mkv"],"added_series":["Arcane"]}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
+        let r: SyncReport =
+            serde_json::from_str(r#"{"added":["Arcane","/d/x.mkv"],"added_series":["Arcane"]}"#)
+                .unwrap();
+        let r = r.tidy(false);
+        assert!(r.has_work(Kind::Movie));
     }
 
     #[test]
