@@ -33,6 +33,27 @@ where
     Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
 }
 
+/// A list of names, given as strings or as objects named by `title`,
+/// `name` or `id` (the PHP server's `removed_movies: [{"id": 3, "title": …}]`).
+/// `null` is an empty list.
+fn names<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let v: Vec<Value> = null_as_empty(d)?;
+    Ok(v.into_iter()
+        .filter_map(|v| match v {
+            Value::String(s) => Some(s),
+            Value::Object(o) => ["title", "name", "id"]
+                .iter()
+                .find_map(|k| match o.get(*k)? {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                }),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .collect())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub enum Kind {
     #[default]
@@ -803,11 +824,11 @@ pub struct HealthCheck {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct SyncReport {
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     pub added: Vec<String>,
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     pub removed: Vec<String>,
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     pub updated: Vec<String>,
     /// The changes were written (false: a dry run).
     pub applied: bool,
@@ -838,13 +859,13 @@ pub struct SyncReport {
     split: Option<(usize, usize)>,
 
     // Other shapes servers answer with, folded into the above by `tidy`.
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     added_movies: Vec<String>,
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     added_series: Vec<String>,
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     removed_movies: Vec<String>,
-    #[serde(deserialize_with = "null_as_empty")]
+    #[serde(deserialize_with = "names")]
     removed_series: Vec<String>,
     dry_run: Option<bool>,
     started: bool,
@@ -3020,6 +3041,39 @@ mod tests {
         .unwrap();
         lib.finish("http://h");
         assert_eq!(lib.series[0].added, Some(500));
+    }
+
+    #[test]
+    fn folder_scan_with_removed_titles() {
+        // the PHP server lists removed entries as objects (series by
+        // `name`); added ones are file and folder names
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":["Heat (1995).mkv","Arcane"],"removed":["Se7en","Dark"],"applied":false,
+                "added_movies":["Heat (1995).mkv"],"removed_movies":[{"id":3,"title":"Se7en"}],
+                "added_series":["Arcane"],"removed_series":[{"id":9,"name":"Dark"}]}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert_eq!(r.added, ["Heat (1995).mkv", "Arcane"]);
+        assert_eq!(r.removed, ["Se7en", "Dark"]);
+        assert!(r.has_work(Kind::Movie) && r.has_work(Kind::Series));
+
+        // only series changed: Sync movies has nothing to do
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":["Arcane"],"removed":["Dark"],"added_movies":[],"removed_movies":[],
+                "added_series":["Arcane"],"removed_series":[{"id":9,"name":"Dark"}]}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert!(r.has_work(Kind::Series) && !r.has_work(Kind::Movie));
+
+        // only movies removed
+        let r: SyncReport = serde_json::from_str(
+            r#"{"added":[],"removed":["Se7en"],"removed_movies":[{"id":3,"title":"Se7en"}]}"#,
+        )
+        .unwrap();
+        let r = r.tidy(false);
+        assert!(r.has_work(Kind::Movie) && !r.has_work(Kind::Series));
     }
 
     #[test]
