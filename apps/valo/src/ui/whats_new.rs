@@ -162,6 +162,15 @@ const NOTES: &[(&str, &[Note])] = &[
                    the library reloads when you come back to Valo, so they don't linger.",
         }],
     ),
+    (
+        "0.11.0",
+        &[Note {
+            title: "Hardware decoding",
+            text: "Videos are decoded on your graphics card when it can, which takes much \
+                   less CPU and power. If a video shows glitches, turn it off in Settings › \
+                   Playback.",
+        }],
+    ),
 ];
 
 /// The notes for versions after `seen`, up to `current`, newest first.
