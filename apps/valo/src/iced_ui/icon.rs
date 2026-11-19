@@ -43,6 +43,7 @@ fn source(icon: Icon) -> &'static [u8] {
         Icon::Home => include_bytes!("../../assets/lucide/house.svg"),
         Icon::Film => include_bytes!("../../assets/lucide/film.svg"),
         Icon::Tv => include_bytes!("../../assets/lucide/tv.svg"),
+        Icon::Image => include_bytes!("../../assets/lucide/image.svg"),
         Icon::CloudDownload => include_bytes!("../../assets/lucide/cloud-download.svg"),
     }
 }

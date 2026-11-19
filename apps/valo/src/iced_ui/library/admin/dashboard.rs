@@ -333,6 +333,14 @@ impl State {
             ),
         ];
         tiles.extend(extra.iter().map(|(v, l)| (v.clone(), l.as_str())));
+        if let Some(up) = self.upgrades() {
+            let label = if up.running {
+                "Images upgraded so far"
+            } else {
+                "Images upgraded"
+            };
+            tiles.push((up.upgraded.to_string(), label));
+        }
         let tiles = stats(tiles, inner);
 
         let narrow = inner < NARROW;
@@ -576,6 +584,46 @@ impl State {
         col.push(space().height(14)).into()
     }
 
+    /// Upgrade images: the run going on now, or the last one's totals.
+    fn upgrades(&self) -> Option<&crate::api::UpgradeRun> {
+        self.status.data.as_ref()?.0.image_upgrades.as_ref()
+    }
+
+    /// Under Upgrade images: what it's doing or did, and a link to Admin › Images.
+    fn upgrade_line<'a>(&self) -> Element<'a, LMsg> {
+        let what = match self.upgrades() {
+            Some(u) if u.running => format!(
+                "Running: {} of {} titles checked, {} upgraded so far",
+                u.checked, u.total, u.upgraded
+            ),
+            Some(u) => {
+                let when = u
+                    .when()
+                    .map(|t| format!(" {}", crate::ui::browse::people::ago(t)))
+                    .unwrap_or_default();
+                let mut s = format!("Last run{when}: {} upgraded, {} added", u.upgraded, u.added);
+                if u.failed > 0 {
+                    s = format!("{s}, {} failed", u.failed);
+                }
+                s
+            }
+            None => "Hasn't run yet.".to_owned(),
+        };
+        // the button on its own line: beside the text it got squeezed away
+        column![
+            text(what).size(12.5),
+            ui::button_with(
+                Btn::Small,
+                "Details",
+                None,
+                Some(LMsg::Admin(AMsg::Section(Section::Images)))
+            ),
+        ]
+        .spacing(6)
+        .padding(iced::Padding::default().top(6.0))
+        .into()
+    }
+
     fn syncs<'a>(&'a self, cx: &Cx<'a>) -> Element<'a, LMsg> {
         let send = |m: Msg| LMsg::Admin(AMsg::Dash(m));
         let mut col: Column<'a, LMsg> = column![caps("Sync operations", c(TEAL())), gap(10.0)];
@@ -623,8 +671,11 @@ impl State {
                     .align_y(Vertical::Center),
                 )
                 .push(space().height(4))
-                .push(text(about).size(12).color(style::MUTED()))
-                .push(gap(12.0));
+                .push(text(about).size(12).color(style::MUTED()));
+            if what == "images" {
+                col = col.push(self.upgrade_line());
+            }
+            col = col.push(gap(12.0));
         }
         // the original admin API's one button, which every Valo admin server has
         col = col

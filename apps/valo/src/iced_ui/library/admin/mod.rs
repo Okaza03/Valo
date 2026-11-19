@@ -6,6 +6,7 @@ mod addons;
 mod analytics;
 mod collections;
 mod dashboard;
+mod images;
 mod layout;
 mod library;
 mod moving;
@@ -41,6 +42,7 @@ pub enum Section {
     Analytics,
     Requests,
     Library,
+    Images,
     Collections,
     Moving,
     SkipMarkers,
@@ -50,11 +52,12 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 10] = [
+    const ALL: [Section; 11] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
+        Section::Images,
         Section::Collections,
         Section::Moving,
         Section::SkipMarkers,
@@ -70,6 +73,7 @@ impl Section {
             Section::Analytics => Icon::Star,
             Section::Requests => Icon::Bookmark,
             Section::Library => Icon::Film,
+            Section::Images => Icon::Image,
             Section::Collections => Icon::List,
             Section::Moving => Icon::ArrowRight,
             Section::SkipMarkers => Icon::SkipForward,
@@ -85,6 +89,7 @@ impl Section {
             Section::Analytics => "Analytics",
             Section::Requests => "Requests",
             Section::Library => "Library",
+            Section::Images => "Images",
             Section::Collections => "Collections",
             Section::Moving => "Moving",
             Section::SkipMarkers => "Skip markers",
@@ -105,6 +110,10 @@ impl Section {
             }
             Section::Library => {
                 "Fix a title's details and artwork by hand, or fetch them from IMDb."
+            }
+            Section::Images => {
+                "Upgrade every poster, backdrop, thumbnail and logo to the largest version on \
+                 TMDB, see what changed, and how sharp the library's images are."
             }
             Section::Collections => {
                 "Group titles like the Batman films, so A to Z keeps them together, oldest first."
@@ -135,6 +144,7 @@ impl Section {
             Section::Analytics => api::ADMIN_DOCS_ANALYTICS,
             Section::Requests => api::ADMIN_DOCS_REQUESTS,
             Section::Library => api::ADMIN_DOCS_LIBRARY,
+            Section::Images => api::ADMIN_DOCS_IMAGES,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
             Section::Moving => api::ADMIN_DOCS_MOVING,
             Section::SkipMarkers => api::ADMIN_DOCS_SKIP,
@@ -158,6 +168,10 @@ impl Section {
             }
             Section::Library => {
                 "the endpoints for editing titles (/api/admin/movies/…, /api/admin/series/…)"
+            }
+            Section::Images => {
+                "the image report (GET /api/admin/images) and Upgrade images \
+                 (POST /api/admin/sync/images)"
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
             Section::Moving => "the moving endpoints (GET and PUT /api/admin/moving)",
@@ -212,6 +226,7 @@ pub enum Msg {
     Dash(dashboard::Msg),
     Requests(requests::Msg),
     Moving(moving::Msg),
+    Images(images::Msg),
     Skip(skip::Msg),
     Users(users::Msg),
     Library(library::Msg),
@@ -247,6 +262,7 @@ pub struct State {
     dashboard: dashboard::State,
     requests: requests::State,
     moving: moving::State,
+    images: images::State,
     skip: skip::State,
     users: users::State,
     library: library::State,
@@ -307,6 +323,7 @@ impl State {
             Section::Dashboard => self.dashboard.refresh(),
             Section::Requests => self.requests.refresh(),
             Section::Moving => self.moving.refresh(),
+            Section::Images => self.images.refresh(),
             Section::SkipMarkers => self.skip.refresh(),
             Section::Library => self.library.refresh(),
             Section::Analytics => self.analytics.refresh(),
@@ -326,6 +343,7 @@ impl State {
             Section::Dashboard => self.dashboard.missing(),
             Section::Requests => self.requests.missing(),
             Section::Moving => self.moving.missing(),
+            Section::Images => self.images.missing(),
             Section::SkipMarkers => self.skip.missing(),
             Section::Users => self.users.missing(),
             Section::Library => self.library.missing(),
@@ -422,6 +440,7 @@ impl State {
         match self.section {
             Section::Dashboard => self.dashboard.work(client, &mut asks),
             Section::Moving => self.moving.work(client, &mut asks.login),
+            Section::Images => self.images.work(client, &mut asks.login),
             Section::SkipMarkers => self.skip.work(client, &mut asks),
             Section::Library => self.library.work(client, &mut asks),
             Section::Analytics => self.analytics.work(client, &mut asks),
@@ -510,6 +529,7 @@ impl State {
                 Section::Dashboard => self.dashboard.refresh(),
                 Section::Requests => self.requests.refresh(),
                 Section::Moving => self.moving.refresh(),
+                Section::Images => self.images.refresh(),
                 Section::SkipMarkers => self.skip.refresh(),
                 Section::Users => self.users.refresh(),
                 Section::Library => self.library.refresh(),
@@ -518,7 +538,7 @@ impl State {
                 Section::Layout => self.layout.refresh(),
                 Section::Addons => self.addons.refresh(),
             },
-            Msg::Dash(dashboard::Msg::Goto(id)) => {
+            Msg::Dash(dashboard::Msg::Goto(id)) | Msg::Images(images::Msg::Open(id)) => {
                 // a title on the dashboard: open it in Library
                 if let Some(i) = self.all_items(lib).iter().find(|i| i.id == id) {
                     self.library.select(i);
@@ -534,6 +554,11 @@ impl State {
             Msg::Requests(m) => {
                 self.menu = None;
                 if let Some(job) = self.requests.update(m) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Images(m) => {
+                if let Some(job) = self.images.update(m) {
                     self.run(client, job);
                 }
             }
@@ -762,6 +787,7 @@ impl State {
             Section::Dashboard => self.dashboard.view(&cx, w),
             Section::Requests => self.requests.view(&cx, w),
             Section::Moving => self.moving.view(&cx),
+            Section::Images => self.images.view(&cx, inner),
             Section::SkipMarkers => self.skip.view(&cx),
             Section::Users => self.users.view(&cx, w),
             Section::Library => self.library.view(&cx, w),
