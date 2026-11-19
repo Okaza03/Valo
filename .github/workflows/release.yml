@@ -248,6 +248,20 @@ jobs:
           printf '%s\n' "$KEY" | gpg --batch --import
           echo "id=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')" >> "$GITHUB_OUTPUT"
 
+      # The image ships its runtimes in a read-only overlayfs layer, where
+      # renaming a directory fails with EXDEV ("Invalid cross-device link").
+      # So when Flathub has a newer SDK than the image, updating it breaks the
+      # build (v0.11.0). Copied, they live in the writable layer and update.
+      - name: Make the image's runtimes updatable
+        run: |
+          for d in /var/lib/flatpak "$HOME/.local/share/flatpak"; do
+            [ -d "$d" ] || continue
+            du -sh "$d"
+            cp -a "$d" "$d.rw"
+            rm -rf "$d"
+            mv "$d.rw" "$d"
+          done
+
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           manifest-path: packaging/flatpak/io.github.okaza03.Valo.yml
