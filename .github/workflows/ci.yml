@@ -24,6 +24,13 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      # FFmpeg's Vulkan decoding (src/hwdec.rs) needs Vulkan headers 1.4.317+,
+      # newer than Ubuntu's; the compiler finds them through CPATH
+      - name: Vulkan headers
+        run: |
+          git clone --depth 1 --branch v1.4.368 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+          echo "CPATH=$RUNNER_TEMP/vulkan-headers/include" >> "$GITHUB_ENV"
+
       - name: Rust
         run: |
           rustup update stable --no-self-update

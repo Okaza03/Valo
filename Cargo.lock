@@ -3983,6 +3983,7 @@ dependencies = [
  "cpal",
  "ecolor",
  "ffmpeg-next",
+ "ffmpeg-sys-next",
  "iced",
  "image",
  "raw-window-handle",

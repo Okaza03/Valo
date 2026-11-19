@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::ffi::{c_int, c_void, CString};
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering::Relaxed};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -72,6 +72,10 @@ struct Shared {
     quit: AtomicBool,
     preview: AtomicBool,
     base: AtomicU64, // f64 bits: media time at audio-clock zero
+    /// The GPU device the decoder was given, if any.
+    device: Mutex<Option<&'static str>>,
+    /// Where the last frame was decoded: 0 none yet, 1 CPU, 2 GPU.
+    decoded_on: AtomicU8,
 }
 
 impl Shared {
@@ -82,6 +86,8 @@ impl Shared {
             quit: AtomicBool::new(false),
             preview: AtomicBool::new(false),
             base: AtomicU64::new(0f64.to_bits()),
+            device: Mutex::new(None),
+            decoded_on: AtomicU8::new(0),
         }
     }
     fn base(&self) -> f64 {
@@ -100,18 +106,21 @@ pub struct Player {
     pub meta: Meta,
     pub paused: bool,
     wall: f64, // clock for files without an audio track
+    /// Hardware decoding was asked for (the setting).
+    hw: bool,
 }
 
 impl Player {
     /// Blocks while the source is probed (can take a moment over the network).
-    pub fn open(src: &Source, audio: Arc<AudioShared>) -> Result<Self> {
+    /// `hw`: decode on the GPU when it can (see hwdec.rs).
+    pub fn open(src: &Source, audio: Arc<AudioShared>, hw: bool) -> Result<Self> {
         audio.reset();
         audio.set_paused(false);
         let sh = Arc::new(Shared::new());
         let (tx, rx) = mpsc::channel();
         let (mtx, mrx) = mpsc::channel();
         let (p, a, s) = (src.clone(), audio.clone(), sh.clone());
-        let thread = thread::spawn(move || decode_thread(p, a, s, rx, mtx));
+        let thread = thread::spawn(move || decode_thread(p, a, s, rx, mtx, hw));
         let meta = mrx
             .recv()
             .map_err(|_| anyhow!("decoder thread crashed"))?
@@ -124,6 +133,7 @@ impl Player {
             meta,
             paused: false,
             wall: 0.0,
+            hw,
         })
     }
 
@@ -184,6 +194,18 @@ impl Player {
         out
     }
 
+    /// How the video is being decoded, for the Info panel.
+    pub fn decoding(&self) -> String {
+        let device = *self.sh.device.lock().unwrap();
+        match (device, self.sh.decoded_on.load(Relaxed)) {
+            (_, 0) => "Starting…".into(),
+            (Some(d), 2) => format!("Hardware ({d})"),
+            (Some(_), _) => "Software (the graphics card can't decode this video)".into(),
+            (None, _) if self.hw => "Software (no hardware decoder found)".into(),
+            (None, _) => "Software (hardware decoding is off)".into(),
+        }
+    }
+
     pub fn finished(&self) -> bool {
         self.sh.eof.load(Relaxed) && {
             let q = self.sh.vq.lock().unwrap();
@@ -216,7 +238,8 @@ struct Decoder {
     vidx: usize,
     vtb: Rational,
     vdec: ffmpeg::decoder::Video,
-    scaler: Option<scaling::Context>,
+    /// The RGBA scaler, and the source format and size it was made for.
+    scaler: Option<(scaling::Context, (Pixel, u32, u32))>,
     audio: Option<ADec>,
     duration: f64,
     need_base: bool,
@@ -229,8 +252,9 @@ fn decode_thread(
     sh: Arc<Shared>,
     rx: Receiver<Cmd>,
     mtx: Sender<std::result::Result<Meta, String>>,
+    hw: bool,
 ) {
-    match Decoder::open(&src, &audio, &sh) {
+    match Decoder::open(&src, &audio, &sh, hw) {
         Err(e) => {
             let _ = mtx.send(Err(format!("{e:#}")));
         }
@@ -373,7 +397,7 @@ pub fn probe(src: &Source) -> Result<(crate::api::FileInfo, Option<f64>)> {
 }
 
 impl Decoder {
-    fn open(src: &Source, audio: &AudioShared, sh: &Arc<Shared>) -> Result<Self> {
+    fn open(src: &Source, audio: &AudioShared, sh: &Arc<Shared>, hw: bool) -> Result<Self> {
         ffmpeg::init()?;
         let ictx = open_input(src, sh)?;
         let (vidx, vtb, vpar) = {
@@ -390,6 +414,9 @@ impl Decoder {
             kind: codec::threading::Type::Frame,
             count: 0, // one per core
         });
+        if hw {
+            *sh.device.lock().unwrap() = crate::hwdec::attach(&mut vctx);
+        }
         let vdec = vctx.decoder().video()?;
         let adec = if audio.available {
             open_audio(&ictx).ok().flatten()
@@ -494,20 +521,41 @@ impl Decoder {
             if t < skip_until - 0.001 {
                 continue; // landed on a keyframe before the seek target
             }
-            if self.scaler.is_none() {
-                let (dw, dh) = fit(f.width(), f.height(), MAX_VIDEO_WIDTH);
-                self.scaler = Some(scaling::Context::get(
-                    f.format(),
-                    f.width(),
-                    f.height(),
+            let gpu = crate::hwdec::on_gpu(&f);
+            sh.decoded_on.store(if gpu { 2 } else { 1 }, Relaxed);
+            let downloaded;
+            let src = if gpu {
+                match crate::hwdec::download(&f) {
+                    Ok(d) => {
+                        downloaded = d;
+                        &downloaded
+                    }
+                    Err(e) => {
+                        eprintln!("couldn't copy a frame from the GPU: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                &f
+            };
+            // made again when the source changes, as when the decoder falls
+            // back from the GPU to software
+            let key = (src.format(), src.width(), src.height());
+            if self.scaler.as_ref().is_none_or(|(_, k)| *k != key) {
+                let (dw, dh) = fit(src.width(), src.height(), MAX_VIDEO_WIDTH);
+                let s = scaling::Context::get(
+                    src.format(),
+                    src.width(),
+                    src.height(),
                     Pixel::RGBA,
                     dw,
                     dh,
                     scaling::Flags::BILINEAR,
-                )?);
+                )?;
+                self.scaler = Some((s, key));
             }
             let mut rgb = frame::Video::empty();
-            self.scaler.as_mut().unwrap().run(&f, &mut rgb)?;
+            self.scaler.as_mut().unwrap().0.run(src, &mut rgb)?;
             let (w, h) = (rgb.width() as usize, rgb.height() as usize);
             let stride = rgb.stride(0);
             let data = rgb.data(0);
@@ -608,7 +656,7 @@ mod tests {
             return;
         }
         let audio = Arc::new(AudioShared::new(true, 48000));
-        let p = Player::open(&Source::File(clip), audio.clone()).unwrap();
+        let p = Player::open(&Source::File(clip), audio.clone(), false).unwrap();
         assert!(p.meta.has_audio);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while audio.buffered_secs() < 0.25 && std::time::Instant::now() < deadline {
@@ -619,6 +667,48 @@ mod tests {
             "the decoder stalled before reaching the audio"
         );
         drop(p);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// With hardware decoding asked for, frames still come: from the GPU
+    /// when there is one that can decode H.264, else in software. 10-bit
+    /// H.264, which GPUs don't decode, falls back to software.
+    #[test]
+    fn hardware_setting_plays() {
+        let dir = std::env::temp_dir().join(format!("valo-hwdec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, pix) in [("8bit.mp4", "yuv420p"), ("10bit.mp4", "yuv420p10le")] {
+            let clip = dir.join(name);
+            let made = std::process::Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-f", "lavfi"])
+                .args(["-i", "testsrc=size=320x240:rate=24", "-t", "2"])
+                .args(["-c:v", "libx264", "-pix_fmt", pix])
+                .arg(&clip)
+                .status();
+            if !made.is_ok_and(|s| s.success()) {
+                eprintln!("no ffmpeg with libx264 here; skipping");
+                return;
+            }
+            let audio = Arc::new(AudioShared::new(false, 48000));
+            let p = Player::open(&Source::File(clip), audio, true).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while p.sh.vq.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+            }
+            let f =
+                p.sh.vq
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("no frame decoded");
+            assert_eq!((f.w, f.h), (320, 240));
+            assert_eq!(f.rgba.len(), 320 * 240 * 4);
+            let how = p.decoding();
+            eprintln!("{name}: {how}");
+            if pix == "yuv420p10le" {
+                assert!(how.starts_with("Software"), "{how}");
+            }
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 }

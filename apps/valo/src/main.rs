@@ -7,6 +7,7 @@ mod audio;
 mod config;
 mod filmography;
 mod fullscreen;
+mod hwdec;
 mod iced_ui;
 mod inhibit;
 mod integrate;

@@ -92,6 +92,8 @@ pub struct Config {
     /// Continue from the saved position instead of the start.
     pub resume: bool,
     pub fullscreen_on_play: bool,
+    /// Decode video on the graphics card when it can (see hwdec.rs).
+    pub hardware_decoding: bool,
     /// Arrow-key skip, seconds (Shift = ×6).
     pub skip_seconds: u32,
     /// Re-fetch the library this often; 0 = never.
@@ -128,6 +130,7 @@ impl Default for Config {
             autoplay_next: true,
             resume: true,
             fullscreen_on_play: false,
+            hardware_decoding: true,
             skip_seconds: 5,
             refresh_minutes: 0,
             genre_rows: true,
