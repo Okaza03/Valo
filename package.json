@@ -1,0 +1,6 @@
+{
+  "name": "valo",
+  "version": "0.11.0",
+  "private": true,
+  "description": "Only for changesets (.changeset/): the app's real version is in Cargo.toml"
+}
