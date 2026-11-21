@@ -11,6 +11,7 @@ The app's Admin page has a sidebar of sections. Each one needs its own endpoints
 | Requests    | Titles people asked for through a Discord bot                             | [Requests and the Discord bot](admin-requests.md) |
 | Library     | Edit a title's details and artwork, fetch them from IMDb                  | [Library editing](admin-library.md)         |
 | Images      | Upgrade every image to the largest on TMDB, what changed, resolutions     | [Images](admin-images.md)                   |
+| Upload      | Upload movies and episodes into a folder on any disk, resuming where they stopped | [Upload](admin-upload.md)           |
 | Collections | Group titles so A to Z keeps them together, in an order the admin picks   | [Collections](admin-collections.md)         |
 | Moving      | Mark titles whose files are being moved between disks: nobody can play them meanwhile | [Moving](admin-moving.md) |
 | Skip markers | Find where episodes' recap, intro and credits are, for Skip Intro, Skip Recap and Next Episode | [Skip markers](admin-skip-markers.md) |

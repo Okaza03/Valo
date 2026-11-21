@@ -763,6 +763,108 @@ pub struct Rescan {
     pub running: bool,
 }
 
+/// A movie or series folder files can be uploaded into
+/// (`GET /api/admin/upload/folders`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct UploadRoot {
+    /// "movies-0", "series-1": what the other upload calls name it by.
+    pub id: String,
+    /// "movies" or "series".
+    pub kind: String,
+    /// "Disk 1", "Disk 2"; `None`: the server couldn't tell.
+    pub disk: Option<String>,
+    /// Where it is on the server.
+    pub path: String,
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+    pub writable: bool,
+}
+
+impl UploadRoot {
+    /// "Disk 1 · Movies".
+    pub fn label(&self) -> String {
+        let kind = if self.kind == "series" {
+            "Series"
+        } else {
+            "Movies"
+        };
+        match &self.disk {
+            Some(d) => format!("{d} · {kind}"),
+            None => format!("{kind} · {}", self.path),
+        }
+    }
+}
+
+/// A file in a folder being browsed for Upload.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UploadFile {
+    pub name: String,
+    pub size: u64,
+}
+
+/// A folder in a folder being browsed for Upload.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UploadDir {
+    pub name: String,
+}
+
+/// The upload roots, and with one asked for, what's in a folder of it.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UploadFolders {
+    #[serde(deserialize_with = "null_as_empty")]
+    pub roots: Vec<UploadRoot>,
+    /// The largest chunk the server takes at once, in bytes.
+    pub chunk_size: u64,
+    /// The root and folder (relative to it, "" for the root) listed.
+    pub root: Option<String>,
+    pub path: String,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub folders: Vec<UploadDir>,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub files: Vec<UploadFile>,
+}
+
+impl UploadFolders {
+    /// A root's label by its id; the id when it's gone.
+    pub fn label_by_id(&self, id: &str) -> String {
+        self.roots
+            .iter()
+            .find(|r| r.id == id)
+            .map_or_else(|| id.to_owned(), UploadRoot::label)
+    }
+}
+
+/// An upload the server is taking (`/api/admin/uploads`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct UploadInfo {
+    pub id: String,
+    pub root: String,
+    pub path: String,
+    pub filename: String,
+    pub size: u64,
+    /// How much has arrived: where the next chunk starts.
+    pub offset: u64,
+    pub chunk_size: u64,
+    /// Who started it.
+    pub by: String,
+    /// ISO 8601.
+    pub started_at: String,
+}
+
+/// What the server did with a chunk.
+#[derive(Debug, PartialEq)]
+pub enum Chunk {
+    /// Taken: the upload is this far now.
+    Taken(u64),
+    /// It didn't start where the upload is: send from here instead.
+    Moved(u64),
+}
+
 /// `GET /api/admin/status`: how the server and what it talks to are doing.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -1731,6 +1833,8 @@ pub const ADMIN_DOCS_LIBRARY: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-library.md";
 pub const ADMIN_DOCS_IMAGES: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-images.md";
+pub const ADMIN_DOCS_UPLOAD: &str =
+    "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-upload.md";
 pub const ADMIN_DOCS_COLLECTIONS: &str =
     "https://github.com/Okaza03/Valo/blob/main/docs/api/admin-collections.md";
 pub const ADMIN_DOCS_ADDONS: &str =
@@ -2508,6 +2612,114 @@ impl Client {
         self.admin_json(if fresh { "images?fresh=1" } else { "images" })
     }
 
+    /// The folders files can be uploaded into; with `root`, also what's in
+    /// its folder `path` ("" for the root itself).
+    pub fn admin_upload_folders(&self, root: Option<&str>, path: &str) -> Result<UploadFolders> {
+        match root {
+            None => self.admin_json("upload/folders"),
+            Some(r) => {
+                // a folder that's gone is a 404 too: say so, not "not set up"
+                let r = self
+                    .admin(
+                        "GET",
+                        &format!(
+                            "upload/folders?root={}&path={}",
+                            encode_segment(r),
+                            encode_segment(path)
+                        ),
+                    )
+                    .call()
+                    .map_err(admin_err)?;
+                r.into_json().map_err(|_| anyhow!(NoAdminApi))
+            }
+        }
+    }
+
+    /// Make the folder `name` in `path` of `root`; its path.
+    pub fn admin_make_folder(&self, root: &str, path: &str, name: &str) -> Result<String> {
+        let r = self
+            .admin("POST", "upload/folders")
+            .send_json(serde_json::json!({ "root": root, "path": path, "name": name }))
+            .map_err(admin_err)?;
+        let v: Value = r.into_json().unwrap_or(Value::Null);
+        Ok(v["path"].as_str().unwrap_or(name).to_owned())
+    }
+
+    /// The uploads the server hasn't finished.
+    pub fn admin_uploads(&self) -> Result<Vec<UploadInfo>> {
+        self.admin_json("uploads")
+    }
+
+    /// Start uploading `filename` (`size` bytes) into `path` of `root`. When
+    /// the same file was on its way there already, that upload, to carry on.
+    pub fn admin_start_upload(
+        &self,
+        root: &str,
+        path: &str,
+        filename: &str,
+        size: u64,
+    ) -> Result<UploadInfo> {
+        let r = self
+            .admin("POST", "uploads")
+            .send_json(serde_json::json!({
+                "root": root, "path": path, "filename": filename, "size": size,
+            }))
+            .map_err(admin_missing)?;
+        Ok(r.into_json()?)
+    }
+
+    /// Send the bytes that start at `offset`.
+    pub fn admin_upload_chunk(&self, id: &str, offset: u64, data: &[u8]) -> Result<Chunk> {
+        let r = self
+            .admin(
+                "PUT",
+                &format!("uploads/{}?offset={offset}", encode_segment(id)),
+            )
+            .set("Content-Type", "application/octet-stream")
+            .timeout(Duration::from_secs(600))
+            .send_bytes(data);
+        match r {
+            Ok(r) => {
+                let v: Value = r.into_json().unwrap_or(Value::Null);
+                Ok(Chunk::Taken(
+                    v["offset"].as_u64().unwrap_or(offset + data.len() as u64),
+                ))
+            }
+            Err(crate::net::Error::Status(409, r)) => {
+                let v: Value = r.into_json().unwrap_or(Value::Null);
+                match v["offset"].as_u64() {
+                    Some(o) => Ok(Chunk::Moved(o)),
+                    None => bail!("the server refused the chunk"),
+                }
+            }
+            Err(crate::net::Error::Status(413, _)) => bail!(
+                "the server refused a {} chunk as too large: raise nginx's client_max_body_size, \
+                 or lower MEDIA_UPLOAD_CHUNK_MB",
+                crate::ui::browse::details::bytes(data.len() as u64)
+            ),
+            Err(e) => Err(admin_err(e)),
+        }
+    }
+
+    /// Move the whole file into its folder; its path on the server.
+    pub fn admin_finish_upload(&self, id: &str) -> Result<String> {
+        let r = self
+            .admin("POST", &format!("uploads/{}/finish", encode_segment(id)))
+            .timeout(Duration::from_secs(120))
+            .call()
+            .map_err(admin_err)?;
+        let v: Value = r.into_json().unwrap_or(Value::Null);
+        Ok(v["path"].as_str().unwrap_or_default().to_owned())
+    }
+
+    /// Stop an upload and delete what arrived.
+    pub fn admin_cancel_upload(&self, id: &str) -> Result<()> {
+        self.admin("DELETE", &format!("uploads/{}", encode_segment(id)))
+            .call()
+            .map_err(admin_err)?;
+        Ok(())
+    }
+
     /// Every TMDB image for one of the item's artwork slots ("poster",
     /// "backdrop", "thumb", "logo"), largest first.
     pub fn admin_images(&self, item: &Item, which: &str) -> Result<Vec<TmdbImage>> {
@@ -3239,6 +3451,33 @@ mod tests {
         assert_eq!(last.failures[0].reason, "couldn't download it");
         assert_eq!(r.library["poster"]["missing"], 2);
         assert_eq!(r.runs[0].upgraded, 3);
+    }
+
+    #[test]
+    fn upload_shapes() {
+        let f: UploadFolders = serde_json::from_str(
+            r#"{"roots":[{"id":"movies-1","kind":"movies","disk":"Disk 1","path":"/mnt/disk1/media/movies",
+                  "free_bytes":5,"total_bytes":9,"writable":true},
+                 {"id":"series-0","kind":"series","disk":null,"path":"/media/series"}],
+                "chunk_size":16777216,"root":"movies-1","path":"Heat",
+                "folders":[{"name":"Subs"}],"files":[{"name":"Heat.mkv","size":42}]}"#,
+        )
+        .unwrap();
+        assert_eq!(f.roots[0].label(), "Disk 1 · Movies");
+        assert_eq!(f.roots[1].label(), "Series · /media/series");
+        assert_eq!(f.label_by_id("movies-1"), "Disk 1 · Movies");
+        assert_eq!(f.label_by_id("gone-3"), "gone-3");
+        assert_eq!(f.chunk_size, 16_777_216);
+        assert_eq!(f.root.as_deref(), Some("movies-1"));
+        assert_eq!(f.files[0].size, 42);
+        let bare: UploadFolders = serde_json::from_str(r#"{"roots":[],"chunk_size":1}"#).unwrap();
+        assert!(bare.root.is_none() && bare.folders.is_empty());
+        let u: UploadInfo = serde_json::from_str(
+            r#"{"id":"abc","root":"series-0","path":"Dark/Season 01","filename":"e1.mkv",
+                "size":10,"offset":4,"chunk_size":8,"by":"boss","started_at":"2026-11-21T10:00:00+00:00"}"#,
+        )
+        .unwrap();
+        assert_eq!((u.offset, u.size, u.by.as_str()), (4, 10, "boss"));
     }
 
     #[test]

@@ -41,6 +41,10 @@ pub enum Icon {
     Tv,
     /// Sidebar: a picture (Admin › Images).
     Image,
+    /// Sidebar: an arrow up out of a tray (Admin › Upload).
+    Upload,
+    /// A folder (Admin › Upload's folder list).
+    Folder,
     /// A cloud with an arrow down (check for updates).
     CloudDownload,
 }
