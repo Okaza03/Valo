@@ -128,7 +128,7 @@ jobs:
             || { echo "add <release version=\"$V\"> to the Flatpak metainfo"; exit 1; }
           # the release page lists this version's changesets (see "Release description")
           grep -qxF "## $V" CHANGELOG.md \
-            || { echo "CHANGELOG.md has no '## $V': run npx @changesets/cli version in the release PR"; exit 1; }
+            || { echo "CHANGELOG.md has no '## $V': run npx @changesets/cli@2 version in the release PR"; exit 1; }
 
       - run: cargo install cargo-deb --locked
       - run: cargo xtask dist
