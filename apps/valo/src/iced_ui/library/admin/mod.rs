@@ -13,6 +13,7 @@ mod moving;
 mod requests;
 mod skip;
 mod ui;
+mod upload;
 mod users;
 
 use anyhow::Result;
@@ -43,6 +44,7 @@ pub enum Section {
     Requests,
     Library,
     Images,
+    Upload,
     Collections,
     Moving,
     SkipMarkers,
@@ -52,12 +54,13 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 11] = [
+    const ALL: [Section; 12] = [
         Section::Dashboard,
         Section::Analytics,
         Section::Requests,
         Section::Library,
         Section::Images,
+        Section::Upload,
         Section::Collections,
         Section::Moving,
         Section::SkipMarkers,
@@ -74,6 +77,7 @@ impl Section {
             Section::Requests => Icon::Bookmark,
             Section::Library => Icon::Film,
             Section::Images => Icon::Image,
+            Section::Upload => Icon::Upload,
             Section::Collections => Icon::List,
             Section::Moving => Icon::ArrowRight,
             Section::SkipMarkers => Icon::SkipForward,
@@ -90,6 +94,7 @@ impl Section {
             Section::Requests => "Requests",
             Section::Library => "Library",
             Section::Images => "Images",
+            Section::Upload => "Upload",
             Section::Collections => "Collections",
             Section::Moving => "Moving",
             Section::SkipMarkers => "Skip markers",
@@ -114,6 +119,10 @@ impl Section {
             Section::Images => {
                 "Upgrade every poster, backdrop, thumbnail and logo to the largest version on \
                  TMDB, see what changed, and how sharp the library's images are."
+            }
+            Section::Upload => {
+                "Upload movies and episodes into a folder on either disk. The server adds \
+                 them to the library when they're done."
             }
             Section::Collections => {
                 "Group titles like the Batman films, so A to Z keeps them together, oldest first."
@@ -145,6 +154,7 @@ impl Section {
             Section::Requests => api::ADMIN_DOCS_REQUESTS,
             Section::Library => api::ADMIN_DOCS_LIBRARY,
             Section::Images => api::ADMIN_DOCS_IMAGES,
+            Section::Upload => api::ADMIN_DOCS_UPLOAD,
             Section::Collections => api::ADMIN_DOCS_COLLECTIONS,
             Section::Moving => api::ADMIN_DOCS_MOVING,
             Section::SkipMarkers => api::ADMIN_DOCS_SKIP,
@@ -172,6 +182,9 @@ impl Section {
             Section::Images => {
                 "the image report (GET /api/admin/images) and Upgrade images \
                  (POST /api/admin/sync/images)"
+            }
+            Section::Upload => {
+                "the upload endpoints (/api/admin/upload/folders, /api/admin/uploads)"
             }
             Section::Collections => "the collection endpoints (/api/admin/collections)",
             Section::Moving => "the moving endpoints (GET and PUT /api/admin/moving)",
@@ -227,6 +240,7 @@ pub enum Msg {
     Requests(requests::Msg),
     Moving(moving::Msg),
     Images(images::Msg),
+    Upload(upload::Msg),
     Skip(skip::Msg),
     Users(users::Msg),
     Library(library::Msg),
@@ -263,6 +277,7 @@ pub struct State {
     requests: requests::State,
     moving: moving::State,
     images: images::State,
+    upload: upload::State,
     skip: skip::State,
     users: users::State,
     library: library::State,
@@ -324,6 +339,7 @@ impl State {
             Section::Requests => self.requests.refresh(),
             Section::Moving => self.moving.refresh(),
             Section::Images => self.images.refresh(),
+            Section::Upload => self.upload.refresh(),
             Section::SkipMarkers => self.skip.refresh(),
             Section::Library => self.library.refresh(),
             Section::Analytics => self.analytics.refresh(),
@@ -344,6 +360,7 @@ impl State {
             Section::Requests => self.requests.missing(),
             Section::Moving => self.moving.missing(),
             Section::Images => self.images.missing(),
+            Section::Upload => self.upload.missing(),
             Section::SkipMarkers => self.skip.missing(),
             Section::Users => self.users.missing(),
             Section::Library => self.library.missing(),
@@ -441,6 +458,7 @@ impl State {
             Section::Dashboard => self.dashboard.work(client, &mut asks),
             Section::Moving => self.moving.work(client, &mut asks.login),
             Section::Images => self.images.work(client, &mut asks.login),
+            Section::Upload => self.upload.work(client, &mut asks.login),
             Section::SkipMarkers => self.skip.work(client, &mut asks),
             Section::Library => self.library.work(client, &mut asks),
             Section::Analytics => self.analytics.work(client, &mut asks),
@@ -530,6 +548,7 @@ impl State {
                 Section::Requests => self.requests.refresh(),
                 Section::Moving => self.moving.refresh(),
                 Section::Images => self.images.refresh(),
+                Section::Upload => self.upload.refresh(),
                 Section::SkipMarkers => self.skip.refresh(),
                 Section::Users => self.users.refresh(),
                 Section::Library => self.library.refresh(),
@@ -559,6 +578,11 @@ impl State {
             }
             Msg::Images(m) => {
                 if let Some(job) = self.images.update(m) {
+                    self.run(client, job);
+                }
+            }
+            Msg::Upload(m) => {
+                if let Some(job) = self.upload.update(m, client) {
                     self.run(client, job);
                 }
             }
@@ -625,6 +649,7 @@ impl State {
     /// The sections, on the left.
     pub fn sidebar<'a>(&self, server: &str, base: &str) -> Element<'a, LMsg> {
         let pending = self.pending();
+        let uploading = self.upload.active();
         // the server, like shadcn's team switcher: a lettered square and its name
         let letter = server
             .chars()
@@ -660,6 +685,7 @@ impl State {
         for s in Section::ALL {
             let badge = match s {
                 Section::Requests if pending > 0 => Some(pending.to_string()),
+                Section::Upload if uploading > 0 => Some(uploading.to_string()),
                 _ if self.missing(s) => Some("not set up".into()),
                 _ => None,
             };
@@ -788,6 +814,7 @@ impl State {
             Section::Requests => self.requests.view(&cx, w),
             Section::Moving => self.moving.view(&cx),
             Section::Images => self.images.view(&cx, inner),
+            Section::Upload => self.upload.view(&cx, inner),
             Section::SkipMarkers => self.skip.view(&cx),
             Section::Users => self.users.view(&cx, w),
             Section::Library => self.library.view(&cx, w),

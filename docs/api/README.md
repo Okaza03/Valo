@@ -20,6 +20,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | Invite or run the ready-made Valo Discord bot                | [The Valo Discord bot](discord-bot.md)     |
 | Edit titles and fetch details from IMDb in the app           | [Library editing](admin-library.md)        |
 | Upgrade images to 4K and see what changed                    | [Images](admin-images.md)                  |
+| Upload movies and episodes from the app                      | [Upload](admin-upload.md)                  |
 | Group titles into collections (Batman, Harry Potter, …)      | [Collections](admin-collections.md)        |
 | Show a series' Featurettes folder as its own season          | [Featurettes](featurettes.md)              |
 | Lock titles while their files move between disks             | [Moving](admin-moving.md)                  |
@@ -51,6 +52,7 @@ This guide is for whoever runs the media server. It covers what Valo asks the se
 | `/api/admin/requests`, `/api/requests`  | optional                     | [Requests](admin-requests.md)         |
 | `/api/admin/movies/…`, `/api/admin/series/…` | optional                | [Library editing](admin-library.md)   |
 | `/api/admin/images`                     | optional                     | [Images](admin-images.md)             |
+| `/api/admin/upload/…`, `/api/admin/uploads` | optional                 | [Upload](admin-upload.md)             |
 | `/api/admin/collections`                | optional                     | [Collections](admin-collections.md)   |
 | `/api/admin/moving`                     | optional                     | [Moving](admin-moving.md)             |
 | `/api/admin/skip-markers`               | optional                     | [Skip markers](admin-skip-markers.md) |
