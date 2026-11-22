@@ -436,8 +436,11 @@ fun writeStereo(source: ServerFile, startUs: Long, out: OutputStream, toH264: Bo
                 probe.close()
             }
         }
+        // Both from the keyframe, not from where it was asked to start: the sound would
+        // come in there, every sample of it being a place to start, and the seconds of
+        // film from the keyframe up to it would play silent (#67).
         ex.selectTrack(audio)
-        ex.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        ex.seekTo(ahead.first(), MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         onStart(base)
 
         val rate = formats[audio].getInteger(MediaFormat.KEY_SAMPLE_RATE)
