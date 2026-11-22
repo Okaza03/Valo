@@ -84,6 +84,57 @@ class DownmixTest {
     }
 
     @Test
+    fun aHoleInTheSoundIsFilledWithSilence() {
+        val sound = ShortArray(2048) { 7 }
+        // 100 ms missing at 48 kHz: 4800 frames
+        val lined = lineUp(sound, 1_100_000, 1_000_000, 48_000)
+        assertEquals(4800 * 2 + 2048, lined.size)
+        assertTrue(lined.take(9600).all { it.toInt() == 0 })
+        assertTrue(lined.drop(9600).all { it.toInt() == 7 })
+    }
+
+    @Test
+    fun soundThatOverlapsIsLeftOut() {
+        val sound = ShortArray(9600) { it.toShort() }
+        // starts 50 ms before the last sound ended: 2400 frames already played
+        val lined = lineUp(sound, 950_000, 1_000_000, 48_000)
+        assertEquals(9600 - 4800, lined.size)
+        assertEquals(4800, lined[0].toInt())
+        assertEquals(0, lineUp(sound, 0, 1_000_000, 48_000).size)
+    }
+
+    @Test
+    fun roundedTimesAreLeftAlone() {
+        val sound = ShortArray(2048) { 3 }
+        // Matroska keeps times to the millisecond
+        assertArrayEquals(sound, lineUp(sound, 1_001_000, 1_000_000, 48_000))
+        assertArrayEquals(sound, lineUp(sound, 999_000, 1_000_000, 44_100))
+    }
+
+    @Test
+    fun soundWithHolesKeepsToTheFilesClock() {
+        // 1024-frame AAC frames at 44.1 kHz, with every 50th frame missing from the file
+        val rate = 44_100
+        var played = 0L
+        var lastAt = 0L
+        for (n in 0 until 5000L) {
+            if (n % 50 == 49L) continue
+            lastAt = framesUs(n * 1024, rate)
+            played += lineUp(ShortArray(2048), lastAt, framesUs(played, rate), rate).size / 2
+        }
+        // the last frame plays when the file says, not seconds early
+        val drift = framesUs(played - 1024, rate) - lastAt
+        assertTrue("drifted $drift us", kotlin.math.abs(drift) < 10_000)
+    }
+
+    @Test
+    fun soundTimesComeFromCountingSamples() {
+        assertEquals(1_000_000, framesUs(48_000, 48_000))
+        // an hour at 44.1 kHz, in one go rather than adding up rounded buffers
+        assertEquals(3_600_000_000, framesUs(44_100L * 3600, 44_100))
+    }
+
+    @Test
     fun everyFrameComesOut() {
         assertEquals(20, downmix(ShortArray(60), 6).size)
         assertEquals(20, downmix(ShortArray(80), 8).size)
