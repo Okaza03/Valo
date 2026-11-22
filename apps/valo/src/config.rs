@@ -176,13 +176,18 @@ impl Entry {
             0.0
         }
     }
+    /// Watched for more than a peek: a few seconds in doesn't count as
+    /// having watched it at all.
+    pub fn started(&self) -> bool {
+        self.pos > 30.0
+    }
     /// Started, but not finished (90% watched counts as finished, which
     /// skips the end credits).
     pub fn in_progress(&self) -> bool {
-        self.pos > 30.0 && (self.dur <= 0.0 || self.pos < self.dur * FINISHED)
+        self.started() && (self.dur <= 0.0 || self.pos < self.dur * FINISHED)
     }
     pub fn watched(&self) -> bool {
-        self.dur > 0.0 && !self.in_progress() && self.pos > 30.0
+        self.dur > 0.0 && !self.in_progress() && self.started()
     }
 }
 
@@ -534,5 +539,18 @@ mod tests {
         assert!(e(6479.0).in_progress()); // 89.99%
         assert!(e(6480.0).watched()); // 90%
         assert!(!e(20.0).in_progress() && !e(20.0).watched()); // barely started
+    }
+
+    #[test]
+    fn a_peek_isnt_started() {
+        let e = |pos| Entry {
+            pos,
+            dur: 2700.0,
+            updated: 0,
+        };
+        assert!(!e(5.0).started()); // opened and closed again
+        assert!(!e(30.0).started());
+        assert!(e(31.0).started());
+        assert!(e(2700.0).started()); // watched to the end
     }
 }

@@ -498,7 +498,13 @@ impl Library {
     ) -> Element<'a, Msg> {
         let name = self.user.clone().unwrap_or_else(|| "Guest".to_owned());
         let prefix = self.prefix();
-        let entries = env.progress.recent(&prefix);
+        // a show opened for a few seconds isn't one you've watched (#85)
+        let entries: Vec<_> = env
+            .progress
+            .recent(&prefix)
+            .into_iter()
+            .filter(|(_, e)| e.started())
+            .collect();
         let watched_secs = |e: &Entry| if e.dur > 0.0 { e.pos.min(e.dur) } else { e.pos };
         let (mut movies_done, mut eps_done, mut in_progress) = (0, 0, 0);
         let (mut movie_secs, mut ep_secs) = (0.0, 0.0);
