@@ -57,6 +57,8 @@ private const val WAIT_US = 5_000L
 private const val SIDE = 0.707f
 /** Takes the sum back down, leaving speech at a level you'd expect; peaks are clipped. */
 private const val GAIN = 0.6f
+/** How far the sound may wander from the file's clock before it's put back: 10 ms. */
+private const val SOUND_SLACK_PER_SECOND = 100
 
 private fun clip(v: Float) = v.roundToInt().coerceIn(-32768, 32767).toShort()
 
@@ -94,6 +96,28 @@ fun downmix(pcm: ShortArray, channels: Int): ShortArray {
         }
     }
     return out
+}
+
+/** How long this many frames of sound last. */
+fun framesUs(frames: Long, rate: Int) = frames * 1_000_000 / rate
+
+/**
+ * Stereo sound the file says starts at `atUs`, made to follow on from sound
+ * so far, which ends at `endUs`. A TV plays the sound one sample after another
+ * whatever its times say, so a hole in the file's sound (a dropped frame, a
+ * splice) would leave everything after it early, and each one adds up: the
+ * hole is filled with silence instead. Sound that overlaps what's already gone
+ * is left out. Within a few milliseconds it's left as it is: containers round
+ * their times.
+ */
+fun lineUp(stereo: ShortArray, atUs: Long, endUs: Long, rate: Int): ShortArray {
+    val off = ((atUs - endUs) * rate / 1_000_000).toInt()
+    val slack = rate / SOUND_SLACK_PER_SECOND
+    return when {
+        off > slack -> ShortArray(off * 2) + stereo
+        off < -slack -> stereo.copyOfRange(minOf(-off * 2, stereo.size), stereo.size)
+        else -> stereo
+    }
 }
 
 /** What H.264 says it is, from its first parameter set: "avc1.640029". */
@@ -288,11 +312,16 @@ private class StereoSound(from: MediaFormat, private val rate: Int, private val 
     private var channels = from.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
     private var decoded = false
     private var encoded = false
-    /** Stereo samples waiting for room in the encoder, and when they start. */
+    /** Stereo samples waiting for room in the encoder. */
     private var pending = ShortArray(0)
     private var pendingAt = 0
-    private var pendingUs = 0L
     private var started = false
+    /**
+     * Where the sound's clock starts, and the frames handed on since: times
+     * come from counting samples, so they never drift from what's been played.
+     */
+    private var originUs = 0L
+    private var queued = 0L
     /** The first sound to keep; before that it's the codecs' own delay. */
     private val keepUs = startUs + CODEC_DELAY * 1_000_000 / rate
 
@@ -352,13 +381,16 @@ private class StereoSound(from: MediaFormat, private val rate: Int, private val 
             decoder.getOutputBuffer(o)!!.order(ByteOrder.nativeOrder()).asShortBuffer().get(pcm)
             pending = downmix(pcm, channels)
             pendingAt = 0
-            pendingUs = info.presentationTimeUs
-            // the first sound starts late: silence up to where the track has to begin
+            val at = info.presentationTimeUs
             if (!started && pending.isNotEmpty()) {
+                // the first sound starts late: silence up to where the track has to begin
                 started = true
-                val gap = ((pendingUs - startUs) * rate / 1_000_000).toInt().coerceAtLeast(0)
+                val gap = ((at - startUs) * rate / 1_000_000).toInt().coerceAtLeast(0)
                 pending = ShortArray(gap * 2) + pending
-                pendingUs -= gap * 1_000_000L / rate
+                originUs = at - framesUs(gap.toLong(), rate)
+            } else if (pending.isNotEmpty()) {
+                // everything before this has gone to the encoder, so its sound ends here
+                pending = lineUp(pending, at, originUs + framesUs(queued, rate), rate)
             }
             if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) decoded = true
             decoder.releaseOutputBuffer(o, false)
@@ -366,11 +398,12 @@ private class StereoSound(from: MediaFormat, private val rate: Int, private val 
         val i = encoder.dequeueInputBuffer(0)
         if (i < 0) return false
         val buf = encoder.getInputBuffer(i)!!.order(ByteOrder.nativeOrder())
-        val n = minOf(buf.remaining() / 2, pending.size - pendingAt)
+        // whole frames: left and right go together
+        val n = minOf(buf.remaining() / 4 * 2, pending.size - pendingAt)
         buf.asShortBuffer().put(pending, pendingAt, n)
         val last = decoded && pendingAt + n >= pending.size
-        encoder.queueInputBuffer(i, 0, n * 2, pendingUs, if (last) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
-        pendingUs += n / 2 * 1_000_000L / rate
+        encoder.queueInputBuffer(i, 0, n * 2, originUs + framesUs(queued, rate), if (last) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
+        queued += n / 2
         pendingAt += n
         return true
     }
