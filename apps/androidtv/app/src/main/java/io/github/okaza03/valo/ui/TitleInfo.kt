@@ -118,7 +118,8 @@ fun watchTime(s: Double) = if (s > 0) fmtRuntime(s) else "—"
 
 /** The profile page's numbers, counted from the watch history. */
 class WatchStats(model: AppModel, lib: Library) {
-    val entries = model.history()
+    // a show opened for a few seconds isn't one you've watched (#85)
+    val entries = model.history().filter { it.second.started }
     var movieSecs = 0.0
         private set
     var epSecs = 0.0
